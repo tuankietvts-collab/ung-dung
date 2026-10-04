@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Collection of teacher-created exams
+    match /exams/{examId} {
+      allow read: if true;
+      allow create, update: if isValidId(examId);
+      allow delete: if isValidId(examId);
+    }
+
+    // Collection of student exam submissions
+    match /submissions/{submissionId} {
+      allow read: if true;
+      allow create, update: if isValidId(submissionId);
+      allow delete: if isValidId(submissionId);
+    }
+
+    // Collection of student rosters imported by teacher
+    match /students/{studentId} {
+      allow read: if true;
+      allow create, update: if isValidId(studentId);
+      allow delete: if isValidId(studentId);
+    }
+
+    // Collection of registered teachers
+    match /teachers/{teacherId} {
+      allow read: if true;
+      allow create, update: if isValidId(teacherId);
+      allow delete: if isValidId(teacherId);
+    }
+
+    // Collection of classes managed by teacher
+    match /classes/{classId} {
+      allow read: if true;
+      allow create, update: if isValidId(classId);
+      allow delete: if isValidId(classId);
+    }
+
+    // Collection of registered multi-role users (Admin, Teacher, Student)
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update: if isValidId(userId);
+      allow delete: if isValidId(userId);
+    }
+  }
+}

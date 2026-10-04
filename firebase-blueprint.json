@@ -1,0 +1,207 @@
+{
+  "entities": {
+    "Exam": {
+      "title": "Exam",
+      "description": "Mathematics exam created by teachers according to GDPT 2018 curriculum",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique exam identifier"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the exam",
+          "maxLength": 255
+        },
+        "examCode": {
+          "type": "string",
+          "description": "Exam code like TOAN12-HK2-01",
+          "maxLength": 50
+        },
+        "grade": {
+          "type": "string",
+          "description": "Grade level e.g. Lớp 12",
+          "maxLength": 20
+        },
+        "durationMinutes": {
+          "type": "number",
+          "description": "Exam duration in minutes"
+        },
+        "totalPoints": {
+          "type": "number",
+          "description": "Total points of exam, typically 10"
+        },
+        "textbook": {
+          "type": "string",
+          "description": "Curriculum textbook e.g. Kết Nối Tri Thức Với Cuộc Sống",
+          "maxLength": 100
+        },
+        "topic": {
+          "type": "string",
+          "description": "Topic or chapter name",
+          "maxLength": 200
+        },
+        "multipleChoice": {
+          "type": "array",
+          "description": "List of Part 1 multiple choice questions"
+        },
+        "trueFalseQuestions": {
+          "type": "array",
+          "description": "List of Part 2 true/false questions"
+        },
+        "shortAnswerQuestions": {
+          "type": "array",
+          "description": "List of short answer questions"
+        },
+        "essayQuestions": {
+          "type": "array",
+          "description": "List of Part 3 essay questions"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp in ISO string"
+        }
+      },
+      "required": ["id", "title", "examCode", "durationMinutes"]
+    },
+    "StudentSubmission": {
+      "title": "StudentSubmission",
+      "description": "Student exam submission with answers and scores",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique submission identifier"
+        },
+        "examId": {
+          "type": "string",
+          "description": "ID of the exam being submitted"
+        },
+        "examCode": {
+          "type": "string",
+          "description": "Exam code or variant code"
+        },
+        "studentName": {
+          "type": "string",
+          "description": "Student full name",
+          "maxLength": 100
+        },
+        "studentClass": {
+          "type": "string",
+          "description": "Class name e.g. 12A8",
+          "maxLength": 50
+        },
+        "studentId": {
+          "type": "string",
+          "description": "Student ID or SBD e.g. 12A8-01",
+          "maxLength": 50
+        },
+        "multipleChoiceScore": {
+          "type": "number",
+          "description": "Part 1 score"
+        },
+        "trueFalseScore": {
+          "type": "number",
+          "description": "Part 2 score"
+        },
+        "essayScore": {
+          "type": "number",
+          "description": "Part 3 AI essay score"
+        },
+        "totalScore": {
+          "type": "number",
+          "description": "Total final score out of 10"
+        },
+        "submittedAt": {
+          "type": "string",
+          "description": "Submission timestamp"
+        }
+      },
+      "required": ["id", "examId", "studentName", "studentClass"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student in class roster imported from Excel",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "stt": { "type": "number" },
+        "fullName": { "type": "string" },
+        "className": { "type": "string" },
+        "sbd": { "type": "string" }
+      },
+      "required": ["id", "fullName", "className", "sbd"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Teacher profile registered on system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "school": { "type": "string" },
+        "subject": { "type": "string" }
+      },
+      "required": ["id", "email", "fullName"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Multi-role user profile (Admin, Teacher, Student) registered on system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "teacher", "student"] },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "school": { "type": "string" },
+        "className": { "type": "string" },
+        "subject": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username", "role", "fullName"]
+    },
+    "ClassRoom": {
+      "title": "ClassRoom",
+      "description": "School classes managed by teachers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "grade": { "type": "string" },
+        "schoolYear": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "studentCount": { "type": "number" }
+      },
+      "required": ["id", "name", "grade"]
+    }
+  },
+  "firestore": {
+    "/exams/{examId}": {
+      "schema": "Exam",
+      "description": "Collection of exams created by teachers"
+    },
+    "/submissions/{submissionId}": {
+      "schema": "StudentSubmission",
+      "description": "Collection of student exam submissions and grades"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Collection of imported student roster records"
+    },
+    "/teachers/{teacherId}": {
+      "schema": "Teacher",
+      "description": "Collection of registered teachers"
+    },
+    "/classes/{classId}": {
+      "schema": "ClassRoom",
+      "description": "Collection of classes created by teacher"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of registered users with role-based access"
+    }
+  }
+}

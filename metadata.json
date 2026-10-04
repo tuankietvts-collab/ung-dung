@@ -1,0 +1,6 @@
+{
+  "name": "EduMath AI - Nền Tảng Thi Trực Tuyến & Chấm Tự Luận AI",
+  "description": "Nền tảng thi Toán trực tuyến tích hợp AI Gemini: sinh đề tự động theo ma trận SGK GDPT 2018 và chấm bài tự luận qua ảnh chụp chữ viết tay chuẩn barem cấp 3.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
