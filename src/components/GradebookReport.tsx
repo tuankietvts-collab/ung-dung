@@ -25,7 +25,8 @@ import {
   Clock,
   Play,
   Filter,
-  Trash2
+  Trash2,
+  Sliders
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Exam, StudentSubmission, EssayGradingResult } from '../types/exam';
@@ -35,6 +36,7 @@ import { createHandwrittenMathSvg } from '../data/defaultExam';
 import { saveSubmissionToFirestore } from '../services/firebase';
 import { MathRenderer } from './MathRenderer';
 import { ExamVariantManagerModal } from './ExamVariantManagerModal';
+import { TeacherEssayGradingModal } from './TeacherEssayGradingModal';
 
 interface GradebookReportProps {
   exam?: Exam | null;
@@ -60,6 +62,8 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   const [filterCategory, setFilterCategory] = useState<'all' | 'gioi' | 'kha' | 'violation'>('all');
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
   const [sortOption, setSortOption] = useState<'abc' | 'stt' | 'score_desc'>('abc');
+  const [submissionToDelete, setSubmissionToDelete] = useState<StudentSubmission | null>(null);
+  const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
 
   // Available classes in submissions
   const classesList = Array.from(
@@ -404,6 +408,17 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
               )}
             </button>
           )}
+
+          {/* NÚT: DUYỆT CHẤM TỰ LUẬN & CÂN CHỈNH AI */}
+          <button
+            type="button"
+            onClick={() => setIsEssayGradingModalOpen(true)}
+            className="px-4 py-2.5 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 hover:from-amber-600 hover:to-amber-800 text-slate-950 font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            title="Thẩm định điểm AI, ghi đè điểm, ghi lời phê của giáo viên và xuất dataset hiệu chuẩn"
+          >
+            <Sliders className="w-4 h-4 text-slate-950" />
+            <span>Duyệt Tự Luận & Cân Chỉnh AI</span>
+          </button>
 
           {submissions.length === 0 && exam && (
             <button
@@ -751,11 +766,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                         {onDeleteSubmission && (
                           <button
                             type="button"
-                            onClick={() => {
-                              if (window.confirm(`Xóa bài làm của học sinh ${sub.studentName}?`)) {
-                                onDeleteSubmission(sub.id);
-                              }
-                            }}
+                            onClick={() => setSubmissionToDelete(sub)}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
                             title="Xóa bài thi này"
                           >
@@ -1083,59 +1094,114 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                   </div>
                 )}
 
-                {/* Tab Essay: Handwritten upload & Rubric Evaluation */}
-                {modalTab === 'essay' && selectedSubmission.essayAnswers?.essay1 && (
-                  <div className="space-y-5">
-                    <div className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-indigo-600" />
-                      Ảnh Bài Làm Viết Tay & Đối Chiếu Barem GDPT 2018:
+                {/* Tab Essay: Handwritten upload, Teacher Overrides & Rubric Evaluation */}
+                {modalTab === 'essay' && (
+                  <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200">
+                      <div>
+                        <div className="font-bold text-sm text-indigo-950 flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-indigo-600" />
+                          Ảnh Bài Làm Viết Tay & Đối Chiếu Barem GDPT 2018
+                        </div>
+                        <p className="text-xs text-indigo-800 mt-0.5">
+                          Thầy/Cô có thể xem ảnh bài làm, kiểm tra từng bước barem và điều chỉnh điểm số.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsEssayGradingModalOpen(true)}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <Sliders className="w-3.5 h-3.5" />
+                        <span>Mở Khung Thẩm Định & Sửa Điểm</span>
+                      </button>
                     </div>
 
-                    {/* Handwritten image */}
-                    {selectedSubmission.essayAnswers.essay1.imageUrl && (
-                      <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 p-2 flex items-center justify-center shadow-xs">
-                        <img
-                          src={selectedSubmission.essayAnswers.essay1.imageUrl}
-                          alt="Bài làm viết tay"
-                          className="max-h-80 object-contain bg-white rounded-xl"
-                        />
-                      </div>
-                    )}
+                    {subExam.essays.map((essay, eIdx) => {
+                      const ans = selectedSubmission.essayAnswers?.[essay.id] ||
+                        selectedSubmission.essayAnswers?.essay1 ||
+                        Object.values(selectedSubmission.essayAnswers || {})[eIdx];
+                      const override = selectedSubmission.teacherOverrides?.[essay.id] ||
+                        selectedSubmission.teacherOverrides?.essay1;
+                      const grading = ans?.grading;
+                      const img = ans?.imageUrl;
 
-                    {/* Rubric evaluation steps */}
-                    {selectedSubmission.essayAnswers.essay1.grading && (
-                      <div className="space-y-2.5 text-xs">
-                        <div className="font-bold text-slate-800">Chi tiết đối chiếu barem từng bước (0.25đ):</div>
-                        {selectedSubmission.essayAnswers.essay1.grading.rubricEvaluation?.map((step, sIdx) => (
-                          <div
-                            key={sIdx}
-                            className={`p-3 rounded-xl border flex items-start justify-between gap-3 ${
-                              step.awardedPoints > 0
-                                ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950'
-                                : 'bg-rose-50/50 border-rose-200 text-rose-950'
-                            }`}
-                          >
-                            <div className="flex-1">
-                              <div className="font-bold text-slate-900">{step.stepTitle}</div>
-                              <div className="mt-0.5 text-slate-700">
-                                <MathRenderer content={step.comment} />
+                      return (
+                        <div key={essay.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="font-bold text-slate-900 text-sm">
+                              <span className="text-indigo-600 mr-1.5">Câu hỏi tự luận {eIdx + 1}:</span>
+                              <MathRenderer content={essay.question} />
+                            </div>
+                            <span className="font-mono font-bold text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded shrink-0">
+                              Thang điểm: {essay.maxPoints}đ
+                            </span>
+                          </div>
+
+                          {/* Teacher override alert if present */}
+                          {override && (
+                            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-950 flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-black px-2 py-0.5 rounded bg-amber-200 text-amber-900">
+                                  Giáo viên đã sửa điểm:
+                                </span>
+                                <b>{override.teacherScore}đ</b> (AI ban đầu: {override.originalAiScore}đ)
+                              </div>
+                              <span className="text-amber-800 italic truncate max-w-xs">
+                                "{override.teacherFeedback}"
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Handwritten image */}
+                          {img && (
+                            <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 p-2 flex items-center justify-center shadow-xs">
+                              <img
+                                src={img}
+                                alt="Bài làm viết tay"
+                                className="max-h-80 object-contain bg-white rounded-xl"
+                              />
+                            </div>
+                          )}
+
+                          {/* Rubric evaluation steps */}
+                          {grading && (
+                            <div className="space-y-2.5 text-xs">
+                              <div className="font-bold text-slate-800">Chi tiết đối chiếu barem từng bước (0.25đ):</div>
+                              {grading.rubricEvaluation?.map((step, sIdx) => (
+                                <div
+                                  key={sIdx}
+                                  className={`p-3 rounded-xl border flex items-start justify-between gap-3 ${
+                                    step.awardedPoints > 0
+                                      ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950'
+                                      : 'bg-rose-50/50 border-rose-200 text-rose-950'
+                                  }`}
+                                >
+                                  <div className="flex-1">
+                                    <div className="font-bold text-slate-900">{step.stepTitle}</div>
+                                    <div className="mt-0.5 text-slate-700">
+                                      <MathRenderer content={step.comment} />
+                                    </div>
+                                  </div>
+                                  <div className="font-mono font-black text-sm shrink-0">
+                                    {step.awardedPoints} / {step.maxStepPoints}đ
+                                  </div>
+                                </div>
+                              ))}
+
+                              {/* Teacher note */}
+                              <div className="p-3.5 bg-indigo-50/70 rounded-xl border border-indigo-200 text-indigo-950 text-xs mt-3">
+                                <span className="font-bold block mb-1">Lời phê tổng thể:</span>
+                                <p>
+                                  <MathRenderer content={override?.teacherFeedback || grading.finalTeacherNote} />
+                                </p>
                               </div>
                             </div>
-                            <div className="font-mono font-black text-sm shrink-0">
-                              {step.awardedPoints} / {step.maxStepPoints}đ
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* Teacher note */}
-                        <div className="p-3.5 bg-indigo-50/70 rounded-xl border border-indigo-200 text-indigo-950 text-xs mt-3">
-                          <span className="font-bold block mb-1">Lời phê tổng thể của AI & Giáo viên bộ môn:</span>
-                          <p>
-                            <MathRenderer content={selectedSubmission.essayAnswers.essay1.grading.finalTeacherNote} />
-                          </p>
+                          )}
                         </div>
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1155,6 +1221,57 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
           onSelectVariantForExamRoom={() => {}}
         />
       )}
+
+      {/* Confirmation Modal Xóa Bài Thi (Zero window.confirm) */}
+      {submissionToDelete && (
+        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-slate-900 space-y-4 animate-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-2">
+              <h4 className="text-base font-black text-slate-900">
+                Xác Nhận Xóa Bài Làm
+              </h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Thầy/Cô có chắc chắn muốn xóa bài thi của thí sinh <b className="text-slate-900">{submissionToDelete.studentName}</b> (Lớp {submissionToDelete.studentClass || 'N/A'}, Điểm: <b className="text-indigo-700">{submissionToDelete.totalScore}đ</b>) không?
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setSubmissionToDelete(null)}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Hủy Bỏ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteSubmission) {
+                    onDeleteSubmission(submissionToDelete.id);
+                  }
+                  setSubmissionToDelete(null);
+                }}
+                className="py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Đồng Ý Xóa</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Teacher Essay Grading & Calibration Modal */}
+      <TeacherEssayGradingModal
+        isOpen={isEssayGradingModalOpen}
+        onClose={() => setIsEssayGradingModalOpen(false)}
+        submissions={submissions}
+        currentExam={exam || null}
+      />
     </div>
   );
 };

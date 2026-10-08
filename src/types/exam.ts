@@ -75,6 +75,37 @@ export interface RubricEvaluationItem {
   comment: string;
 }
 
+export interface TeacherEssayOverride {
+  originalAiScore: number;
+  teacherScore: number;
+  teacherFeedback: string;
+  overrideReason?: 'ai_too_strict' | 'ai_too_lenient' | 'ocr_misread' | 'alternative_valid_method' | 'partial_credit' | 'other';
+  adjustedAt: string;
+  teacherName?: string;
+  stepAdjustments?: Record<number, { awardedPoints: number; comment?: string }>;
+}
+
+export interface GradingCalibrationFeedback {
+  id: string;
+  submissionId: string;
+  studentName: string;
+  studentClass: string;
+  studentId?: string;
+  essayId: string;
+  questionText: string;
+  ocrTranscription?: string;
+  aiScore: number;
+  teacherScore: number;
+  scoreDelta: number;
+  aiFeedback?: string;
+  teacherFeedback: string;
+  reason: string;
+  imageUrl?: string;
+  imageUrls?: string[];
+  createdAt: string;
+  teacherName?: string;
+}
+
 export interface EssayGradingResult {
   ocrTranscription: string;
   detectedSteps: string[];
@@ -110,6 +141,10 @@ export interface StudentSubmission {
   totalScore: number;
   status: 'graded' | 'pending';
   examSnapshot?: Exam;
+  teacherOverrides?: Record<string, TeacherEssayOverride>;
+  teacherGeneralComment?: string;
+  isTeacherReviewed?: boolean;
+  reviewedAt?: string;
 }
 
 export interface ClassGroup {
@@ -129,6 +164,9 @@ export interface StudentRosterItem {
   sbd: string;
   assignedCode?: string;
   createdAt?: string;
+  username?: string;
+  password?: string;
+  isAccountCreated?: boolean;
 }
 
 export type UserRole = 'admin' | 'teacher' | 'student';
@@ -142,6 +180,7 @@ export interface AppUser {
   school?: string;
   className?: string;
   subject?: string;
+  sbd?: string;
   createdAt?: string;
 }
 
@@ -156,6 +195,7 @@ export interface TeacherProfile {
 }
 
 export interface MatrixSectionCount {
+  title?: string;
   nhanBiet: number;
   thongHieu: number;
   vanDung: number;
@@ -173,5 +213,6 @@ export interface ExamMatrixData {
   part1: MatrixSectionCount; // Trắc nghiệm nhiều lựa chọn
   part2: MatrixSectionCount; // Trắc nghiệm Đúng / Sai
   part3: MatrixSectionCount; // Tự luận
+  part3Type?: 'short_answer' | 'essay'; // 'short_answer' (Trả lời ngắn) | 'essay' (Tự luận giải chi tiết)
   rawSummary?: string;
 }

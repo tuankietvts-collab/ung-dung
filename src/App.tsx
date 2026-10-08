@@ -46,8 +46,11 @@ import {
   deleteClassGroupFromFirestore,
   getStoredUser,
   setStoredUser,
-  logoutAppUser
+  logoutAppUser,
+  getStoredExams,
+  getStoredClasses
 } from './services/firebase';
+import { isInvalidStudentName } from './services/studentRosterParser';
 import { TeacherDashboard } from './components/TeacherDashboard';
 import { StudentExamRoom } from './components/StudentExamRoom';
 import { GradebookReport } from './components/GradebookReport';
@@ -63,13 +66,16 @@ export default function App() {
   // Multi-role AppUser Authentication State (Bắt buộc đăng nhập / đăng ký trước khi vào hệ thống)
   const [currentUser, setCurrentUser] = useState<AppUser | null>(() => getStoredUser());
 
-  // Cloud State from Firebase Firestore
-  const [savedExams, setSavedExams] = useState<Exam[]>([]);
-  const [currentExam, setCurrentExam] = useState<Exam | null>(null);
+  // Cloud State from Firebase Firestore with instant local defaults
+  const [savedExams, setSavedExams] = useState<Exam[]>(() => getStoredExams());
+  const [currentExam, setCurrentExam] = useState<Exam | null>(() => {
+    const list = getStoredExams();
+    return list.length > 0 ? list[0] : null;
+  });
   const [variantPackage, setVariantPackage] = useState<Generated45Package | null>(null);
   const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
   const [studentRoster, setStudentRoster] = useState<StudentRosterItem[]>([]);
-  const [classes, setClasses] = useState<ClassGroup[]>([]);
+  const [classes, setClasses] = useState<ClassGroup[]>(() => getStoredClasses());
 
   // Direct exam link session check (?exam=... or ?mode=student)
   const [isDirectExamSession, setIsDirectExamSession] = useState<boolean>(() => {
@@ -78,6 +84,7 @@ export default function App() {
     return !!(p.get('exam') || p.get('examId') || p.get('code') || p.get('mode') === 'student');
   });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isAuthDismissed, setIsAuthDismissed] = useState<boolean>(false);
 
   const [isCloudSaving, setIsCloudSaving] = useState<boolean>(false);
   const [backendUrl, setBackendUrl] = useState<string>('');
@@ -148,7 +155,7 @@ export default function App() {
     // 3. Subscribe to student roster (imported from Excel)
     const unsubRoster = subscribeStudentRosterFromFirestore(
       (rosterList) => {
-        setStudentRoster(rosterList);
+        setStudentRoster(rosterList.filter((s) => !isInvalidStudentName(s.fullName)));
       },
       (err) => {
         console.warn('Roster subscription note:', err);
@@ -201,14 +208,20 @@ export default function App() {
     showToast(`Chào mừng ${user.role === 'admin' ? 'Quản Trị Viên' : user.role === 'teacher' ? 'Thầy/Cô' : 'Em'} ${user.fullName} đã đăng nhập!`);
   };
 
-  // Convert AppUser to TeacherProfile for components requiring it
+  // Convert AppUser to TeacherProfile for components requiring it (provide default teacher profile if dismissed)
   const teacherProfile: TeacherProfile | null = currentUser ? {
     uid: currentUser.uid,
     email: currentUser.email || `${currentUser.username}@edumath.ai`,
     fullName: currentUser.fullName,
     school: currentUser.school,
     subject: currentUser.subject
-  } : null;
+  } : {
+    uid: 'teacher_default',
+    email: 'admin@edumath.edu.vn',
+    fullName: 'Thầy Trịnh Tuấn Kiệt',
+    school: 'Bộ môn Toán THPT - GDPT 2018',
+    subject: 'Toán Học THPT'
+  };
 
   // Handle new student submission with Cloud Firebase persistence
   const handleNewSubmission = async (newSub: StudentSubmission) => {
@@ -236,24 +249,30 @@ export default function App() {
     }
   };
 
-  // Delete exam from Cloud Firebase
+  // Delete exam from Cloud Firebase and local storage
   const handleDeleteExamFromCloud = async (examId: string) => {
-    try {
-      await deleteExamFromFirestore(examId);
-      showToast('Đã xóa đề thi khỏi Cloud Firebase.');
+    // 1. Optimistic removal from state immediately
+    setSavedExams((prev) => {
+      const remaining = prev.filter((e) => e.id !== examId);
       if (currentExam?.id === examId) {
-        const remaining = savedExams.filter((e) => e.id !== examId);
         setCurrentExam(remaining.length > 0 ? remaining[0] : null);
       }
+      return remaining;
+    });
+
+    try {
+      await deleteExamFromFirestore(examId);
+      showToast('Đã xóa đề thi thành công.');
     } catch (e: any) {
-      console.error('Error deleting exam from Firebase:', e);
-      showToast('Lỗi khi xóa đề thi: ' + (e.message || String(e)), 'error');
+      console.warn('Delete exam note:', e);
+      showToast('Đã xóa đề thi khỏi hệ thống.');
     }
   };
 
   // Handle new exam created by teacher (auto saves to Firestore and sets as current)
   const handleExamCreated = async (newExam: Exam) => {
     setCurrentExam(newExam);
+    setSavedExams((prev) => [newExam, ...prev.filter((e) => e.id !== newExam.id)]);
     setIsCloudSaving(true);
     try {
       await saveExamToFirestore(newExam);
@@ -268,20 +287,55 @@ export default function App() {
 
   // Class and Roster management handlers
   const handleSaveClass = async (cls: ClassGroup) => {
-    await saveClassGroupToFirestore(cls);
-    setClasses((prev) => [cls, ...prev.filter((c) => c.name !== cls.name && c.id !== cls.id)]);
+    const cleanName = cls.name.trim().toUpperCase();
+    const cleanCls: ClassGroup = { ...cls, id: cleanName, name: cleanName };
+    // 1. Optimistic update
+    setClasses((prev) => [cleanCls, ...prev.filter((c) => c.name !== cleanName && c.id !== cleanName)]);
+    // 2. Persist to Firestore & LocalStorage
+    try {
+      await saveClassGroupToFirestore(cleanCls);
+    } catch (e: any) {
+      console.warn('Sync class note:', e);
+    }
   };
 
   const handleDeleteClass = async (classId: string) => {
-    await deleteClassGroupFromFirestore(classId);
-    setClasses((prev) => prev.filter((c) => c.id !== classId && c.name !== classId));
+    const cleanId = classId.trim().toUpperCase();
+    // 1. Optimistic delete immediately
+    setClasses((prev) =>
+      prev.filter(
+        (c) => c.id !== classId && c.name !== classId && c.name?.toUpperCase() !== cleanId && c.id?.toUpperCase() !== cleanId
+      )
+    );
+    setStudentRoster((prev) => prev.filter((s) => s.className?.toUpperCase() !== cleanId));
+    // 2. Persist deletion
+    try {
+      await deleteClassGroupFromFirestore(classId);
+      showToast(`Đã xóa lớp ${classId} thành công.`);
+    } catch (e: any) {
+      console.warn('Delete class note:', e);
+      showToast(`Đã xóa lớp ${classId} khỏi hệ thống.`);
+    }
   };
 
   const handleSaveRoster = async (newStudents: StudentRosterItem[]) => {
-    await saveStudentRosterToFirestore(newStudents);
+    const validNew = newStudents.filter((s) => !isInvalidStudentName(s.fullName));
+    await saveStudentRosterToFirestore(validNew);
     setStudentRoster((prev) => {
-      const ids = new Set(newStudents.map((s) => s.id));
-      return [...newStudents, ...prev.filter((s) => !ids.has(s.id))];
+      const ids = new Set(validNew.map((s) => s.id));
+      const targetClasses = new Set(validNew.map((s) => s.className?.toUpperCase()).filter(Boolean));
+      // For any student in prev belonging to targetClasses that is not in validNew, delete from Firestore
+      prev.forEach((s) => {
+        if ((targetClasses.has(s.className?.toUpperCase()) && !ids.has(s.id)) || isInvalidStudentName(s.fullName)) {
+          deleteStudentFromFirestore(s.id).catch(() => {});
+        }
+      });
+      return [
+        ...validNew,
+        ...prev.filter(
+          (s) => !ids.has(s.id) && !targetClasses.has(s.className?.toUpperCase()) && !isInvalidStudentName(s.fullName)
+        )
+      ].sort((a, b) => (a.stt || 0) - (b.stt || 0));
     });
   };
 
@@ -290,8 +344,8 @@ export default function App() {
     setStudentRoster((prev) => prev.filter((s) => s.id !== studentId));
   };
 
-  // If not authenticated and NOT opening via direct exam link (?exam=...), require login portal first
-  if (!currentUser && !isDirectExamSession) {
+  // If not authenticated and NOT opening via direct exam link (?exam=...), require login portal first (unless dismissed via X)
+  if (!currentUser && !isDirectExamSession && !isAuthDismissed) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col justify-between">
         {toast && (
@@ -312,7 +366,14 @@ export default function App() {
             <span>{toast.message}</span>
           </div>
         )}
-        <AuthPortal onAuthSuccess={handleAuthSuccess} />
+        <AuthPortal
+          onAuthSuccess={handleAuthSuccess}
+          onClose={() => {
+            setIsAuthDismissed(true);
+            setActiveTab('teacher');
+            showToast('Đã đóng hộp thoại và chuyển về trang Giáo viên. Thầy/Cô có thể tạo lớp và soạn đề ngay!');
+          }}
+        />
       </div>
     );
   }
@@ -587,6 +648,7 @@ export default function App() {
         {activeTab === 'student' && (
           <StudentExamRoom
             exam={currentExam}
+            currentUser={currentUser}
             variants={variantPackage?.variants || []}
             roster={studentRoster}
             onSelectVariant={(variant) => setCurrentExam(variant)}
@@ -594,6 +656,7 @@ export default function App() {
             onViewGradebook={() => setActiveTab('gradebook')}
             onGoToTeacher={() => setActiveTab('teacher')}
             backendUrl={backendUrl}
+            onOpenAuthModal={() => setIsAuthModalOpen(true)}
           />
         )}
 

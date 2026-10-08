@@ -29,13 +29,15 @@ import {
   X
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Exam, StudentSubmission, EssayGradingResult, StudentRosterItem } from '../types/exam';
+import { Exam, StudentSubmission, EssayGradingResult, StudentRosterItem, AppUser } from '../types/exam';
 import { StudentEssayUpload } from './StudentEssayUpload';
 import { MathRenderer } from './MathRenderer';
 import { QuestionVisual } from './QuestionVisual';
+import { isInvalidStudentName } from '../services/studentRosterParser';
 
 interface StudentExamRoomProps {
   exam: Exam | null;
+  currentUser?: AppUser | null;
   variants?: Exam[];
   roster?: StudentRosterItem[];
   onSelectVariant?: (variant: Exam) => void;
@@ -43,10 +45,12 @@ interface StudentExamRoomProps {
   onViewGradebook: () => void;
   onGoToTeacher?: () => void;
   backendUrl?: string;
+  onOpenAuthModal?: () => void;
 }
 
 export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
   exam,
+  currentUser,
   variants = [],
   roster = [],
   onSelectVariant,
@@ -54,17 +58,27 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
   onViewGradebook,
   onGoToTeacher,
   backendUrl = '',
+  onOpenAuthModal,
 }) => {
   // Check URL parameters for direct link access
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-  const initialName = urlParams?.get('student') || urlParams?.get('name') || '';
-  const initialClass = urlParams?.get('class') || urlParams?.get('lop') || '';
-  const initialSbd = urlParams?.get('sbd') || urlParams?.get('id') || '';
+  const initialName = urlParams?.get('student') || urlParams?.get('name') || currentUser?.fullName || '';
+  const initialClass = urlParams?.get('class') || urlParams?.get('lop') || currentUser?.className || '';
+  const initialSbd = urlParams?.get('sbd') || urlParams?.get('id') || currentUser?.sbd || currentUser?.username || '';
 
   // Student Info & Official Entry State
   const [studentName, setStudentName] = useState<string>(initialName);
   const [studentClass, setStudentClass] = useState<string>(initialClass);
   const [studentId, setStudentId] = useState<string>(initialSbd);
+
+  // Sync if currentUser changes
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'student') {
+      if (currentUser.fullName) setStudentName(currentUser.fullName);
+      if (currentUser.className) setStudentClass(currentUser.className);
+      if (currentUser.sbd || currentUser.username) setStudentId(currentUser.sbd || currentUser.username);
+    }
+  }, [currentUser]);
   const [isExamStarted, setIsExamStarted] = useState<boolean>(false);
   const [entryError, setEntryError] = useState<string | null>(null);
   const [isEditInfoOpen, setIsEditInfoOpen] = useState<boolean>(false);
@@ -451,8 +465,9 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
   const totalAnsweredCount = answeredMcCount + answeredTfCount + answeredEssayCount;
   const completionPercentage = Math.round((totalAnsweredCount / Math.max(1, totalQuestions)) * 100);
 
-  // Filtered roster suggestions
-  const rosterSuggestions = roster.filter(
+  // Filtered roster suggestions (Strictly valid students only)
+  const validRoster = (roster || []).filter((st) => !isInvalidStudentName(st.fullName));
+  const rosterSuggestions = validRoster.filter(
     (st) =>
       st.fullName.toLowerCase().includes(rosterFilter.toLowerCase()) ||
       st.sbd.toLowerCase().includes(rosterFilter.toLowerCase())
@@ -495,7 +510,20 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
       {/* ========================================================================= */}
       {!isExamStarted && !isSubmitted && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95 duration-200 text-slate-900">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95 duration-200 text-slate-900 relative">
+            {/* Nút thoát / Về trang Giáo viên */}
+            {onGoToTeacher && (
+              <button
+                type="button"
+                onClick={onGoToTeacher}
+                className="absolute top-5 right-5 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                title="Trở về trang Giáo viên"
+              >
+                <X className="w-4 h-4" />
+                <span className="hidden sm:inline">Về Trang Giáo Viên</span>
+              </button>
+            )}
+
             {/* Header */}
             <div className="text-center space-y-2">
               <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-indigo-600 via-blue-600 to-sky-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-indigo-500/25">
@@ -513,9 +541,48 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 </p>
               </div>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                Vui lòng điền <b>Họ và tên</b> và <b>Lớp</b> của bạn để xác nhận danh tính làm bài thi.
+                {currentUser && currentUser.role === 'student'
+                  ? 'Hệ thống đã nhận diện tài khoản của em. Vui lòng bấm Bắt Đầu Làm Bài!'
+                  : 'Vui lòng điền Họ và tên và Lớp của bạn, hoặc đăng nhập tài khoản do giáo viên cấp.'}
               </p>
             </div>
+
+            {/* If logged in student: show verified badge */}
+            {currentUser && currentUser.role === 'student' ? (
+              <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-950 flex items-center gap-3 shadow-2xs">
+                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-md">
+                      TÀI KHOẢN ĐÃ XÁC THỰC
+                    </span>
+                  </div>
+                  <div className="font-extrabold text-sm text-emerald-950 mt-0.5">
+                    {currentUser.fullName}
+                  </div>
+                  <div className="text-[11px] text-emerald-700 font-mono font-bold">
+                    Lớp: {currentUser.className || studentClass} • SBD: {currentUser.sbd || studentId || currentUser.username}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 rounded-2xl bg-blue-50/70 border border-blue-200 text-xs text-blue-950 flex items-center justify-between gap-2 shadow-2xs">
+                <div className="text-[11px]">
+                  <span className="font-bold text-blue-900">Vào thi tự do qua Link:</span> Điền Họ tên & Lớp bên dưới là làm bài ngay không cần mật khẩu.
+                </div>
+                {onOpenAuthModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenAuthModal}
+                    className="text-[11px] font-black text-indigo-700 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-200 hover:bg-indigo-50 shrink-0 cursor-pointer shadow-2xs"
+                  >
+                    Đăng nhập tài khoản lớp →
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Thông tin bài thi: [Tên đề thi] • [Khối lớp] • [Thời gian làm bài] • [Cấu trúc đề] */}
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs space-y-2">
@@ -580,7 +647,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 {/* Floating Autocomplete Dropdown */}
                 {isNameInputFocused && studentName.trim().length >= 1 && (
                   <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-indigo-200 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-slate-100">
-                    {roster
+                    {validRoster
                       .filter((st) =>
                         st.fullName.toLowerCase().includes(studentName.toLowerCase()) ||
                         st.sbd.toLowerCase().includes(studentName.toLowerCase())
@@ -611,7 +678,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                           </span>
                         </button>
                       ))}
-                    {roster.filter((st) =>
+                    {validRoster.filter((st) =>
                       st.fullName.toLowerCase().includes(studentName.toLowerCase())
                     ).length === 0 && (
                       <div className="p-2.5 text-xs text-slate-500 italic">
@@ -1338,8 +1405,8 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                             />
                           </div>
 
-                          {/* Lời giải chi tiết sau khi kết thúc làm bài */}
-                          {(isExamLocked || showDetailedSolutions) && essay.shortAnswerKey && (
+                          {/* Lời giải chi tiết sau khi kết thúc làm bài (Chỉ khi đã nộp bài và bật xem giải) */}
+                          {isSubmitted && showDetailedSolutions && essay.shortAnswerKey && (
                             <div className="mt-3.5 p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-950 space-y-1">
                               <div className="font-black text-indigo-800 flex items-center gap-1.5">
                                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -1375,6 +1442,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                           studentClass={studentClass}
                           backendUrl={backendUrl}
                           disabled={isExamLocked}
+                          isStudentExamView={true}
                           existingImageUrl={essayGradingData[essay.id]?.imageUrl}
                           existingImageUrls={essayGradingData[essay.id]?.imageUrls}
                           existingResult={essayGradingData[essay.id]?.grading}

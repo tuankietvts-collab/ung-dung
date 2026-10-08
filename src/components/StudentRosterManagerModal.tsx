@@ -18,6 +18,7 @@ import {
 import * as XLSX from 'xlsx-js-style';
 import { StudentRosterItem } from '../types/exam';
 import { saveStudentRosterToFirestore, deleteStudentFromFirestore } from '../services/firebase';
+import { parseStudentRosterFromWorkbook, isInvalidStudentName } from '../services/studentRosterParser';
 
 interface StudentRosterManagerModalProps {
   isOpen: boolean;
@@ -40,6 +41,7 @@ export const StudentRosterManagerModal: React.FC<StudentRosterManagerModalProps>
   const [previewList, setPreviewList] = useState<StudentRosterItem[] | null>(null);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [selectedClass, setSelectedClass] = useState<string>('all');
+  const [studentToDelete, setStudentToDelete] = useState<StudentRosterItem | null>(null);
 
   if (!isOpen) return null;
 
@@ -56,22 +58,36 @@ export const StudentRosterManagerModal: React.FC<StudentRosterManagerModalProps>
     return matchesSearch && matchesClass;
   });
 
-  // 1. Download Sample Excel Template [STT, Họ và tên, Lớp, SBD]
+  // 1. Download Sample Excel Template (Supports both vnEdu 2-column format & 1-column format)
   const handleDownloadSampleTemplate = () => {
-    const header = ['STT', 'Họ và tên', 'Lớp', 'SBD'];
-    const sampleRows = [
-      [1, 'Nguyễn Văn An', '12A1', '12A1-01'],
-      [2, 'Trần Thị Mai', '12A1', '12A1-02'],
-      [3, 'Lê Quốc Bảo', '12A1', '12A1-03'],
-      [4, 'Phạm Hoàng Nam', '12A1', '12A1-04'],
-      [5, 'Đỗ Thùy Linh', '12A1', '12A1-05'],
+    // Sheet 1: vnEdu Format (2 separate columns: Họ và chữ lót + Tên)
+    const headerVnEdu = ['STT', 'Mã học sinh', 'Họ và chữ lót', 'Tên', 'Lớp', 'Ngày sinh', 'Giới tính'];
+    const sampleVnEduRows = [
+      [1, '23000101', 'Nguyễn Văn', 'An', '12A1', '15/04/2007', 'Nam'],
+      [2, '23000102', 'Thái Thị Tuyết', 'Hồng', '12A1', '20/08/2007', 'Nữ'],
+      [3, '23000103', 'Trần Bảo', 'Nam', '12A1', '01/01/2007', 'Nam'],
+      [4, '23000104', 'Đỗ Thùy', 'Linh', '12A1', '12/11/2007', 'Nữ'],
+      [5, '23000105', 'Lê Quốc', 'Bảo', '12A1', '05/03/2007', 'Nam'],
     ];
+    const wsVnEdu = XLSX.utils.aoa_to_sheet([headerVnEdu, ...sampleVnEduRows]);
+    wsVnEdu['!cols'] = [{ wch: 8 }, { wch: 16 }, { wch: 22 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 10 }];
 
-    const ws = XLSX.utils.aoa_to_sheet([header, ...sampleRows]);
-    ws['!cols'] = [{ wch: 8 }, { wch: 26 }, { wch: 12 }, { wch: 16 }];
+    // Sheet 2: Standard 1-column format
+    const headerStandard = ['STT', 'Họ và tên', 'Lớp', 'Mã định danh/SBD'];
+    const sampleStandardRows = [
+      [1, 'Nguyễn Văn An', '12A1', '12A1-01'],
+      [2, 'Thái Thị Tuyết Hồng', '12A1', '12A1-02'],
+      [3, 'Trần Bảo Nam', '12A1', '12A1-03'],
+      [4, 'Đỗ Thùy Linh', '12A1', '12A1-04'],
+      [5, 'Lê Quốc Bảo', '12A1', '12A1-05'],
+    ];
+    const wsStandard = XLSX.utils.aoa_to_sheet([headerStandard, ...sampleStandardRows]);
+    wsStandard['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 12 }, { wch: 18 }];
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'DanhSachHocSinh');
-    XLSX.writeFile(wb, 'Mau_DanhSach_HocSinh_EduMath.xlsx');
+    XLSX.utils.book_append_sheet(wb, wsVnEdu, 'DinhDang_vnEdu_TachCot');
+    XLSX.utils.book_append_sheet(wb, wsStandard, 'DinhDang_Chuan_1Cot');
+    XLSX.writeFile(wb, 'Mau_DanhSach_HocSinh_vnEdu_EduMath.xlsx');
   };
 
   // 2. Handle File Upload (.xlsx, .xls, .csv)
@@ -85,77 +101,19 @@ export const StudentRosterManagerModal: React.FC<StudentRosterManagerModalProps>
     try {
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: 'array' });
-      const firstSheetName = wb.SheetNames[0];
-      const ws = wb.Sheets[firstSheetName];
-      const rawRows: any[] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      const result = parseStudentRosterFromWorkbook(wb, selectedClass === 'all' ? '12A1' : selectedClass);
 
-      if (!rawRows || rawRows.length < 2) {
-        throw new Error('File Excel rỗng hoặc không có dữ liệu học sinh.');
+      const validStudents = result.students.filter((s) => !isInvalidStudentName(s.fullName));
+
+      if (validStudents.length === 0) {
+        throw new Error('Không đọc được học sinh hợp lệ nào từ file. Vui lòng kiểm tra định dạng file.');
       }
 
-      // Find header row containing STT / Họ và tên / Lớp / SBD
-      let headerRowIndex = 0;
-      let colIdxStt = -1;
-      let colIdxName = -1;
-      let colIdxClass = -1;
-      let colIdxSbd = -1;
-
-      for (let r = 0; r < Math.min(10, rawRows.length); r++) {
-        const row = rawRows[r];
-        if (!Array.isArray(row)) continue;
-        for (let c = 0; c < row.length; c++) {
-          const val = String(row[c] || '').trim().toLowerCase();
-          if (val === 'stt' || val === 'no' || val.includes('thứ tự')) colIdxStt = c;
-          if (val.includes('họ') || val.includes('tên') || val.includes('name')) colIdxName = c;
-          if (val.includes('lớp') || val.includes('lop') || val.includes('class')) colIdxClass = c;
-          if (val.includes('sbd') || val.includes('báo danh') || val.includes('mã') || val.includes('sbd')) colIdxSbd = c;
-        }
-        if (colIdxName !== -1) {
-          headerRowIndex = r;
-          break;
-        }
-      }
-
-      // Fallbacks if not auto-detected by title
-      if (colIdxName === -1) colIdxName = 1;
-      if (colIdxStt === -1) colIdxStt = 0;
-      if (colIdxClass === -1) colIdxClass = 2;
-      if (colIdxSbd === -1) colIdxSbd = 3;
-
-      const parsedStudents: StudentRosterItem[] = [];
-
-      for (let r = headerRowIndex + 1; r < rawRows.length; r++) {
-        const row = rawRows[r];
-        if (!row || !Array.isArray(row) || row.length === 0) continue;
-
-        const nameVal = String(row[colIdxName] || '').trim();
-        if (!nameVal || nameVal.toLowerCase().includes('họ và tên')) continue;
-
-        const sttVal = parseInt(String(row[colIdxStt] || '0'), 10) || parsedStudents.length + 1;
-        const classVal = String(row[colIdxClass] || 'Toán 12').trim();
-        const sbdVal = String(row[colIdxSbd] || `${classVal}-${String(sttVal).padStart(2, '0')}`).trim();
-
-        const safeId = `${classVal}_${sbdVal}`.replace(/[\/\s#?]/g, '_');
-
-        parsedStudents.push({
-          id: safeId,
-          stt: sttVal,
-          fullName: nameVal,
-          className: classVal,
-          sbd: sbdVal,
-          createdAt: new Date().toISOString(),
-        });
-      }
-
-      if (parsedStudents.length === 0) {
-        throw new Error('Không đọc được học sinh nào từ file. Vui lòng kiểm tra định dạng các cột [STT, Họ và tên, Lớp, SBD].');
-      }
-
-      setPreviewList(parsedStudents);
-      setImportSummary(`Đã đọc được ${parsedStudents.length} học sinh từ file "${file.name}". Bấm "Xác nhận nạp vào Firestore" để hoàn tất.`);
+      setPreviewList(validStudents);
+      setImportSummary(`Đã nhận diện chuẩn ${validStudents.length} học sinh từ file "${file.name}"! ${result.formatNote ? `[${result.formatNote}]` : ''}. Bấm "Xác nhận nạp vào Firestore" để hoàn tất.`);
     } catch (err: any) {
       console.error('Import excel error:', err);
-      alert(err.message || 'Lỗi đọc file Excel.');
+      if (showToast) showToast(err.message || 'Lỗi đọc file Excel.', 'error');
     } finally {
       setIsProcessing(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -175,22 +133,28 @@ export const StudentRosterManagerModal: React.FC<StudentRosterManagerModalProps>
       setPreviewList(null);
       setImportSummary(null);
     } catch (err: any) {
-      alert('Lỗi lưu vào Firestore: ' + (err.message || String(err)));
+      if (showToast) showToast('Lỗi lưu vào Firestore: ' + (err.message || String(err)), 'error');
     } finally {
       setIsProcessing(false);
     }
   };
 
   // 4. Delete Single Student
-  const handleDeleteStudent = async (student: StudentRosterItem) => {
-    if (!confirm(`Xóa học sinh ${student.fullName} (SBD: ${student.sbd})?`)) return;
+  const handleDeleteStudent = (student: StudentRosterItem) => {
+    setStudentToDelete(student);
+  };
+
+  const handleConfirmDeleteStudent = async () => {
+    if (!studentToDelete) return;
     try {
-      await deleteStudentFromFirestore(student.id);
-      const updated = currentRoster.filter((s) => s.id !== student.id);
+      await deleteStudentFromFirestore(studentToDelete.id);
+      const updated = currentRoster.filter((s) => s.id !== studentToDelete.id);
       onRosterUpdated(updated);
-      if (showToast) showToast(`Đã xóa học sinh ${student.fullName}.`);
+      if (showToast) showToast(`Đã xóa học sinh ${studentToDelete.fullName}.`);
     } catch (err: any) {
-      alert('Lỗi khi xóa học sinh: ' + err.message);
+      if (showToast) showToast('Lỗi khi xóa học sinh: ' + err.message, 'error');
+    } finally {
+      setStudentToDelete(null);
     }
   };
 
@@ -394,6 +358,44 @@ export const StudentRosterManagerModal: React.FC<StudentRosterManagerModalProps>
           </button>
         </div>
       </div>
+
+      {/* Confirmation Modal Xóa Học Sinh (Zero confirm/alert) */}
+      {studentToDelete && (
+        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-slate-900 space-y-4 animate-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-2">
+              <h4 className="text-base font-black text-slate-900">
+                Xác Nhận Xóa Học Sinh
+              </h4>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Thầy/Cô có chắc chắn muốn xóa học sinh <b className="text-slate-900">{studentToDelete.fullName}</b> (SBD: <span className="font-mono text-indigo-700">{studentToDelete.sbd}</span>, Lớp {studentToDelete.className}) khỏi danh sách?
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setStudentToDelete(null)}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Hủy Bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteStudent}
+                className="py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Đồng Ý Xóa</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

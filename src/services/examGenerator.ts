@@ -1,4 +1,6 @@
 import { Exam, ExamMatrixData } from '../types/exam';
+import { detectGradeFromFileName, getDefaultTopicForGrade } from './fileUploadService';
+import { safeParseGeminiResponse } from './safeJsonParser';
 
 export interface PromptExamRequest {
   grade: string;
@@ -13,7 +15,7 @@ export interface MatrixExamRequest {
   grade: string;
   topic?: string;
   textbook?: string;
-  matrix: ExamMatrixData;
+  matrix?: ExamMatrixData;
   part3Type?: 'short_answer' | 'essay';
   matrixFileBase64?: string;
   matrixFileName?: string;
@@ -36,28 +38,72 @@ export interface RecreateExamRequest {
  * AI gọi API Gemini sinh đúng 100% nội dung câu hỏi mới theo yêu cầu đó, không sinh đề chung chung.
  */
 export async function generateExamByPrompt(params: PromptExamRequest): Promise<Exam> {
+  const effectiveGrade = params.grade || '11';
+  let effectiveTopic = params.topic;
+
+  // Safeguard against Grade 12 leakage when grade is 11 or 10
+  if (effectiveGrade === '11') {
+    if (!effectiveTopic || effectiveTopic.includes('Lớp 12') || effectiveTopic.includes('Khảo sát') || effectiveTopic.includes('Tích phân')) {
+      effectiveTopic = getDefaultTopicForGrade('11');
+    }
+  } else if (effectiveGrade === '10') {
+    if (!effectiveTopic || effectiveTopic.includes('Lớp 12') || effectiveTopic.includes('Khảo sát') || effectiveTopic.includes('Tích phân')) {
+      effectiveTopic = getDefaultTopicForGrade('10');
+    }
+  }
+
   const response = await fetch('/api/generate-exam', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       mode: 'prompt',
-      grade: params.grade,
-      topic: params.topic,
-      textbook: params.textbook,
-      difficulty: params.difficulty || 'Đề thi chuẩn cấu trúc tốt nghiệp THPT 2025',
+      grade: effectiveGrade,
+      topic: effectiveTopic,
+      textbook: params.textbook || 'Kết Nối Tri Thức Với Cuộc Sống',
+      difficulty: params.difficulty || `Đề thi chuẩn cấu trúc tốt nghiệp THPT Lớp ${effectiveGrade}`,
       promptCustom: params.promptCustom || '',
       part3Type: params.part3Type || 'short_answer',
     }),
   });
 
+  const rawText = await response.text();
+
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Lỗi khi yêu cầu AI tạo đề theo prompt');
+    let errorMsg = 'Lỗi khi yêu cầu AI tạo đề theo prompt';
+    try {
+      const err = safeParseGeminiResponse(rawText);
+      errorMsg = err.error || errorMsg;
+    } catch {
+      errorMsg = rawText || errorMsg;
+    }
+    throw new Error(errorMsg);
   }
 
-  const data = await response.json();
+  const data = safeParseGeminiResponse(rawText);
+  const exam: Exam = data.exam || data;
+
+  exam.grade = effectiveGrade;
+  if (effectiveGrade === '11') {
+    if (exam.title.includes('LỚP 12') || exam.title.includes('Lớp 12')) {
+      exam.title = exam.title.replace(/LỚP\s*12/gi, 'LỚP 11').replace(/Lớp\s*12/gi, 'Lớp 11');
+    }
+    if (!exam.title.toUpperCase().includes('LỚP 11')) {
+      exam.title = `ĐỀ KIỂM TRA TOÁN LỚP 11 - ${(effectiveTopic || 'GDPT 2018').toUpperCase()}`;
+    }
+    if (!exam.examCode || exam.examCode.startsWith('TOAN12') || exam.examCode.startsWith('TOAN10')) {
+      exam.examCode = `TOAN11-${Math.floor(100 + Math.random() * 900)}`;
+    }
+  } else if (effectiveGrade === '10') {
+    if (exam.title.includes('LỚP 12') || exam.title.includes('Lớp 12')) {
+      exam.title = exam.title.replace(/LỚP\s*12/gi, 'LỚP 10').replace(/Lớp\s*12/gi, 'Lớp 10');
+    }
+    if (!exam.examCode || exam.examCode.startsWith('TOAN12')) {
+      exam.examCode = `TOAN10-${Math.floor(100 + Math.random() * 900)}`;
+    }
+  }
+
   return {
-    ...data.exam,
+    ...exam,
     id: `exam-${Date.now()}`,
     createdAt: new Date().toISOString().split('T')[0],
   };
@@ -65,34 +111,116 @@ export async function generateExamByPrompt(params: PromptExamRequest): Promise<E
 
 /**
  * CƠ CHẾ 2: TẠO ĐỀ THEO MA TRẬN
- * Khi tải lên file/ảnh ma trận (hoặc cấu hình số câu Biết, Hiểu, Vận dụng cho từng phần I, II, III),
- * hệ thống bám sát tuyệt đối số lượng và dạng thức của ma trận để tạo đề.
+ * Khi tải lên file/ảnh ma trận (ví dụ: 11.pdf), hệ thống tự động bóc tách đúng khối lớp
+ * và bám sát tuyệt đối số lượng và dạng thức của ma trận để tạo đề.
+ * ĐỒNG BỘ 100% KHỐI LỚP 11 VÀ LOẠI BỎ TRIỆT ĐỂ BẤT KỲ DẤU VẾT NÀO CỦA LỚP 12.
  */
 export async function generateExamByMatrix(params: MatrixExamRequest): Promise<Exam> {
+  // 1. Auto-detect grade from filename and matrix topic: e.g. "11.pdf" -> Grade 11
+  const detectedGrade = detectGradeFromFileName(
+    params.matrixFileName || '',
+    params.matrix?.topic || params.topic || ''
+  );
+  const effectiveGrade: '10' | '11' | '12' = (params.matrixFileName ? detectedGrade : (params.grade || detectedGrade || '11')) as '10' | '11' | '12';
+  const defaultTopic = getDefaultTopicForGrade(effectiveGrade);
+
+  let effectiveTopic = params.topic || params.matrix?.topic;
+
+  // Strict check: if Grade is 11, wipe out any Grade 12 topics
+  if (effectiveGrade === '11') {
+    const isGrade12Leaked =
+      !effectiveTopic ||
+      effectiveTopic.includes('Lớp 12') ||
+      effectiveTopic.includes('LỚP 12') ||
+      effectiveTopic.includes('Khảo sát') ||
+      effectiveTopic.includes('Tích phân') ||
+      effectiveTopic.includes('Cực trị') ||
+      effectiveTopic.includes('Oxyz');
+
+    if (isGrade12Leaked) {
+      effectiveTopic = defaultTopic;
+    }
+  } else if (effectiveGrade === '10') {
+    const isGrade12Leaked =
+      !effectiveTopic ||
+      effectiveTopic.includes('Lớp 12') ||
+      effectiveTopic.includes('LỚP 12') ||
+      effectiveTopic.includes('Khảo sát') ||
+      effectiveTopic.includes('Tích phân');
+
+    if (isGrade12Leaked) {
+      effectiveTopic = defaultTopic;
+    }
+  }
+
   const response = await fetch('/api/generate-exam', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       mode: 'matrix',
-      grade: params.grade,
-      topic: params.topic || params.matrix?.topic || `Đề thi theo ma trận môn Toán lớp ${params.grade}`,
+      grade: effectiveGrade,
+      topic: effectiveTopic,
       textbook: params.textbook || params.matrix?.textbook || 'Kết Nối Tri Thức Với Cuộc Sống',
       matrix: params.matrix,
       part3Type: params.part3Type || (params.matrix?.part3 as any)?.type || 'short_answer',
       matrixFileBase64: params.matrixFileBase64,
       matrixFileName: params.matrixFileName,
-      matrixMimeType: params.matrixMimeType,
+      matrixMimeType: params.matrixMimeType || 'application/pdf',
     }),
   });
 
+  const rawText = await response.text();
+
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Lỗi khi tạo đề thi bám sát ma trận');
+    let errorMsg = 'Lỗi khi tạo đề thi bám sát ma trận';
+    try {
+      const err = safeParseGeminiResponse(rawText);
+      errorMsg = err.error || errorMsg;
+    } catch {
+      errorMsg = rawText || errorMsg;
+    }
+    throw new Error(errorMsg);
   }
 
-  const data = await response.json();
+  const data = safeParseGeminiResponse(rawText);
+  const exam: Exam = data.exam || data;
+
+  // 2. Strict grade & title synchronization
+  exam.grade = effectiveGrade;
+
+  // Ensure title and examCode reflect the exact grade (never let "TOÁN LỚP 12" or "TOAN12-597" appear on Grade 11/10!)
+  if (effectiveGrade === '11') {
+    exam.title = exam.title
+      .replace(/TOÁN\s*LỚP\s*12/gi, 'TOÁN LỚP 11')
+      .replace(/LỚP\s*12/gi, 'LỚP 11')
+      .replace(/Lớp\s*12/gi, 'Lớp 11')
+      .replace(/Khảo sát hàm số/gi, 'Lượng giác & Cấp số')
+      .replace(/Tích phân/gi, 'Giới hạn & Hình không gian');
+
+    if (!exam.title.toUpperCase().includes('LỚP 11')) {
+      exam.title = `ĐỀ KIỂM TRA TOÁN LỚP 11 - ${(effectiveTopic || 'MA TRẬN GDPT 2018').toUpperCase()}`;
+    }
+
+    if (!exam.examCode || exam.examCode.startsWith('TOAN12') || exam.examCode.startsWith('TOAN10') || exam.examCode.startsWith('SH-')) {
+      exam.examCode = `TOAN11-${Math.floor(100 + Math.random() * 900)}`;
+    }
+  } else if (effectiveGrade === '10') {
+    exam.title = exam.title
+      .replace(/TOÁN\s*LỚP\s*12/gi, 'TOÁN LỚP 10')
+      .replace(/LỚP\s*12/gi, 'LỚP 10')
+      .replace(/Lớp\s*12/gi, 'Lớp 10');
+
+    if (!exam.title.toUpperCase().includes('LỚP 10')) {
+      exam.title = `ĐỀ KIỂM TRA TOÁN LỚP 10 - ${(effectiveTopic || 'MA TRẬN GDPT 2018').toUpperCase()}`;
+    }
+
+    if (!exam.examCode || exam.examCode.startsWith('TOAN12')) {
+      exam.examCode = `TOAN10-${Math.floor(100 + Math.random() * 900)}`;
+    }
+  }
+
   return {
-    ...data.exam,
+    ...exam,
     id: `exam-${Date.now()}`,
     createdAt: new Date().toISOString().split('T')[0],
   };
@@ -104,6 +232,8 @@ export async function generateExamByMatrix(params: MatrixExamRequest): Promise<E
  * đổi ngữ cảnh và xáo trộn vị trí đáp án đúng để tạo ra một đề mới hoàn toàn tương đương.
  */
 export async function recreateExamWithVariations(params: RecreateExamRequest): Promise<Exam> {
+  const effectiveGrade = params.grade || params.originalExam?.grade || '11';
+
   const response = await fetch('/api/generate-exam', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -112,21 +242,44 @@ export async function recreateExamWithVariations(params: RecreateExamRequest): P
       originalExam: params.originalExam,
       examFileBase64: params.examFileBase64,
       examFileName: params.examFileName,
-      grade: params.grade || params.originalExam?.grade || '12',
+      grade: effectiveGrade,
       topic: params.topic || (params.originalExam ? `Tái tạo tương đương từ ${params.originalExam.title}` : 'Tái tạo đề tương tự'),
       textbook: params.textbook || params.originalExam?.textbook || 'Kết Nối Tri Thức Với Cuộc Sống',
       part3Type: params.part3Type || params.originalExam?.part3Type || 'short_answer',
     }),
   });
 
+  const rawText = await response.text();
+
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Lỗi khi tái tạo đề thi tương đương');
+    let errorMsg = 'Lỗi khi tái tạo đề thi tương đương';
+    try {
+      const err = safeParseGeminiResponse(rawText);
+      errorMsg = err.error || errorMsg;
+    } catch {
+      errorMsg = rawText || errorMsg;
+    }
+    throw new Error(errorMsg);
   }
 
-  const data = await response.json();
+  const data = safeParseGeminiResponse(rawText);
+  const exam: Exam = data.exam || data;
+
+  exam.grade = effectiveGrade;
+  if (effectiveGrade === '11') {
+    if (exam.title.includes('LỚP 12') || exam.title.includes('Lớp 12')) {
+      exam.title = exam.title.replace(/LỚP\s*12/gi, 'LỚP 11').replace(/Lớp\s*12/gi, 'Lớp 11');
+    }
+    if (!exam.title.toUpperCase().includes('LỚP 11')) {
+      exam.title = `ĐỀ THI TÁI TẠO TƯƠNG ĐƯƠNG LỚP 11 - ${(exam.topic || 'GDPT 2018').toUpperCase()}`;
+    }
+    if (!exam.examCode || exam.examCode.startsWith('TOAN12') || exam.examCode.startsWith('TAITAO12')) {
+      exam.examCode = `TAITAO11-${Math.floor(100 + Math.random() * 900)}`;
+    }
+  }
+
   return {
-    ...data.exam,
+    ...exam,
     id: `exam-recreated-${Date.now()}`,
     createdAt: new Date().toISOString().split('T')[0],
   };

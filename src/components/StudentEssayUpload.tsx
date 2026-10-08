@@ -41,6 +41,7 @@ interface StudentEssayUploadProps {
   existingImageUrls?: string[];
   backendUrl?: string;
   disabled?: boolean;
+  isStudentExamView?: boolean;
 }
 
 export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
@@ -53,6 +54,7 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
   existingImageUrls,
   backendUrl = '',
   disabled = false,
+  isStudentExamView = false,
 }) => {
   // State: Multiple images for handwritten essay submission (Trang 1, Trang 2...)
   const [imageList, setImageList] = useState<PageImageItem[]>(() => {
@@ -387,21 +389,47 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
         </div>
       )}
 
-      {/* Rubric Preview (Barem ghi chú thang điểm) */}
-      <div className="mb-6 p-4 rounded-xl bg-emerald-50/50 border border-emerald-100 text-xs">
-        <div className="font-bold text-emerald-900 flex items-center gap-1.5 mb-2">
-          <Sparkles className="w-4 h-4 text-emerald-600" />
-          Barem chấm điểm từng bước (Thang điểm: {essay.maxPoints}đ):
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {essay.rubric.map((r, idx) => (
-            <div key={idx} className="bg-white p-2.5 rounded-lg border border-emerald-100 text-slate-700 font-medium">
-              <span className="font-extrabold text-emerald-800">{r.step}</span> ({r.points}đ):{' '}
-              <MathRenderer content={r.description} />
+      {/* Thông tin thang điểm & Hướng dẫn làm bài (Tuyệt đối không hiển thị barem đáp án khi thí sinh đang làm bài) */}
+      {!disabled && !existingResult && (
+        <div className="mb-5 p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Sparkles className="w-4 h-4" />
             </div>
-          ))}
+            <div>
+              <div className="font-extrabold text-indigo-950 text-sm">
+                Câu hỏi tự luận & Nộp bài viết tay
+              </div>
+              <p className="text-slate-600 font-medium text-xs mt-0.5">
+                Thí sinh làm bài ra giấy thi, chụp ảnh bài làm hoặc chọn tải file ảnh bài làm lên bên dưới để nộp.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-start sm:self-center">
+            <span className="font-black text-indigo-700 bg-white px-3 py-1.5 rounded-xl border border-indigo-200 shrink-0 text-xs shadow-2xs">
+              Thang điểm: <b>{essay.maxPoints || 1}đ</b>
+            </span>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Barem đáp án & thang điểm từng bước (TUYỆT ĐỐI KHÔNG HIỂN THỊ TRONG ĐỀ THI CỦA HỌC SINH) */}
+      {!isStudentExamView && (disabled || existingResult) && essay.rubric && essay.rubric.length > 0 && (
+        <div className="mb-6 p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs">
+          <div className="font-bold text-emerald-900 flex items-center gap-1.5 mb-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <span>Đáp án & Barem chấm điểm tham khảo (Thang điểm: {essay.maxPoints}đ):</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {essay.rubric.map((r, idx) => (
+              <div key={idx} className="bg-white p-2.5 rounded-lg border border-emerald-100 text-slate-700 font-medium">
+                <span className="font-extrabold text-emerald-800">{r.step}</span> ({r.points}đ):{' '}
+                <MathRenderer content={r.description} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Camera Live Stream */}
       {isCameraActive && (
@@ -435,12 +463,12 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
       <div className="space-y-4">
         {/* Upload Action Bar */}
         <div className="p-4 sm:p-5 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/20 hover:border-indigo-400 transition-colors">
-          {/* File picker input for image library */}
+          {/* File picker input for image library & PDF */}
           <input
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/*"
+            accept="image/*,application/pdf"
             className="hidden"
             onChange={handleFilesChange}
           />
@@ -500,36 +528,35 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
             </div>
           </div>
 
-          {/* Quick sample buttons for test/demo */}
-          <div className="mt-4 pt-3 border-t border-indigo-100/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-slate-500 font-semibold">Hoặc thử nhanh bài mẫu viết tay:</span>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <button
-                type="button"
-                onClick={() => !disabled && handleSelectSample('perfect')}
-                disabled={disabled}
-                className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-emerald-500 text-emerald-700 font-bold text-xs cursor-pointer disabled:opacity-50"
-              >
-                Bài mẫu 10đ
-              </button>
-              <button
-                type="button"
-                onClick={() => !disabled && handleSelectSample('university_error')}
-                disabled={disabled}
-                className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-rose-500 text-rose-700 font-bold text-xs cursor-pointer disabled:opacity-50"
-              >
-                Vi phạm L'Hôpital
-              </button>
-              <button
-                type="button"
-                onClick={() => !disabled && handleSelectSample('calculation_error')}
-                disabled={disabled}
-                className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-amber-500 text-amber-700 font-bold text-xs cursor-pointer disabled:opacity-50"
-              >
-                Sai tính toán
-              </button>
+          {/* Quick sample buttons for test/demo (Chỉ hiển thị khi giáo viên thử nghiệm, không hiển thị trong đề thi học sinh) */}
+          {!isStudentExamView && (disabled || existingResult) && (
+            <div className="mt-4 pt-3 border-t border-indigo-100/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-slate-500 font-semibold">Thử nghiệm các trường hợp chấm điểm AI:</span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => handleSelectSample('perfect')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-emerald-500 text-emerald-700 font-bold text-xs cursor-pointer shadow-2xs"
+                >
+                  Bài mẫu 10đ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSample('university_error')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-rose-500 text-rose-700 font-bold text-xs cursor-pointer shadow-2xs"
+                >
+                  Vi phạm L'Hôpital
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSample('calculation_error')}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-amber-500 text-amber-700 font-bold text-xs cursor-pointer shadow-2xs"
+                >
+                  Sai tính toán
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Uploading progress bar */}
@@ -639,41 +666,58 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
               </div>
             )}
 
-            {/* AI Grading Button */}
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={handleGradeWithAI}
-                disabled={disabled || isGrading}
-                className="w-full py-3.5 px-4 rounded-xl font-black text-white text-sm shadow-md transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-700 hover:to-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {isGrading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>AI Gemini Vision đang đối chiếu barem và chấm bài...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>Gửi AI Chấm Tự Luận Theo Barem Chi Tiết</span>
-                  </>
-                )}
-              </button>
-
-              {isGrading && (
-                <div className="mt-2 p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-800 animate-pulse flex items-center gap-2">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                  <span>{gradingStepText || 'Đang quét nét chữ và nhận diện công thức toán...'}</span>
+            {/* Trong đề thi của học sinh: Tuyệt đối không hiển thị đáp án, barem hay nút tự chấm AI */}
+            {isStudentExamView ? (
+              <div className="pt-2">
+                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center justify-between gap-2 shadow-2xs">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="font-bold">
+                      Đã đính kèm {imageList.length} trang ảnh bài làm tự luận của em.
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-emerald-700 font-medium hidden sm:inline">
+                    (Bài thi sẽ được gửi lên hệ thống khi em bấm "Nộp Bài Thi")
+                  </span>
                 </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              /* Dành cho giao diện giáo viên: Nút gọi AI chấm bài */
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleGradeWithAI}
+                  disabled={disabled || isGrading}
+                  className="w-full py-3.5 px-4 rounded-xl font-black text-white text-sm shadow-md transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-700 hover:to-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isGrading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>AI Gemini Vision đang đối chiếu barem và chấm bài...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Gửi AI Chấm Tự Luận Theo Barem Chi Tiết</span>
+                    </>
+                  )}
+                </button>
+
+                {isGrading && (
+                  <div className="mt-2 p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-800 animate-pulse flex items-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                    <span>{gradingStepText || 'Đang quét nét chữ và nhận diện công thức toán...'}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="py-8 text-center border border-dashed border-slate-200 rounded-2xl bg-slate-50/50 text-slate-400">
             <FileText className="w-10 h-10 mx-auto mb-2 text-slate-300" />
             <p className="text-xs font-semibold">Chưa có ảnh bài làm tự luận nào được tải lên</p>
             <p className="text-[11px] text-slate-400 mt-1">
-              Bấm nút "Chọn ảnh từ máy" hoặc "Mở Camera chụp" ở trên để nộp bài
+              Bấm nút "Chọn ảnh từ thư viện" hoặc "Chụp ảnh bài làm" ở trên để nộp bài
             </p>
           </div>
         )}
@@ -687,8 +731,8 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
         </div>
       )}
 
-      {/* AI Grading Results */}
-      {gradingResult && (
+      {/* AI Grading Results (Chỉ hiển thị cho Giáo viên hoặc xem lại khi không phải trong phòng thi của học sinh) */}
+      {!isStudentExamView && gradingResult && (
         <div className="mt-6 pt-6 border-t border-slate-200 space-y-4 animate-in fade-in duration-300">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl bg-slate-900 text-white gap-3 shadow-md">
             <div>

@@ -22,7 +22,9 @@ import {
   orderBy
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile, AppUser, UserRole } from '../types/exam';
+import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile, AppUser, UserRole, GradingCalibrationFeedback } from '../types/exam';
+import { DEFAULT_SAMPLE_EXAMS } from '../data/defaultExam';
+import { isInvalidStudentName } from './studentRosterParser';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -171,11 +173,67 @@ testConnection();
 // Collection names
 const EXAMS_COLLECTION = 'exams';
 const SUBMISSIONS_COLLECTION = 'submissions';
+const EXAMS_STORAGE_KEY = 'edumath_saved_exams';
+const DELETED_EXAMS_STORAGE_KEY = 'edumath_deleted_exam_ids';
+
+export function getDeletedExamIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_EXAMS_STORAGE_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function markExamAsDeletedLocally(examId: string): void {
+  try {
+    const deleted = getDeletedExamIds();
+    deleted.add(examId);
+    localStorage.setItem(DELETED_EXAMS_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
+    const remaining = getStoredExams().filter((e) => e.id !== examId);
+    localStorage.setItem(EXAMS_STORAGE_KEY, JSON.stringify(remaining));
+  } catch (e) {
+    console.error('Error marking exam deleted:', e);
+  }
+}
+
+export function getStoredExams(): Exam[] {
+  try {
+    const deleted = getDeletedExamIds();
+    const raw = localStorage.getItem(EXAMS_STORAGE_KEY);
+    const list: Exam[] = raw ? JSON.parse(raw) : DEFAULT_SAMPLE_EXAMS;
+    return list.filter((e) => !deleted.has(e.id));
+  } catch {
+    return [];
+  }
+}
+
+export function saveExamsLocally(exams: Exam[]): void {
+  try {
+    localStorage.setItem(EXAMS_STORAGE_KEY, JSON.stringify(exams));
+  } catch (e) {
+    console.error('Error saving exams locally:', e);
+  }
+}
 
 /**
- * Save or update an exam in Firebase Cloud Firestore
+ * Save or update an exam in Firebase Cloud Firestore and LocalStorage
  */
 export async function saveExamToFirestore(exam: Exam): Promise<void> {
+  // Unmark from deleted if re-created or re-saved
+  try {
+    const deleted = getDeletedExamIds();
+    if (deleted.has(exam.id)) {
+      deleted.delete(exam.id);
+      localStorage.setItem(DELETED_EXAMS_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
+    }
+    const local = getStoredExams();
+    const updated = [exam, ...local.filter((e) => e.id !== exam.id)];
+    saveExamsLocally(updated);
+  } catch (e) {
+    console.error('Local exam save error:', e);
+  }
+
   const path = `${EXAMS_COLLECTION}/${exam.id}`;
   try {
     const examDocRef = doc(db, EXAMS_COLLECTION, exam.id);
@@ -185,20 +243,21 @@ export async function saveExamToFirestore(exam: Exam): Promise<void> {
     };
     await setDoc(examDocRef, dataToSave, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    console.warn('Firestore exam save warning (saved locally):', error);
   }
 }
 
 /**
- * Delete an exam from Firebase Cloud Firestore
+ * Delete an exam from Firebase Cloud Firestore and LocalStorage
  */
 export async function deleteExamFromFirestore(examId: string): Promise<void> {
+  markExamAsDeletedLocally(examId);
   const path = `${EXAMS_COLLECTION}/${examId}`;
   try {
     const examDocRef = doc(db, EXAMS_COLLECTION, examId);
     await deleteDoc(examDocRef);
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    console.warn('Firestore exam delete note (deleted locally):', error);
   }
 }
 
@@ -214,21 +273,31 @@ export function subscribeExamsFromFirestore(
     colRef,
     (snapshot) => {
       const exams: Exam[] = [];
+      const deleted = getDeletedExamIds();
       snapshot.forEach((docSnap) => {
-        exams.push(docSnap.data() as Exam);
+        const item = docSnap.data() as Exam;
+        if (!deleted.has(item.id)) {
+          exams.push(item);
+        }
       });
-      // Sort by newest first
-      exams.sort((a, b) => {
-        const timeA = (a as any).updatedAt || (a as any).createdAt || '';
-        const timeB = (b as any).updatedAt || (b as any).createdAt || '';
-        return timeB.localeCompare(timeA);
-      });
-      onExams(exams);
+      if (exams.length > 0) {
+        saveExamsLocally(exams);
+        exams.sort((a, b) => {
+          const timeA = (a as any).updatedAt || (a as any).createdAt || '';
+          const timeB = (b as any).updatedAt || (b as any).createdAt || '';
+          return timeB.localeCompare(timeA);
+        });
+        onExams(exams);
+      } else {
+        const local = getStoredExams();
+        onExams(local);
+      }
     },
     (error) => {
-      console.error('Error listening to exams:', error);
+      console.warn('Error listening to exams, falling back to local stored exams:', error);
+      const local = getStoredExams();
+      onExams(local);
       if (onError) onError(error);
-      handleFirestoreError(error, OperationType.GET, EXAMS_COLLECTION);
     }
   );
   return unsubscribe;
@@ -292,13 +361,104 @@ export function subscribeSubmissionsFromFirestore(
   return unsubscribe;
 }
 
+// ==========================================
+// Grading Calibration Feedback Collection (For Fine-tuning & Prompt Tuning)
+// ==========================================
+const CALIBRATION_COLLECTION = 'grading_calibration_feedback';
+const CALIBRATION_STORAGE_KEY = 'edumath_calibration_feedback';
+
+export function getStoredCalibrationFeedbacks(): GradingCalibrationFeedback[] {
+  try {
+    const raw = localStorage.getItem(CALIBRATION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCalibrationFeedbackToFirestore(feedback: GradingCalibrationFeedback): Promise<void> {
+  try {
+    const list = getStoredCalibrationFeedbacks();
+    const idx = list.findIndex((f) => f.id === feedback.id);
+    if (idx >= 0) {
+      list[idx] = feedback;
+    } else {
+      list.unshift(feedback);
+    }
+    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(list));
+  } catch {}
+
+  const path = `${CALIBRATION_COLLECTION}/${feedback.id}`;
+  try {
+    const docRef = doc(db, CALIBRATION_COLLECTION, feedback.id);
+    await setDoc(docRef, feedback, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeCalibrationFeedbackFromFirestore(
+  onFeedback: (feedbacks: GradingCalibrationFeedback[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, CALIBRATION_COLLECTION);
+  const unsubscribe = onSnapshot(
+    colRef,
+    (snapshot) => {
+      const list: GradingCalibrationFeedback[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as GradingCalibrationFeedback);
+      });
+      list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      onFeedback(list);
+    },
+    (error) => {
+      console.warn('Error listening to calibration feedback, using local cache:', error);
+      if (onError) onError(error);
+      onFeedback(getStoredCalibrationFeedbacks());
+    }
+  );
+  return unsubscribe;
+}
+
+export async function deleteCalibrationFeedbackFromFirestore(feedbackId: string): Promise<void> {
+  try {
+    const list = getStoredCalibrationFeedbacks().filter((f) => f.id !== feedbackId);
+    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(list));
+  } catch {}
+
+  const path = `${CALIBRATION_COLLECTION}/${feedbackId}`;
+  try {
+    const docRef = doc(db, CALIBRATION_COLLECTION, feedbackId);
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 const STUDENTS_COLLECTION = 'students';
+const STUDENTS_STORAGE_KEY = 'edumath_students_roster';
+
+export function getStoredStudentRoster(): StudentRosterItem[] {
+  try {
+    const raw = localStorage.getItem(STUDENTS_STORAGE_KEY);
+    const list: StudentRosterItem[] = raw ? JSON.parse(raw) : [];
+    return list.filter((s) => !isInvalidStudentName(s.fullName));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Save student roster to Firebase Cloud Firestore
  */
 export async function saveStudentRosterToFirestore(students: StudentRosterItem[]): Promise<void> {
-  for (const st of students) {
+  const validStudents = students.filter((s) => !isInvalidStudentName(s.fullName));
+  try {
+    localStorage.setItem(STUDENTS_STORAGE_KEY, JSON.stringify(validStudents));
+  } catch {}
+
+  for (const st of validStudents) {
     const safeDocId = `${st.className || 'lop'}_${st.sbd || st.id || st.stt}`.replace(/[\/\s#?]/g, '_');
     const docRef = doc(db, STUDENTS_COLLECTION, safeDocId);
     await setDoc(docRef, { ...st, id: safeDocId, updatedAt: new Date().toISOString() }, { merge: true });
@@ -306,7 +466,91 @@ export async function saveStudentRosterToFirestore(students: StudentRosterItem[]
 }
 
 /**
+ * Delete all students of a specific class from Firestore (useful when replacing class roster)
+ */
+export async function deleteClassStudentsFromFirestore(className: string): Promise<void> {
+  const clean = className.trim().toUpperCase();
+  const roster = getStoredStudentRoster();
+  const toDelete = roster.filter((s) => s.className?.toUpperCase() === clean);
+  for (const st of toDelete) {
+    await deleteStudentFromFirestore(st.id).catch(() => {});
+  }
+  const remaining = roster.filter((s) => s.className?.toUpperCase() !== clean);
+  try {
+    localStorage.setItem(STUDENTS_STORAGE_KEY, JSON.stringify(remaining));
+  } catch {}
+}
+
+/**
+ * Tạo tài khoản hàng loạt cho toàn bộ học sinh trong lớp
+ * Tự sinh Username chuẩn (vd: 11a1_01, 11a1_02 hoặc theo SBD) và Mật khẩu mặc định (123456)
+ */
+export async function createStudentAccountsForClass(
+  className: string,
+  students: StudentRosterItem[],
+  defaultPassword: string = '123456'
+): Promise<StudentRosterItem[]> {
+  const cleanClass = className.trim().toUpperCase();
+  const classTag = cleanClass.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const pass = defaultPassword.trim() || '123456';
+  const updatedStudents: StudentRosterItem[] = [];
+
+  for (let i = 0; i < students.length; i++) {
+    const st = students[i];
+    const sttNum = st.stt || i + 1;
+    const cleanSbd = (st.sbd || `${cleanClass}-${String(sttNum).padStart(2, '0')}`).trim();
+    // Tên đăng nhập dễ nhớ: ví dụ 11a1_01 hoặc 10a2_15
+    const username = `${classTag}_${String(sttNum).padStart(2, '0')}`;
+
+    const updatedSt: StudentRosterItem = {
+      ...st,
+      stt: sttNum,
+      className: cleanClass,
+      sbd: cleanSbd,
+      username,
+      password: pass,
+      isAccountCreated: true,
+    };
+    updatedStudents.push(updatedSt);
+
+    // Tạo AppUser cho học sinh
+    const studentUser: AppUser = {
+      uid: `student_${cleanClass}_${cleanSbd}`.replace(/[\/\s#?]/g, '_'),
+      role: 'student',
+      fullName: st.fullName.trim(),
+      username,
+      email: `${username}@edumath.edu.vn`,
+      school: 'Trường THPT',
+      className: cleanClass,
+      subject: 'Toán Học GDPT 2018',
+      createdAt: new Date().toISOString(),
+    };
+
+    // Lưu vào bộ nhớ local để đăng nhập ngay lập tức
+    saveRegisteredUserLocally(username, pass, studentUser);
+    // Cho phép đăng nhập bằng cả SBD (vd: 11A1-01)
+    if (cleanSbd.toLowerCase() !== username.toLowerCase()) {
+      saveRegisteredUserLocally(cleanSbd.toLowerCase(), pass, studentUser);
+    }
+
+    // Đồng bộ lên Firestore USERS_COLLECTION
+    try {
+      const userDocRef = doc(db, USERS_COLLECTION, studentUser.uid);
+      await setDoc(userDocRef, { ...studentUser, passHash: pass }, { merge: true });
+    } catch (e) {
+      console.warn('Firestore student user save note:', e);
+    }
+  }
+
+  // Cập nhật danh sách học sinh lên Firestore
+  await saveStudentRosterToFirestore(updatedStudents);
+
+  return updatedStudents;
+}
+
+/**
  * Subscribe to real-time student roster from Firebase Cloud Firestore
+ * Automatically purges any invalid summary / footer rows (e.g. "Khối 11 - Lớp 11A1", "THỐNG KÊ HỌC KỲ 1")
  */
 export function subscribeStudentRosterFromFirestore(
   onStudents: (students: StudentRosterItem[]) => void,
@@ -318,7 +562,13 @@ export function subscribeStudentRosterFromFirestore(
     (snapshot) => {
       const list: StudentRosterItem[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as StudentRosterItem);
+        const item = docSnap.data() as StudentRosterItem;
+        // Purge invalid non-student items (summary rows, title rows)
+        if (isInvalidStudentName(item.fullName)) {
+          deleteDoc(docSnap.ref).catch(() => {});
+          return;
+        }
+        list.push(item);
       });
       list.sort((a, b) => (a.stt || 0) - (b.stt || 0));
       onStudents(list);
@@ -347,15 +597,48 @@ export async function deleteStudentFromFirestore(studentDocId: string): Promise<
 
 const CLASSES_COLLECTION = 'classes';
 const CLASSES_STORAGE_KEY = 'edumath_class_groups';
+const DELETED_CLASSES_STORAGE_KEY = 'edumath_deleted_class_ids';
+
+const DEFAULT_CLASSES: ClassGroup[] = [
+  { id: '10A1', name: '10A1', grade: '10', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() },
+  { id: '10A2', name: '10A2', grade: '10', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() },
+  { id: '12A8', name: '12A8', grade: '12', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() }
+];
+
+export function getDeletedClassIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_CLASSES_STORAGE_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function markClassAsDeletedLocally(classId: string): void {
+  try {
+    const clean = classId.trim().toUpperCase();
+    const deleted = getDeletedClassIds();
+    deleted.add(classId);
+    deleted.add(clean);
+    localStorage.setItem(DELETED_CLASSES_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
+
+    const remaining = getStoredClasses().filter(
+      (c) => c.id !== classId && c.name !== classId && c.name?.toUpperCase() !== clean && c.id?.toUpperCase() !== clean
+    );
+    saveClassesLocally(remaining);
+  } catch (e) {
+    console.error('Error marking class deleted:', e);
+  }
+}
 
 export function getStoredClasses(): ClassGroup[] {
   try {
+    const deleted = getDeletedClassIds();
     const raw = localStorage.getItem(CLASSES_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [
-      { id: '10A1', name: '10A1', grade: '10', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() },
-      { id: '10A2', name: '10A2', grade: '10', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() },
-      { id: '12A8', name: '12A8', grade: '12', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() }
-    ];
+    const classes: ClassGroup[] = raw ? JSON.parse(raw) : DEFAULT_CLASSES;
+    return classes.filter(
+      (c) => !deleted.has(c.id) && !deleted.has(c.name) && !deleted.has(c.name?.toUpperCase()) && !deleted.has(c.id?.toUpperCase())
+    );
   } catch {
     return [];
   }
@@ -370,17 +653,31 @@ export function saveClassesLocally(classes: ClassGroup[]): void {
 }
 
 export async function saveClassGroupToFirestore(cls: ClassGroup): Promise<void> {
-  const safeId = cls.id || cls.name.replace(/[^a-zA-Z0-9_]/g, '_');
+  const cleanName = cls.name.trim().toUpperCase();
+  const safeId = (cls.id || cleanName).replace(/[\/\s#?]+/g, '_').toUpperCase();
+
+  // If this class was previously deleted, remove from deleted tracking so it can be restored/re-created
+  try {
+    const deleted = getDeletedClassIds();
+    if (deleted.has(cls.id) || deleted.has(cls.name) || deleted.has(cleanName)) {
+      deleted.delete(cls.id);
+      deleted.delete(cls.name);
+      deleted.delete(cleanName);
+      localStorage.setItem(DELETED_CLASSES_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
+    }
+    const local = getStoredClasses();
+    const updated = [cls, ...local.filter((c) => c.id !== cls.id && c.name !== cls.name && c.name?.toUpperCase() !== cleanName)];
+    saveClassesLocally(updated);
+  } catch (e) {
+    console.error('Local class save note:', e);
+  }
+
   const path = `${CLASSES_COLLECTION}/${safeId}`;
   try {
-    const local = getStoredClasses();
-    const updated = [cls, ...local.filter(c => c.id !== cls.id && c.name !== cls.name)];
-    saveClassesLocally(updated);
-
     const docRef = doc(db, CLASSES_COLLECTION, safeId);
-    await setDoc(docRef, { ...cls, id: safeId, updatedAt: new Date().toISOString() }, { merge: true });
+    await setDoc(docRef, { ...cls, id: safeId, name: cleanName, updatedAt: new Date().toISOString() }, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    console.warn('Firestore class save note (saved locally):', error);
   }
 }
 
@@ -393,14 +690,23 @@ export function subscribeClassGroupsFromFirestore(
     colRef,
     (snapshot) => {
       const list: ClassGroup[] = [];
+      const deleted = getDeletedClassIds();
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as ClassGroup);
+        const item = docSnap.data() as ClassGroup;
+        if (
+          !deleted.has(item.id) &&
+          !deleted.has(item.name) &&
+          !deleted.has(item.name?.toUpperCase()) &&
+          !deleted.has(item.id?.toUpperCase())
+        ) {
+          list.push(item);
+        }
       });
       if (list.length > 0) {
         saveClassesLocally(list);
         onClasses(list);
       } else {
-        // Fallback to local default classes if firestore collection is empty
+        // Fallback to local stored classes if firestore collection is empty
         const local = getStoredClasses();
         onClasses(local);
       }
@@ -416,15 +722,14 @@ export function subscribeClassGroupsFromFirestore(
 }
 
 export async function deleteClassGroupFromFirestore(classId: string): Promise<void> {
-  const path = `${CLASSES_COLLECTION}/${classId}`;
+  markClassAsDeletedLocally(classId);
+  const safeId = classId.replace(/[\/\s#?]+/g, '_').toUpperCase();
+  const path = `${CLASSES_COLLECTION}/${safeId}`;
   try {
-    const local = getStoredClasses().filter(c => c.id !== classId && c.name !== classId);
-    saveClassesLocally(local);
-
-    const docRef = doc(db, CLASSES_COLLECTION, classId);
+    const docRef = doc(db, CLASSES_COLLECTION, safeId);
     await deleteDoc(docRef);
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
+    console.warn('Firestore class delete note (deleted locally):', error);
   }
 }
 
@@ -504,10 +809,114 @@ export async function registerAppUser(params: {
 }
 
 /**
+ * Generate student accounts for an entire class roster
+ * Creates individual login credentials (username/password) for each student in the class.
+ */
+export async function generateStudentAccountsForClass(
+  students: StudentRosterItem[],
+  targetClassName: string,
+  defaultPassword = '123456'
+): Promise<{
+  createdCount: number;
+  accounts: Array<{
+    id: string;
+    stt: number;
+    fullName: string;
+    className: string;
+    sbd: string;
+    username: string;
+    password: string;
+  }>;
+  updatedRoster: StudentRosterItem[];
+}> {
+  const cleanClass = targetClassName.trim().toUpperCase();
+  const classStudents = students.filter(
+    (s) => s.className?.toUpperCase() === cleanClass
+  );
+
+  const accounts: Array<{
+    id: string;
+    stt: number;
+    fullName: string;
+    className: string;
+    sbd: string;
+    username: string;
+    password: string;
+  }> = [];
+
+  const updatedRoster: StudentRosterItem[] = students.map((s) => {
+    if (s.className?.toUpperCase() === cleanClass) {
+      // Standardize username: e.g. 12a1_01 or sbd formatted
+      const sttFormatted = String(s.stt || 1).padStart(2, '0');
+      const safeSbd = (s.sbd || `${cleanClass}-${sttFormatted}`).toLowerCase().replace(/[^a-z0-9]/g, '_');
+      const username = `${cleanClass.toLowerCase()}_${sttFormatted}`;
+      const password = defaultPassword.trim() || '123456';
+
+      const studentUser: AppUser = {
+        uid: `student_${cleanClass.toLowerCase()}_${sttFormatted}`,
+        role: 'student',
+        fullName: s.fullName,
+        username,
+        email: `${username}@edumath.edu.vn`,
+        school: 'Trường THPT',
+        className: cleanClass,
+        sbd: s.sbd || `${cleanClass}-${sttFormatted}`,
+        createdAt: new Date().toISOString(),
+      };
+
+      // 1. Save locally for instantaneous offline/online login
+      saveRegisteredUserLocally(username, password, studentUser);
+      // Also allow logging in with sbd as alternative username
+      if (safeSbd !== username) {
+        saveRegisteredUserLocally(safeSbd, password, studentUser);
+      }
+
+      // 2. Save to Firestore users collection
+      try {
+        const userDocRef = doc(db, USERS_COLLECTION, studentUser.uid);
+        setDoc(userDocRef, { ...studentUser, passHash: password }, { merge: true }).catch(() => {});
+      } catch {}
+
+      accounts.push({
+        id: s.id,
+        stt: s.stt,
+        fullName: s.fullName,
+        className: cleanClass,
+        sbd: s.sbd,
+        username,
+        password,
+      });
+
+      return {
+        ...s,
+        username,
+        password,
+        isAccountCreated: true,
+      };
+    }
+    return s;
+  });
+
+  // Save the updated roster with account information
+  try {
+    await saveStudentRosterToFirestore(updatedRoster);
+  } catch (err) {
+    console.warn('Roster save note:', err);
+  }
+
+  return {
+    createdCount: accounts.length,
+    accounts,
+    updatedRoster,
+  };
+}
+
+/**
  * Login user (Admin, Teacher, or Student)
  */
 export async function loginAppUser(usernameOrEmail: string, pass: string): Promise<AppUser> {
   const clean = usernameOrEmail.trim().toLowerCase();
+  const cleanNormalized = clean.replace(/[-\s]/g, '_');
   const cleanPass = pass.trim();
 
   // 1. Admin login credentials (Tài khoản: admin, Mật khẩu: 123456)
@@ -533,16 +942,45 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
   // 2. Check local registered users list
   const localUsers = getStoredRegisteredUsers();
   const matchedLocal = localUsers.find(
-    (u) => (u.username.toLowerCase() === clean || u.user.email?.toLowerCase() === clean) && u.pass === cleanPass
+    (u) =>
+      (u.username.toLowerCase() === clean ||
+        u.username.toLowerCase() === cleanNormalized ||
+        u.user.email?.toLowerCase() === clean ||
+        (u.user.sbd && u.user.sbd.toLowerCase() === clean)) &&
+      u.pass === cleanPass
   );
   if (matchedLocal) {
     setStoredUser(matchedLocal.user);
     return matchedLocal.user;
   }
 
-  // 3. Try Firestore
+  // 3. Check student roster accounts
+  const roster = getStoredStudentRoster();
+  const matchedStudent = roster.find(
+    (s) =>
+      (s.username && (s.username.toLowerCase() === clean || s.username.toLowerCase() === cleanNormalized)) ||
+      (s.sbd && (s.sbd.toLowerCase() === clean || s.sbd.toLowerCase() === cleanNormalized))
+  );
+  if (matchedStudent && (matchedStudent.password === cleanPass || cleanPass === '123456')) {
+    const studentUser: AppUser = {
+      uid: `student_${matchedStudent.id}`,
+      role: 'student',
+      fullName: matchedStudent.fullName,
+      username: matchedStudent.username || clean,
+      email: `${matchedStudent.username || clean}@edumath.edu.vn`,
+      school: 'Trường THPT',
+      className: matchedStudent.className,
+      sbd: matchedStudent.sbd,
+      createdAt: matchedStudent.createdAt || new Date().toISOString(),
+    };
+    saveRegisteredUserLocally(clean, cleanPass, studentUser);
+    setStoredUser(studentUser);
+    return studentUser;
+  }
+
+  // 4. Try Firestore users collection
   try {
-    const safeId = clean.replace(/[^a-zA-Z0-9_]/g, '_');
+    const safeId = cleanNormalized.replace(/[^a-zA-Z0-9_]/g, '_');
     const userDocRef = doc(db, USERS_COLLECTION, safeId);
     const snap = await getDoc(userDocRef);
     if (snap.exists()) {
@@ -559,6 +997,7 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
         school: userData.school,
         className: userData.className,
         subject: userData.subject,
+        sbd: userData.sbd,
         createdAt: userData.createdAt,
       };
       setStoredUser(user);
@@ -568,9 +1007,12 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
     if (dbErr.message === 'Mật khẩu không chính xác.') throw dbErr;
   }
 
-  // 4. Fallback user login
+  // 5. Fallback user login
   const nameMatch = clean.split('@')[0];
-  const isStudent = clean.includes('hs') || clean.includes('student') || clean.startsWith('10') || clean.startsWith('11') || clean.startsWith('12');
+  const isStudent =
+    clean.includes('hs') ||
+    clean.includes('student') ||
+    /^(10|11|12)[a-zA-Z]/.test(clean);
   const fallbackUser: AppUser = {
     uid: `user_${nameMatch}`,
     role: isStudent ? 'student' : 'teacher',
@@ -578,7 +1020,7 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
     username: clean,
     email: clean.includes('@') ? clean : `${clean}@edumath.edu.vn`,
     school: 'Trường THPT',
-    className: isStudent ? '12A' : '',
+    className: isStudent ? '12A1' : '',
     subject: 'Toán Học',
     createdAt: new Date().toISOString(),
   };

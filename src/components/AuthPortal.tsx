@@ -14,16 +14,19 @@ import {
   GraduationCap,
   KeyRound,
   School,
-  Sigma
+  Sigma,
+  X,
+  ExternalLink
 } from 'lucide-react';
 import { AppUser, UserRole } from '../types/exam';
 import { registerAppUser, loginAppUser } from '../services/firebase';
 
 interface AuthPortalProps {
   onAuthSuccess: (user: AppUser) => void;
+  onClose?: () => void;
 }
 
-export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
+export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
   // Login form state
@@ -126,9 +129,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
           </div>
         </div>
 
-        <div className="hidden sm:flex items-center gap-2 text-xs font-semibold text-slate-600">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Hệ thống trực tuyến sẵn sàng</span>
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-2 text-xs font-semibold text-slate-600">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Hệ thống trực tuyến sẵn sàng</span>
+          </div>
+
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-300 transition-all cursor-pointer shadow-xs hover:border-slate-400"
+              title="Đóng để về trang Giáo viên"
+            >
+              <X className="w-4 h-4 text-rose-500" />
+              <span>Về Trang Giáo Viên</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -137,6 +154,18 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
         <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-200/90 relative overflow-hidden">
           {/* Decorative accent top bar */}
           <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-500" />
+
+          {/* Close button 'X' on top-right of dialog */}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="absolute top-4 right-4 z-20 w-9 h-9 rounded-2xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer border border-slate-200 shadow-2xs group"
+              title="Đóng cửa sổ để trở về trang Giáo viên"
+            >
+              <X className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            </button>
+          )}
 
           {/* Heading */}
           <div className="text-center space-y-2 mb-6">
@@ -156,6 +185,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                 ? 'Đăng nhập phân quyền Giáo viên / Quản trị viên để soạn đề, hoặc Học sinh để vào phòng thi.'
                 : 'Tạo tài khoản Giáo viên hoặc Học sinh để lưu trữ kết quả và đề thi trên Cloud Firestore.'}
             </p>
+          </div>
+
+          {/* Student & Direct link guidance card */}
+          <div className="mb-5 p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 text-xs text-amber-950 flex items-start gap-2.5 shadow-2xs">
+            <GraduationCap className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-[11px] leading-relaxed">
+              <span className="font-extrabold text-amber-900 block text-xs">
+                💡 Hướng Dẫn Dành Cho Học Sinh:
+              </span>
+              <span>
+                • <b>Nếu có tài khoản:</b> Đăng nhập bằng tên đăng nhập do Thầy/Cô cấp (ví dụ: <code className="bg-amber-100 text-amber-900 font-mono font-bold px-1 rounded">12a1_01</code>, mật khẩu: <code className="bg-amber-100 text-amber-900 font-mono font-bold px-1 rounded">123456</code>).
+              </span>
+              <br />
+              <span className="text-slate-600">
+                • <b>Nếu thi qua Link:</b> Em chỉ cần bấm vào Link đề thi do Thầy/Cô gửi, điền Họ tên và Lớp là vào thi ngay mà không cần mật khẩu!
+              </span>
+            </div>
           </div>
 
           {/* 2 Clear Tabs: [ĐĂNG NHẬP] & [ĐĂNG KÝ TÀI KHOẢN] */}
@@ -443,6 +489,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                 )}
               </button>
             </form>
+          )}
+
+          {/* Quick return to teacher page if teacher just wants to compose or explore */}
+          {onClose && (
+            <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
+              <span className="text-slate-500 font-medium">
+                Thầy/Cô muốn vào thẳng trang quản trị soạn đề?
+              </span>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-indigo-200"
+              >
+                <span>✕ Đóng & Về Trang Giáo Viên</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
         </div>
       </main>

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Exam } from '../types/exam';
 import { prepareDocumentPayload, digitizeDocumentApi, DocumentQuestionItem } from '../services/api';
+import { detectGradeFromFileName } from '../services/fileUploadService';
 import { MathRenderer } from './MathRenderer';
 
 interface DocumentExamStudioProps {
@@ -34,7 +35,7 @@ export const DocumentExamStudio: React.FC<DocumentExamStudioProps> = ({
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState<string>('');
-  const [targetGrade, setTargetGrade] = useState<string>('12');
+  const [targetGrade, setTargetGrade] = useState<string>('11');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'info' | 'success' | 'error' } | null>(null);
 
@@ -56,66 +57,60 @@ export const DocumentExamStudio: React.FC<DocumentExamStudioProps> = ({
       setSelectedFile(file);
       setFileName(file.name);
       setStatusMessage(null);
+      const detected = detectGradeFromFileName(file.name);
+      if (detected) {
+        setTargetGrade(detected);
+      }
     }
   };
 
-  // Quick sample test
+  // Quick sample test (Grade 11 Curriculum)
   const handleUseSampleExam = () => {
     const sampleQuestions: DocumentQuestionItem[] = [
       {
         id: 1,
-        question: 'Cho hàm số $y = f(x)$ có bảng biến thiên trên đoạn $[-2; 3]$. Giá trị cực đại của hàm số là:',
-        options: ['A. $y_{CD} = 5$', 'B. $x_{CD} = 1$', 'C. $y_{CD} = -2$', 'D. $y_{CD} = 3$'],
+        question: 'Tập giá trị của hàm số lượng giác $y = \\sin 2x$ là:',
+        options: ['A. $[-1; 1]$', 'B. $[-2; 2]$', 'C. $[0; 1]$', 'D. $\\mathbb{R}$'],
         correctAnswer: 'A',
-        explanation: 'Dựa vào bảng biến thiên, tại điểm $x = 1$, đạo hàm đổi dấu từ dương sang âm và hàm số đạt cực đại với giá trị $y_{CD} = 5$.'
+        explanation: 'Với mọi $x \\in \\mathbb{R}$, ta luôn có $-1 \\le \\sin 2x \\le 1$. Do đó tập giá trị của hàm số là đoạn $[-1; 1]$.'
       },
       {
         id: 2,
-        question: 'Họ tất cả các nguyên hàm của hàm số $f(x) = 3x^2 + 2\\sin x$ là:',
-        options: [
-          'A. $x^3 - 2\\cos x + C$',
-          'B. $x^3 + 2\\cos x + C$',
-          'C. $6x - 2\\cos x + C$',
-          'D. $\\dfrac{x^3}{3} - 2\\cos x + C$'
-        ],
+        question: 'Cho cấp số cộng $(u_n)$ có số hạng đầu $u_1 = 3$ và công sai $d = 4$. Số hạng thứ hai $u_2$ bằng:',
+        options: ['A. $7$', 'B. $12$', 'C. $-1$', 'D. $8$'],
         correctAnswer: 'A',
-        explanation: 'Ta có $\\int (3x^2 + 2\\sin x)\\,\\mathrm{d}x = 3 \\cdot \\dfrac{x^3}{3} + 2(-\\cos x) + C = x^3 - 2\\cos x + C$.'
+        explanation: 'Theo công thức số hạng tổng quát của cấp số cộng: $u_2 = u_1 + d = 3 + 4 = 7$.'
       },
       {
         id: 3,
-        question: 'Trong không gian $Oxyz$, cho mặt phẳng $(P): 2x - y + 3z - 6 = 0$. Một vectơ pháp tuyến của $(P)$ là:',
-        options: [
-          'A. $\\vec{n}_1 = (2; -1; 3)$',
-          'B. $\\vec{n}_2 = (2; 1; 3)$',
-          'C. $\\vec{n}_3 = (2; -1; -6)$',
-          'D. $\\vec{n}_4 = (-2; -1; 3)$'
-        ],
+        question: 'Tính giới hạn dãy số $L = \\lim \\dfrac{2n + 1}{n + 3}$:',
+        options: ['A. $2$', 'B. $\\dfrac{1}{3}$', 'C. $0$', 'D. $+\\infty$'],
         correctAnswer: 'A',
-        explanation: 'Phương trình tổng quát $Ax + By + Cz + D = 0$ có một vectơ pháp tuyến là $\\vec{n} = (A; B; C) = (2; -1; 3)$.'
+        explanation: 'Chia cả tử và mẫu cho $n$: $\\lim \\dfrac{2 + \\frac{1}{n}}{1 + \\frac{3}{n}} = \\dfrac{2+0}{1+0} = 2$.'
       },
       {
         id: 4,
-        question: 'Tập nghiệm $S$ của bất phương trình $\\log_2(x - 1) < 3$ là:',
+        question: 'Cho hình chóp $S.ABCD$ có đáy $ABCD$ là hình bình hành. Giao tuyến của hai mặt phẳng $(SAB)$ và $(SCD)$ là:',
         options: [
-          'A. $(1; 9)$',
-          'B. $(-\\infty; 9)$',
-          'C. $(1; 8)$',
-          'D. $(0; 9)$'
+          'A. Đường thẳng đi qua $S$ và song song với $AB$ và $CD$',
+          'B. Đường thẳng $SO$ với $O$ là tâm hình bình hành',
+          'C. Đường thẳng đi qua $S$ và vuông góc với mặt phẳng đáy',
+          'D. Đường chéo $AC$'
         ],
         correctAnswer: 'A',
-        explanation: 'Điều kiện xác định: $x - 1 > 0 \\Leftrightarrow x > 1$. Khi đó $\\log_2(x - 1) < 3 \\Leftrightarrow x - 1 < 2^3 = 8 \\Leftrightarrow x < 9$. Kết hợp điều kiện suy ra $x \\in (1; 9)$.'
+        explanation: 'Hai mặt phẳng $(SAB)$ và $(SCD)$ chứa hai đường thẳng song song $AB \\parallel CD$ và có điểm chung $S$, do đó giao tuyến là đường thẳng đi qua $S$ và song song với $AB, CD$.'
       }
     ];
 
     const sampleExam: Exam = {
       id: `exam-${Date.now()}`,
-      title: 'ĐỀ THI TOÁN KHẢO SÁT CHUẨN GDPT 2018',
-      examCode: 'TOAN12-SAMPLE',
-      grade: '12',
+      title: 'ĐỀ THI TOÁN LỚP 11 - LƯỢNG GIÁC, DÃY SỐ & HÌNH KHÔNG GIAN',
+      examCode: 'TOAN11-SAMPLE',
+      grade: '11',
       durationMinutes: 45,
       totalPoints: 10,
       textbook: 'Kết Nối Tri Thức Với Cuộc Sống',
-      topic: 'Đề mẫu tích hợp đa định dạng',
+      topic: 'Lượng giác, Cấp số cộng/nhân, Giới hạn & Hình học không gian',
       createdAt: new Date().toISOString().split('T')[0],
       multipleChoice: sampleQuestions.map((q, idx) => ({
         id: `mc_${idx + 1}`,
@@ -129,14 +124,15 @@ export const DocumentExamStudio: React.FC<DocumentExamStudioProps> = ({
       essays: []
     };
 
+    setTargetGrade('11');
     setQuizQuestions(sampleQuestions);
     setGeneratedExam(sampleExam);
     setUserAnswers({});
     setIsSubmitted(false);
     setScoreResult(null);
-    setFileName('De_Mau_Toan12_Chuan_GDPT.docx');
-    setStatusMessage({ text: 'Đã nạp đề thi mẫu chuẩn GDPT 2018 thành công!', type: 'success' });
-    if (showToast) showToast('Đã mở đề thi mẫu. Bạn có thể làm bài và nộp bài ngay!');
+    setFileName('MaTran_DeThi_Toan11.docx');
+    setStatusMessage({ text: 'Đã nạp đề thi mẫu môn Toán Lớp 11 chuẩn GDPT 2018 thành công!', type: 'success' });
+    if (showToast) showToast('Đã mở đề thi mẫu Toán 11. Bạn có thể làm bài và nộp bài ngay!');
   };
 
   // Generate exam from uploaded file

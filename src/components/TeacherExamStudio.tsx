@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { Exam, ExamMatrixData, StudentRosterItem, TeacherProfile } from '../types/exam';
 import { generateExamApi, parseMatrixApi } from '../services/api';
+import { generateExamByMatrix, generateExamByPrompt } from '../services/examGenerator';
 import { AnswerMatrixRow } from '../services/examPermuter';
 import { MathRenderer } from './MathRenderer';
 import { QuestionVisual } from './QuestionVisual';
@@ -44,6 +45,8 @@ import { ExamVariantManagerModal } from './ExamVariantManagerModal';
 import { StudentRosterManagerModal } from './StudentRosterManagerModal';
 import { ExamLibraryModal } from './ExamLibraryModal';
 import { DocumentExamStudio } from './DocumentExamStudio';
+import { detectGradeFromFileName, getDefaultTopicForGrade, prepareMatrixUploadPayload } from '../services/fileUploadService';
+import { parseMatrixDocument, createDefaultMatrixForGrade } from '../services/matrixParser';
 
 interface TeacherExamStudioProps {
   currentExam: Exam | null;
@@ -93,8 +96,8 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
   const [creationMode, setCreationMode] = useState<'prompt' | 'matrix_file' | 'recreate_exam'>('prompt');
 
   // Form State for Mode 1
-  const [grade, setGrade] = useState<string>('12');
-  const [topic, setTopic] = useState<string>('Khảo sát hàm số, Cực trị & Tích phân ứng dụng');
+  const [grade, setGrade] = useState<string>('11');
+  const [topic, setTopic] = useState<string>('Lượng giác, Dãy số - Cấp số cộng/nhân, Giới hạn & Hình không gian');
   const [textbook, setTextbook] = useState<string>('Kết Nối Tri Thức Với Cuộc Sống');
   const [difficulty, setDifficulty] = useState<string>('Đề thi chuẩn cấu trúc tốt nghiệp THPT 2025');
   const [promptCustom, setPromptCustom] = useState<string>('');
@@ -106,40 +109,10 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
   const [showMatrixEditor, setShowMatrixEditor] = useState<boolean>(true);
   const matrixFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Standard GDPT 2018 High School Math Exam Matrix
-  const DEFAULT_MATRIX: ExamMatrixData = {
-    topic: 'Ma trận kiểm tra môn Toán (GDPT 2018)',
-    grade: '12',
-    durationMinutes: 45,
-    totalPoints: 10.0,
-    part1: {
-      nhanBiet: 6,
-      thongHieu: 4,
-      vanDung: 2,
-      vanDungCao: 0,
-      totalQuestions: 12,
-      points: 3.0,
-    },
-    part2: {
-      nhanBiet: 2,
-      thongHieu: 1,
-      vanDung: 1,
-      vanDungCao: 0,
-      totalQuestions: 4,
-      points: 4.0,
-    },
-    part3: {
-      nhanBiet: 0,
-      thongHieu: 1,
-      vanDung: 1,
-      vanDungCao: 0,
-      totalQuestions: 2,
-      points: 3.0,
-    },
-    rawSummary: '12 câu trắc nghiệm nhiều lựa chọn (3.0đ) + 4 câu trắc nghiệm Đúng/Sai (4.0đ) + 2 câu Trả lời ngắn/Tự luận (3.0đ)',
-  };
+  // Standard GDPT 2018 High School Math Exam Matrix (Default Grade 11)
+  const DEFAULT_MATRIX: ExamMatrixData = createDefaultMatrixForGrade('11');
 
-  const [parsedMatrix, setParsedMatrix] = useState<ExamMatrixData>(DEFAULT_MATRIX);
+  const [parsedMatrix, setParsedMatrix] = useState<ExamMatrixData>(() => createDefaultMatrixForGrade('11'));
 
   // Update specific field in matrix
   const updateMatrixField = (
@@ -165,17 +138,43 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
 
   const [matrixBase64, setMatrixBase64] = useState<string>('');
 
-  const handleMatrixFileUpload = (file: File) => {
+  const handleMatrixFileUpload = async (file: File) => {
     setMatrixFile(file);
     setMatrixFileName(file.name);
     setError(null);
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
-      setMatrixBase64(base64);
-    };
-    reader.readAsDataURL(file);
+    // Auto-detect grade immediately from filename (e.g. 11.pdf -> Grade 11)
+    const detected = detectGradeFromFileName(file.name);
+    if (detected) {
+      setGrade(detected);
+      const newTopic = getDefaultTopicForGrade(detected);
+      setTopic(newTopic);
+      setParsedMatrix((prev) => ({
+        ...prev,
+        grade: detected,
+        topic: newTopic,
+      }));
+    }
+
+    try {
+      const payload = await prepareMatrixUploadPayload(file);
+      if (payload.fileBase64) {
+        setMatrixBase64(payload.fileBase64);
+      }
+      if (payload.detectedGrade) {
+        setGrade(payload.detectedGrade);
+        setTopic(payload.detectedTopic);
+      }
+      const parsed = await parseMatrixDocument(file);
+      if (parsed) {
+        setParsedMatrix(parsed);
+        if (parsed.grade) setGrade(parsed.grade);
+        if (parsed.topic) setTopic(parsed.topic);
+        if (parsed.part3Type) setPart3Choice(parsed.part3Type);
+      }
+    } catch (err: any) {
+      console.warn('Matrix file processing notice:', err.message);
+    }
   };
 
   // State for Mode 3 (Recreate / Clone Similar Exam)
@@ -190,15 +189,17 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
   const [isRosterModalOpen, setIsRosterModalOpen] = useState<boolean>(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState<boolean>(false);
   const [isDocumentStudioOpen, setIsDocumentStudioOpen] = useState<boolean>(false);
+  const [isConfirmDeleteExamOpen, setIsConfirmDeleteExamOpen] = useState<boolean>(false);
+  const [isDeletingExam, setIsDeletingExam] = useState<boolean>(false);
 
   const handleGradeChange = (newGrade: string) => {
     setGrade(newGrade);
     if (newGrade === '10') {
       setTopic('Hàm số bậc hai và Bất phương trình bậc hai');
     } else if (newGrade === '11') {
-      setTopic('Đạo hàm và Ứng dụng hình học không gian');
+      setTopic('Lượng giác, Dãy số - Cấp số cộng/nhân, Giới hạn & Hình không gian');
     } else {
-      setTopic('Khảo sát hàm số, Cực trị & Tích phân ứng dụng');
+      setTopic('Khảo sát hàm số, Cực trị & Tích phân');
     }
   };
 
@@ -238,8 +239,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
     setError(null);
 
     try {
-      const generated = await generateExamApi({
-        mode: 'prompt',
+      const generated = await generateExamByPrompt({
         grade,
         topic,
         textbook,
@@ -267,17 +267,22 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
     setError(null);
 
     try {
-      const generated = await generateExamApi({
-        mode: 'matrix',
-        grade,
-        topic: topic ? `${topic} (Theo Ma trận chuẩn GDPT 2018)` : `Đề thi môn Toán Lớp ${grade} theo Ma trận`,
+      const detectedGrade = detectGradeFromFileName(matrixFileName || '', topic);
+      const effectiveGrade: '10' | '11' | '12' = (matrixFileName ? detectedGrade : (grade || detectedGrade || '11')) as '10' | '11' | '12';
+      const effectiveTopic = getDefaultTopicForGrade(effectiveGrade);
+
+      const generated = await generateExamByMatrix({
+        grade: effectiveGrade,
+        topic: effectiveTopic,
         textbook,
-        difficulty: 'Bám sát ma trận phân hóa: Nhận biết, Thông hiểu, Vận dụng',
-        promptCustom: `Soạn trọn bộ đề thi hoàn chỉnh bám sát 100% số lượng câu từng phần theo ma trận.`,
         matrixFileBase64: matrixBase64 || undefined,
         matrixFileName: matrixFileName || undefined,
-        matrixMimeType: matrixFile?.type || 'application/pdf',
-        matrix: parsedMatrix,
+        matrixMimeType: matrixFile?.type || (matrixFileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'),
+        matrix: {
+          ...parsedMatrix,
+          grade: effectiveGrade,
+          topic: effectiveTopic,
+        },
         part3Type: part3Choice,
       });
 
@@ -553,6 +558,63 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                 />
               </div>
 
+              {/* Lựa chọn định dạng Phần III: Trả lời ngắn HOẶC Tự luận */}
+              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black uppercase tracking-wider text-indigo-950">
+                    Cấu trúc câu hỏi Phần III của đề thi:
+                  </label>
+                  <span className="text-[10px] font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                    GDPT 2018
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setPart3Choice('short_answer')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                      part3Choice === 'short_answer'
+                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
+                      part3Choice === 'short_answer' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-400'
+                    }`}>
+                      {part3Choice === 'short_answer' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-slate-900">Trả lời ngắn (Điền đáp số)</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                        Phần III hiển thị các ô để học sinh nhập đáp số.
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPart3Choice('essay')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                      part3Choice === 'essay'
+                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
+                      part3Choice === 'essay' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-400'
+                    }`}>
+                      {part3Choice === 'essay' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-slate-900">Tự luận (Chụp ảnh / Tải file bài làm)</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                        Học sinh giải ra giấy và tải ảnh bài làm lên; Thầy/cô & AI chấm đối chiếu barem.
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               <button
                 type="submit"
                 disabled={isGenerating}
@@ -605,13 +667,16 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                         <span className="text-xs font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-200">
                           File Ma Trận Đã Chọn
                         </span>
+                        <span className="text-[11px] font-black text-indigo-800 bg-indigo-100 px-2.5 py-0.5 rounded-md border border-indigo-200">
+                          Khối: Toán Lớp {grade}
+                        </span>
                         <span className="text-[11px] text-emerald-700 font-bold flex items-center gap-1">
                           <Check className="w-3.5 h-3.5" /> Sẵn sàng tạo đề
                         </span>
                       </div>
                       <p className="text-sm font-black text-slate-900 truncate mt-0.5">{matrixFileName}</p>
-                      <p className="text-[11px] text-slate-500">
-                        Hệ thống sẽ đối chiếu và sinh đề bám sát 100% ma trận này.
+                      <p className="text-[11px] text-slate-600 font-medium">
+                        Đã bóc tách ma trận chuẩn <b className="text-indigo-700">Môn Toán Lớp {grade}</b>. Hệ thống đối chiếu và sinh đề bám sát 100% chương trình Lớp {grade}.
                       </p>
                     </div>
                   </div>
@@ -648,15 +713,74 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setMatrixFileName('MaTran_DeThi_Toan12_HK2_ChuanBoGD.xlsx');
-                      setTopic('Ma trận đề thi Học kỳ II chuẩn Bộ GD&ĐT (Lớp 12)');
+                      setMatrixFileName('MaTran_DeThi_Toan11_HK1_ChuanBoGD.xlsx');
+                      setTopic('Lượng giác, Dãy số - Cấp số cộng/nhân, Giới hạn & Hình không gian (Lớp 11)');
+                      setGrade('11');
+                      setParsedMatrix(createDefaultMatrixForGrade('11'));
                     }}
                     className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-blue-700 cursor-pointer shadow-2xs flex items-center gap-1.5"
                   >
-                    <FileSpreadsheet className="w-3.5 h-3.5" /> Dùng file ma trận mẫu (.xlsx)
+                    <FileSpreadsheet className="w-3.5 h-3.5" /> Dùng file ma trận mẫu Toán 11 (.xlsx)
                   </button>
                 </div>
               )}
+
+              {/* Lựa chọn định dạng Phần III trong Mode 2 */}
+              <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black uppercase tracking-wider text-blue-950">
+                    Cấu trúc câu hỏi Phần III:
+                  </label>
+                  <span className="text-[10px] font-bold text-blue-700 bg-white px-2 py-0.5 rounded border border-blue-200">
+                    {part3Choice === 'short_answer' ? 'Đang chọn: Trả lời ngắn' : 'Đang chọn: Tự luận'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setPart3Choice('short_answer')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                      part3Choice === 'short_answer'
+                        ? 'bg-white border-blue-600 ring-2 ring-blue-200 shadow-xs'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
+                      part3Choice === 'short_answer' ? 'border-blue-600 bg-blue-600' : 'border-slate-400'
+                    }`}>
+                      {part3Choice === 'short_answer' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-slate-900">Trả lời ngắn (Điền đáp số)</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                        Học sinh làm bài và nhập đáp số vào các ô trả lời.
+                      </div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPart3Choice('essay')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                      part3Choice === 'essay'
+                        ? 'bg-white border-blue-600 ring-2 ring-blue-200 shadow-xs'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
+                      part3Choice === 'essay' ? 'border-blue-600 bg-blue-600' : 'border-slate-400'
+                    }`}>
+                      {part3Choice === 'essay' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-slate-900">Tự luận (Chụp ảnh / Tải file)</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                        Học sinh làm bài ra giấy, chụp ảnh hoặc tải file bài làm lên.
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
 
               {/* Action Button: Direct One-Click Exam Generation */}
               <button
@@ -910,11 +1034,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                   {onDeleteExamFromCloud && (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (window.confirm(`Thầy/Cô có chắc chắn muốn xóa đề thi "${currentExam.title}" (${currentExam.examCode}) không?`)) {
-                          onDeleteExamFromCloud(currentExam.id);
-                        }
-                      }}
+                      onClick={() => setIsConfirmDeleteExamOpen(true)}
                       className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition-colors flex items-center gap-1.5 cursor-pointer"
                       title="Xóa đề này khỏi Cloud Firebase"
                     >
@@ -1359,6 +1479,58 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
               }}
               showToast={showToast}
             />
+          </div>
+        </div>
+      )}
+      {/* Modal xác nhận xóa đề thi (Zero window.confirm) */}
+      {isConfirmDeleteExamOpen && currentExam && (
+        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-slate-900 space-y-4 animate-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-2">
+              <h4 className="text-lg font-black text-slate-900">
+                Xác Nhận Xóa Đề Thi
+              </h4>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Thầy/Cô có chắc chắn muốn xóa đề thi này không? Đề mẫu hoặc đề đã tạo sẽ được xóa khỏi hệ thống.
+              </p>
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 text-left space-y-1">
+                <div>Tiêu đề: <span className="text-indigo-700">{currentExam.title}</span></div>
+                <div>Mã đề: <span className="font-mono text-slate-700">{currentExam.examCode}</span> (Toán {currentExam.grade || '12'})</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingExam}
+                onClick={() => setIsConfirmDeleteExamOpen(false)}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Hủy Bỏ
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingExam}
+                onClick={async () => {
+                  if (!onDeleteExamFromCloud) return;
+                  setIsDeletingExam(true);
+                  try {
+                    await onDeleteExamFromCloud(currentExam.id);
+                    setIsConfirmDeleteExamOpen(false);
+                  } finally {
+                    setIsDeletingExam(false);
+                  }
+                }}
+                className="py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeletingExam ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                <span>{isDeletingExam ? 'Đang Xóa...' : 'Đồng Ý Xóa Đề'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

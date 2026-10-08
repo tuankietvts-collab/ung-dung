@@ -1,6 +1,8 @@
 import XLSX from 'xlsx-js-style';
 import mammoth from 'mammoth';
-import { Exam, EssayGradingResult, RubricStep, StudentSubmission, ExamMatrixData } from '../types/exam';
+import { Exam, EssayGradingResult, RubricStep, StudentSubmission, ExamMatrixData, GradingCalibrationFeedback } from '../types/exam';
+import { generateExamByPrompt, generateExamByMatrix, recreateExamWithVariations } from './examGenerator';
+import { safeParseGeminiResponse } from './safeJsonParser';
 
 export interface DocumentQuestionItem {
   id: number | string;
@@ -91,12 +93,19 @@ export async function digitizeDocumentApi(payload: {
     body: JSON.stringify(payload),
   });
 
+  const rawText = await response.text();
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Lỗi khi số hóa tài liệu đề thi bằng AI Gemini');
+    let errorMsg = 'Lỗi khi số hóa tài liệu đề thi bằng AI Gemini';
+    try {
+      const err = safeParseGeminiResponse(rawText);
+      errorMsg = err.error || errorMsg;
+    } catch {
+      errorMsg = rawText || errorMsg;
+    }
+    throw new Error(errorMsg);
   }
 
-  const data = await response.json();
+  const data = safeParseGeminiResponse(rawText);
   return {
     quizData: data.quizData || [],
     exam: data.exam,
@@ -112,6 +121,7 @@ export interface GradeEssayPayload {
   rubric: RubricStep[];
   studentName?: string;
   studentClass?: string;
+  calibrations?: GradingCalibrationFeedback[];
 }
 
 export interface GenerateExamParams {
@@ -133,18 +143,35 @@ export interface GenerateExamParams {
 
 // 1. Generate Math Exam using Gemini (Supports Mode: prompt, matrix, recreate)
 export async function generateExamApi(params: GenerateExamParams): Promise<Exam> {
+  if (params.mode === 'matrix') {
+    return generateExamByMatrix(params);
+  }
+  if (params.mode === 'prompt') {
+    return generateExamByPrompt(params);
+  }
+  if (params.mode === 'recreate') {
+    return recreateExamWithVariations(params);
+  }
+
   const response = await fetch('/api/generate-exam', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
   });
 
+  const rawText = await response.text();
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Không thể tạo đề thi từ AI Gemini');
+    let errorMsg = 'Không thể tạo đề thi từ AI Gemini';
+    try {
+      const err = safeParseGeminiResponse(rawText);
+      errorMsg = err.error || errorMsg;
+    } catch {
+      errorMsg = rawText || errorMsg;
+    }
+    throw new Error(errorMsg);
   }
 
-  const data = await response.json();
+  const data = safeParseGeminiResponse(rawText);
   return {
     ...data.exam,
     id: `exam-${Date.now()}`,
@@ -152,7 +179,7 @@ export async function generateExamApi(params: GenerateExamParams): Promise<Exam>
   };
 }
 
-export { generateExamByPrompt, generateExamByMatrix, recreateExamWithVariations } from './examGenerator';
+export { generateExamByPrompt, generateExamByMatrix, recreateExamWithVariations };
 
 // 1.1 Parse Matrix File (.pdf, .xlsx, .docx, images)
 export async function parseMatrixApi(payload: {
@@ -167,12 +194,19 @@ export async function parseMatrixApi(payload: {
     body: JSON.stringify(payload),
   });
 
+  const rawText = await response.text();
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Không thể trích xuất ma trận');
+    let errorMsg = 'Không thể trích xuất ma trận';
+    try {
+      const err = safeParseGeminiResponse(rawText);
+      errorMsg = err.error || errorMsg;
+    } catch {
+      errorMsg = rawText || errorMsg;
+    }
+    throw new Error(errorMsg);
   }
 
-  const data = await response.json();
+  const data = safeParseGeminiResponse(rawText);
   return data.matrix;
 }
 
@@ -184,12 +218,19 @@ export async function gradeEssayApi(payload: GradeEssayPayload): Promise<EssayGr
     body: JSON.stringify(payload),
   });
 
+  const rawText = await response.text();
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || 'Lỗi khi chấm bài tự luận');
+    let errorMsg = 'Lỗi khi chấm bài tự luận';
+    try {
+      const err = safeParseGeminiResponse(rawText);
+      errorMsg = err.error || errorMsg;
+    } catch {
+      errorMsg = rawText || errorMsg;
+    }
+    throw new Error(errorMsg);
   }
 
-  const data = await response.json();
+  const data = safeParseGeminiResponse(rawText);
   return data.evaluation;
 }
 

@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 import dotenv from 'dotenv';
 import * as XLSX from 'xlsx';
+import { safeParseGeminiResponse } from './src/services/safeJsonParser';
 
 dotenv.config();
 
@@ -53,6 +54,20 @@ async function callGeminiWithResilience(contents: any, config: any = {}): Promis
   const models = ['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
   let lastError: any = null;
 
+  // Strict structured JSON output configuration as required
+  const generationConfig = {
+    responseMimeType: 'application/json',
+    temperature: 0.2,
+    ...(config.generationConfig || {}),
+  };
+
+  const finalConfig = {
+    responseMimeType: 'application/json',
+    temperature: 0.2,
+    ...config,
+    ...generationConfig,
+  };
+
   for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -60,7 +75,7 @@ async function callGeminiWithResilience(contents: any, config: any = {}): Promis
         const response = await ai.models.generateContent({
           model,
           contents,
-          config,
+          config: finalConfig,
         });
 
         const text = response.text;
@@ -104,13 +119,227 @@ async function callGeminiWithResilience(contents: any, config: any = {}): Promis
   throw lastError || new Error('Hệ thống AI hiện đang chịu tải cao. Vui lòng thử lại sau giây lát.');
 }
 
+export const STRICT_JSON_SYSTEM_INSTRUCTION =
+  'CHỈ TRẢ VỀ DUY NHẤT 1 CHUỖI JSON HỢP LỆ. Tuyệt đối không thêm bất kỳ văn bản giải thích, lời chào hay ký tự nào ngoài cặp ngoặc nhọn { }.';
+
 const SYSTEM_INSTRUCTION_EXAM_GEN = `Bạn là chuyên gia Toán học THPT Việt Nam (chuẩn SGK Kết Nối Tri Thức / Cánh Diều / Chân Trời Sáng Tạo).
 Nhiệm vụ: Tạo đề thi môn Toán bám sát 100% Khối lớp và Chủ đề mà giáo viên yêu cầu (Ví dụ: Toán lớp 10 - Chủ đề: Hàm số bậc hai và Bất phương trình bậc hai).
 CẤU TRÚC ĐỀ BẮT BUỘC:
 - Phần I: Trắc nghiệm 4 lựa chọn (Toán học thực tế theo đúng chủ đề đã chọn, 4 phương án A, B, C, D rõ ràng).
 - Phần II: Trắc nghiệm Đúng/Sai (Mỗi câu gồm 1 giả thiết theo đúng chủ đề và 4 ý a, b, c, d xét tính đúng sai).
 - Phần III: Trả lời ngắn / Tự luận (Các bài toán vận dụng đúng theo chủ đề, kèm barem bước giải chi tiết).
-Công thức toán học định dạng chuẩn LaTeX $...$.`;
+Công thức toán học định dạng chuẩn LaTeX $...$.
+${STRICT_JSON_SYSTEM_INSTRUCTION}`;
+
+/**
+ * Safely repairs raw JSON string produced by LLMs containing LaTeX formulas.
+ * Solves:
+ * 1. "Bad escaped character in JSON at position X" (e.g. \dfrac, \Delta, \alpha, \sqrt, \vec, \int, \le, etc.)
+ * 2. LaTeX commands mistakenly parsed as JSON control escapes (\frac -> \f, \text -> \t, \ne -> \n, \right -> \r, \beta -> \b)
+ * 3. Raw unescaped newlines/tabs inside string literals
+ * 4. Trailing commas before } or ]
+ */
+function repairJsonString(raw: string): string {
+  // First, extract JSON substring between outer { } or [ ]
+  let str = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+  const firstBrace = str.indexOf('{');
+  const firstBracket = str.indexOf('[');
+  let startIdx = -1;
+  let endIdx = -1;
+
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    startIdx = firstBrace;
+    endIdx = str.lastIndexOf('}');
+  } else if (firstBracket !== -1) {
+    startIdx = firstBracket;
+    endIdx = str.lastIndexOf(']');
+  }
+
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    str = str.substring(startIdx, endIdx + 1);
+  }
+
+  // State machine to walk through the JSON text and repair strings
+  let out = '';
+  let inString = false;
+  const len = str.length;
+
+  for (let i = 0; i < len; i++) {
+    const ch = str[i];
+
+    if (!inString) {
+      if (ch === '"') {
+        inString = true;
+        out += '"';
+      } else {
+        out += ch;
+      }
+      continue;
+    }
+
+    // Inside string literal:
+    if (ch === '"') {
+      inString = false;
+      out += '"';
+      continue;
+    }
+
+    if (ch === '\n') {
+      out += '\\n';
+      continue;
+    }
+
+    if (ch === '\r') {
+      out += '\\r';
+      continue;
+    }
+
+    if (ch === '\t') {
+      out += '\\t';
+      continue;
+    }
+
+    if (ch === '\\') {
+      const next = i + 1 < len ? str[i + 1] : '';
+
+      // 1. Escaped double quote: \"
+      if (next === '"') {
+        out += '\\"';
+        i++;
+        continue;
+      }
+
+      // 2. Already escaped backslash: \\
+      if (next === '\\') {
+        out += '\\\\';
+        i++;
+        continue;
+      }
+
+      // 3. Escaped slash: \/
+      if (next === '/') {
+        out += '\\/';
+        i++;
+        continue;
+      }
+
+      // 4. Unicode escape: \uXXXX
+      if (next === 'u') {
+        const hex = str.slice(i + 2, i + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          out += '\\u' + hex;
+          i += 5;
+          continue;
+        } else {
+          out += '\\\\u';
+          i++;
+          continue;
+        }
+      }
+
+      // 5. Control escapes that collide with LaTeX math commands:
+      // \f (formfeed vs \frac, \float, \factor)
+      if (next === 'f') {
+        const lookahead = str.slice(i + 1, i + 8).toLowerCase();
+        if (/^f(rac|loat|actor|oot)/.test(lookahead)) {
+          out += '\\\\f';
+          i++;
+          continue;
+        }
+        out += '\\f';
+        i++;
+        continue;
+      }
+
+      // \n (newline vs \ne, \neq, \notin, \nabla, \natural, \neg, \nu)
+      if (next === 'n') {
+        const lookahead = str.slice(i + 1, i + 8).toLowerCase();
+        if (/^n(eq?|otin|abla|atural|eg|u\b)/.test(lookahead)) {
+          out += '\\\\n';
+          i++;
+          continue;
+        }
+        out += '\\n';
+        i++;
+        continue;
+      }
+
+      // \t (tab vs \text, \tan, \tau, \theta, \to, \times, \tilde, \top, \triangle)
+      if (next === 't') {
+        const lookahead = str.slice(i + 1, i + 9).toLowerCase();
+        if (/^t(ext|an|au|heta|imes|ilde|op|riangle|o\b)/.test(lookahead)) {
+          out += '\\\\t';
+          i++;
+          continue;
+        }
+        out += '\\t';
+        i++;
+        continue;
+      }
+
+      // \r (carriage return vs \right, \rho, \rm, \rangle)
+      if (next === 'r') {
+        const lookahead = str.slice(i + 1, i + 7).toLowerCase();
+        if (/^r(ight|ho|m\b|angle)/.test(lookahead)) {
+          out += '\\\\r';
+          i++;
+          continue;
+        }
+        out += '\\r';
+        i++;
+        continue;
+      }
+
+      // \b (backspace vs \bar, \beta, \binom, \boldsymbol, \bmatrix, \bullet, \box)
+      if (next === 'b') {
+        const lookahead = str.slice(i + 1, i + 10).toLowerCase();
+        if (/^b(ar|eta|inom|oldsymbol|matrix|ullet|ox|ig)/.test(lookahead)) {
+          out += '\\\\b';
+          i++;
+          continue;
+        }
+        out += '\\b';
+        i++;
+        continue;
+      }
+
+      // 6. ALL OTHER CHARACTERS: In standard JSON, any other character following \ is an INVALID escape!
+      // (e.g. \dfrac, \Delta, \vec, \alpha, \sqrt, \int, \pm, \le, \ge, \sim, \infty, etc.)
+      // We MUST escape the backslash so it becomes valid JSON: \\ + next
+      out += '\\\\' + next;
+      i++;
+      continue;
+    }
+
+    out += ch;
+  }
+
+  // Remove trailing commas before } or ]
+  out = out.replace(/,\s*([}\]])/g, '$1');
+
+  return out;
+}
+
+/**
+ * Robust JSON parser that handles LLM responses with LaTeX math formulas.
+ * Uses safeParseGeminiResponse with fallback to lexical repair if needed.
+ */
+export function safeJsonParse<T = any>(raw: string): T {
+  if (!raw || typeof raw !== 'string') {
+    throw new Error('Dữ liệu JSON phản hồi từ AI rỗng.');
+  }
+
+  try {
+    return safeParseGeminiResponse<T>(raw);
+  } catch (initialErr) {
+    try {
+      const repaired = repairJsonString(raw);
+      return safeParseGeminiResponse<T>(repaired);
+    } catch {
+      throw initialErr;
+    }
+  }
+}
 
 /**
  * Intelligent algorithmic parser for Vietnamese Math Exam Matrices from Excel/CSV sheets
@@ -151,11 +380,31 @@ function extractMatrixFromSheetText(sheetText: string, fileName: string): any {
 
   // Check grade
   let detectedGrade = '12';
+  const lowerFileName = fileName.toLowerCase();
   const fullText = (fileName + ' ' + sheetText).toLowerCase();
-  if (fullText.includes('lớp 10') || fullText.includes('toán 10') || fullText.includes('khoi 10')) {
-    detectedGrade = '10';
-  } else if (fullText.includes('lớp 11') || fullText.includes('toán 11') || fullText.includes('khoi 11')) {
+  if (
+    /(^|[^0-9])11([^0-9]|$)/.test(lowerFileName) ||
+    fullText.includes('lớp 11') ||
+    fullText.includes('toán 11') ||
+    fullText.includes('toan 11') ||
+    fullText.includes('khoi 11') ||
+    fullText.includes('lượng giác') ||
+    fullText.includes('cấp số cộng') ||
+    fullText.includes('cấp số nhân') ||
+    fullText.includes('giới hạn')
+  ) {
     detectedGrade = '11';
+  } else if (
+    /(^|[^0-9])10([^0-9]|$)/.test(lowerFileName) ||
+    fullText.includes('lớp 10') ||
+    fullText.includes('toán 10') ||
+    fullText.includes('toan 10') ||
+    fullText.includes('khoi 10') ||
+    fullText.includes('hàm số bậc hai') ||
+    fullText.includes('tam thức') ||
+    fullText.includes('vectơ')
+  ) {
+    detectedGrade = '10';
   }
 
   // Look for row headers and counts in lines
@@ -257,9 +506,23 @@ function extractMatrixFromSheetText(sheetText: string, fileName: string): any {
 // ==========================================
 app.post('/api/parse-matrix', async (req, res) => {
   try {
-    const { fileName = '', fileBase64 = '', mimeType = 'application/pdf', rawText = '' } = req.body;
+    const { fileName = '', fileBase64 = '', mimeType = 'application/pdf', rawText = '', detectedGrade: inputDetectedGrade } = req.body;
 
     console.log(`[API /api/parse-matrix] Analyzing matrix from file: ${fileName} (${mimeType})`);
+
+    const lowerFileName = fileName.toLowerCase();
+    let effectiveDetectedGrade = inputDetectedGrade;
+    if (!effectiveDetectedGrade) {
+      if (/(^|[^0-9])11([^0-9]|$)/.test(lowerFileName) || lowerFileName.includes('11')) {
+        effectiveDetectedGrade = '11';
+      } else if (/(^|[^0-9])10([^0-9]|$)/.test(lowerFileName) || lowerFileName.includes('10')) {
+        effectiveDetectedGrade = '10';
+      } else if (/(^|[^0-9])12([^0-9]|$)/.test(lowerFileName) || lowerFileName.includes('12')) {
+        effectiveDetectedGrade = '12';
+      } else {
+        effectiveDetectedGrade = '11';
+      }
+    }
 
     let extractedText = rawText || '';
     const isSpreadsheet =
@@ -290,12 +553,23 @@ app.post('/api/parse-matrix', async (req, res) => {
 
     // 2. Perform local algorithmic extraction first
     const algorithmicMatrix = extractMatrixFromSheetText(extractedText || rawText || fileName, fileName);
+    algorithmicMatrix.grade = effectiveDetectedGrade;
+    if (effectiveDetectedGrade === '11') {
+      algorithmicMatrix.topic = 'Lượng Giác, Dãy Số - Cấp Số Cộng/Nhân, Giới Hạn & Hình Học Không Gian';
+    } else if (effectiveDetectedGrade === '10') {
+      algorithmicMatrix.topic = 'Hàm Số Bậc Hai, Tam Thức & Bất Phương Trình Bậc Hai';
+    }
 
     // 3. Prepare prompt for AI multimodal or text extraction
     const prompt = `
-Bạn là chuyên gia khảo thí THPT môn Toán tại Việt Nam.
-Hãy đọc kỹ tài liệu / ma trận kiểm tra môn Toán THPT đính kèm (file: "${fileName}").
-Tài liệu này là ma trận đề kiểm tra môn Toán theo Chương trình GDPT 2018.
+Bạn là chuyên gia thẩm định và ra đề thi môn Toán THPT Việt Nam (Chương trình GDPT 2018).
+Nhiệm vụ: Hãy ĐỌC KỸ 100% NỘI DUNG FILE MA TRẬN / BẢNG ĐẶC TẢ ĐÍNH KÈM (file: "${fileName}").
+File đính kèm là tài liệu Toán của KHỐI LỚP NÀO thì BẮT BUỘC RA ĐÚNG KHỐI LỚP ĐÓ:
+- NẾU FILE LÀ MA TRẬN TOÁN 11 (hoặc tên file có số 11 như 11.pdf, toan11.docx):
+  * Khối lớp BẮT BUỘC là "11".
+  * Chủ đề bám sát các chuyên đề Lớp 11 (Lượng giác, Dãy số - Cấp số cộng/nhân, Giới hạn, Hình học không gian quan hệ song song/vuông góc...).
+  * CẢNH BÁO TỐI CAO: TUYỆT ĐỐI KHÔNG ra kiến thức đạo hàm/tích phân/khảo sát hàm số của Lớp 12!
+- Khối lớp đã được hệ thống định danh từ file: TOÁN LỚP ${effectiveDetectedGrade}.
 
 Hãy phân tích kỹ các dòng và cột trong ma trận để đếm CHÍNH XÁC:
 1. Phần I: Câu hỏi trắc nghiệm nhiều lựa chọn (4 phương án A, B, C, D)
@@ -314,12 +588,12 @@ Hãy phân tích kỹ các dòng và cột trong ma trận để đếm CHÍNH X
    - Số bước hoặc mức độ Vận dụng, Vận dụng cao
    - Điểm số Phần III (thường là 3.0 điểm)
 4. Tổng điểm toàn bài: 10.0 điểm.
-5. Khối lớp (10, 11 hoặc 12) và Chủ đề kiến thức chính.
+5. Khối lớp: "${effectiveDetectedGrade}".
 
 Trả về định dạng JSON thuần túy (KHÔNG dùng markdown \`\`\`json) với cấu trúc:
 {
-  "topic": "Chủ đề ma trận trích xuất được",
-  "grade": "12",
+  "topic": "${effectiveDetectedGrade === '11' ? 'Lượng Giác, Dãy Số - Cấp Số Cộng/Nhân, Giới Hạn & Hình Học Không Gian' : effectiveDetectedGrade === '10' ? 'Hàm Số Bậc Hai, Tam Thức & Bất Phương Trình Bậc Hai' : 'Khảo sát hàm số & Tích phân'}",
+  "grade": "${effectiveDetectedGrade}",
   "textbook": "Kết Nối Tri Thức Với Cuộc Sống",
   "durationMinutes": 45,
   "totalPoints": 10.0,
@@ -382,12 +656,12 @@ Trả về định dạng JSON thuần túy (KHÔNG dùng markdown \`\`\`json) v
 
     try {
       const responseText = await callGeminiWithResilience(contentPayload, {
+        systemInstruction: `Bạn là chuyên gia thẩm định và ra đề thi môn Toán THPT Việt Nam.\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
         responseMimeType: 'application/json',
-        temperature: 0.1,
+        temperature: 0.2,
       });
 
-      const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      parsedMatrix = JSON.parse(cleaned);
+      parsedMatrix = safeParseGeminiResponse(responseText);
       console.log('[API /api/parse-matrix] AI extraction completed successfully');
     } catch (aiErr) {
       console.warn('[API /api/parse-matrix] AI extraction failed, using algorithmic parser from file:', aiErr);
@@ -398,6 +672,53 @@ Trả về định dạng JSON thuần túy (KHÔNG dùng markdown \`\`\`json) v
     if (!parsedMatrix.part1) parsedMatrix.part1 = algorithmicMatrix.part1;
     if (!parsedMatrix.part2) parsedMatrix.part2 = algorithmicMatrix.part2;
     if (!parsedMatrix.part3) parsedMatrix.part3 = algorithmicMatrix.part3;
+
+    // Detect part3Type from text or parsed result
+    const combinedMatrixText = `${extractedText || ''} ${rawText || ''} ${fileName || ''}`.toLowerCase();
+    if (!parsedMatrix.part3Type) {
+      if (
+        combinedMatrixText.includes('trả lời ngắn') ||
+        combinedMatrixText.includes('tra loi ngan') ||
+        combinedMatrixText.includes('điền khuyết') ||
+        combinedMatrixText.includes('điền đáp số')
+      ) {
+        parsedMatrix.part3Type = 'short_answer';
+      } else if (
+        combinedMatrixText.includes('tự luận') ||
+        combinedMatrixText.includes('tu luan') ||
+        combinedMatrixText.includes('giải chi tiết')
+      ) {
+        parsedMatrix.part3Type = 'essay';
+      } else {
+        parsedMatrix.part3Type = 'short_answer';
+      }
+    }
+
+    // Strict grade and topic synchronization
+    parsedMatrix.grade = effectiveDetectedGrade;
+    if (effectiveDetectedGrade === '11') {
+      const isLeaked =
+        !parsedMatrix.topic ||
+        parsedMatrix.topic.includes('Lớp 12') ||
+        parsedMatrix.topic.includes('LỚP 12') ||
+        parsedMatrix.topic.includes('Khảo sát') ||
+        parsedMatrix.topic.includes('Tích phân') ||
+        parsedMatrix.topic.includes('Cực trị') ||
+        parsedMatrix.topic.includes('Oxyz');
+      if (isLeaked) {
+        parsedMatrix.topic = 'Lượng Giác, Dãy Số - Cấp Số Cộng/Nhân, Giới Hạn & Hình Học Không Gian';
+      }
+    } else if (effectiveDetectedGrade === '10') {
+      const isLeaked =
+        !parsedMatrix.topic ||
+        parsedMatrix.topic.includes('Lớp 12') ||
+        parsedMatrix.topic.includes('LỚP 12') ||
+        parsedMatrix.topic.includes('Khảo sát') ||
+        parsedMatrix.topic.includes('Tích phân');
+      if (isLeaked) {
+        parsedMatrix.topic = 'Hàm Số Bậc Hai, Tam Thức & Bất Phương Trình Bậc Hai';
+      }
+    }
 
     return res.json({
       success: true,
@@ -480,18 +801,12 @@ BẮT BUỘC trả về DUY NHẤT định dạng JSON thuần túy (không bọ
     }
 
     const responseText = await callGeminiWithResilience(payload, {
+      systemInstruction: `Bạn là chuyên gia số hóa đề thi môn Toán và khảo thí GDPT 2018.\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
       responseMimeType: 'application/json',
       temperature: 0.2,
     });
 
-    let cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
-      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-    }
-
-    const parsed = JSON.parse(cleaned);
+    const parsed = safeParseGeminiResponse(responseText);
     const questions = parsed.questions || [];
 
     const formattedExam = {
@@ -542,10 +857,10 @@ app.post('/api/generate-exam', async (req, res) => {
   try {
     const {
       mode = 'prompt', // 'prompt' | 'matrix' | 'recreate'
-      grade = '12',
-      topic = 'Khảo sát hàm số & Tích phân',
+      grade = '11',
+      topic = 'Lượng giác, Dãy số - Cấp số cộng/nhân, Giới hạn & Hình học không gian',
       textbook = 'Kết Nối Tri Thức Với Cuộc Sống',
-      difficulty = 'Đề thi tốt nghiệp THPT chuẩn',
+      difficulty = 'Đề thi chuẩn cấu trúc tốt nghiệp THPT',
       promptCustom = '',
       part3Type = 'short_answer', // 'short_answer' | 'essay'
       matrix,
@@ -597,6 +912,56 @@ app.post('/api/generate-exam', async (req, res) => {
     const tfPoints = activeMatrix?.part2?.points ? Number(activeMatrix.part2.points) : 4.0;
     const essayPoints = activeMatrix?.part3?.points ? Number(activeMatrix.part3.points) : 3.0;
 
+    // ==========================================
+    // AUTO-DETECT GRADE & TOPIC FROM FILE AND PARAMS
+    // ==========================================
+    let effectiveGrade = grade || '12';
+    const lowerFileName = (matrixFileName || examFileName || '').toLowerCase();
+    const combinedText = (lowerFileName + ' ' + (activeMatrix?.topic || '') + ' ' + (topic || '')).toLowerCase();
+
+    if (
+      /(^|[^0-9])11([^0-9]|$)/.test(lowerFileName) ||
+      combinedText.includes('toán 11') ||
+      combinedText.includes('toan 11') ||
+      combinedText.includes('lớp 11') ||
+      combinedText.includes('lop 11') ||
+      combinedText.includes('khối 11') ||
+      combinedText.includes('khoi 11')
+    ) {
+      effectiveGrade = '11';
+    } else if (
+      /(^|[^0-9])10([^0-9]|$)/.test(lowerFileName) ||
+      combinedText.includes('toán 10') ||
+      combinedText.includes('toan 10') ||
+      combinedText.includes('lớp 10') ||
+      combinedText.includes('lop 10') ||
+      combinedText.includes('khối 10') ||
+      combinedText.includes('khoi 10')
+    ) {
+      effectiveGrade = '10';
+    } else if (
+      /(^|[^0-9])12([^0-9]|$)/.test(lowerFileName) ||
+      combinedText.includes('toán 12') ||
+      combinedText.includes('toan 12') ||
+      combinedText.includes('lớp 12') ||
+      combinedText.includes('lop 12') ||
+      combinedText.includes('khối 12') ||
+      combinedText.includes('khoi 12')
+    ) {
+      effectiveGrade = '12';
+    }
+
+    let effectiveTopic = topic;
+    if (effectiveGrade === '11') {
+      if (!effectiveTopic || effectiveTopic.includes('Lớp 12') || effectiveTopic.includes('Khảo sát hàm số') || effectiveTopic.includes('Tích phân')) {
+        effectiveTopic = 'Lượng Giác, Dãy Số - Cấp Số Cộng/Nhân, Giới Hạn & Hình Học Không Gian';
+      }
+    } else if (effectiveGrade === '10') {
+      if (!effectiveTopic || effectiveTopic.includes('Lớp 12') || effectiveTopic.includes('Khảo sát hàm số') || effectiveTopic.includes('Tích phân')) {
+        effectiveTopic = 'Hàm Số Bậc Hai, Tam Thức & Bất Phương Trình Bậc Hai';
+      }
+    }
+
     let systemDirectives = '';
 
     // =========================================================================
@@ -607,11 +972,11 @@ app.post('/api/generate-exam', async (req, res) => {
       systemDirectives = `
 BẠN LÀ CHUYÊN GIA KHẢO THÍ TOÁN THPT (CHƯƠNG TRÌNH GDPT 2018 - BỘ SÁCH ${textbook}).
 YÊU CẦU ĐẶC BIỆT BẮT BUỘC:
-- BẮT BUỘC sinh 100% câu hỏi mới bám sát CHÍNH XÁC theo Khối lớp: TOÁN LỚP ${grade} và Chủ đề: "${topic}".
+- BẮT BUỘC sinh 100% câu hỏi mới bám sát CHÍNH XÁC theo Khối lớp: TOÁN LỚP ${effectiveGrade} và Chủ đề: "${effectiveTopic}".
 - CẢNH BÁO QUAN TRỌNG VỀ ĐÚNG KHỐI LỚP: TUYỆT ĐỐI KHÔNG sinh câu hỏi lệch khối lớp! Ví dụ: Nếu giáo viên chọn Toán lớp 10 với chủ đề "Hàm số bậc hai và Bất phương trình bậc hai", bạn CHỈ ĐƯỢC sinh kiến thức hàm số bậc hai, parabol, đỉnh $I$, trục đối xứng, tam thức bậc hai, bất phương trình bậc hai của Toán lớp 10; TUYỆT ĐỐI KHÔNG sinh đạo hàm $f'(x)$, tích phân hay cực trị của Toán lớp 12! Nếu chọn Toán 11 thì chỉ sinh kiến thức Toán 11 (lượng giác, cấp số cộng/nhân, giới hạn, đạo hàm cơ bản, hình không gian cổ điển).
-- Yêu cầu cụ thể của giáo viên: "${promptCustom || 'Bám sát chuẩn kiến thức kỹ năng môn Toán lớp ' + grade}".
-- TUYỆT ĐỐI KHÔNG sinh câu hỏi chung chung hoặc ngoài phạm vi chủ đề "${topic}".
-- Khối lớp: ${grade}. Bộ sách giáo khoa: ${textbook}.
+- Yêu cầu cụ thể của giáo viên: "${promptCustom || 'Bám sát chuẩn kiến thức kỹ năng môn Toán lớp ' + effectiveGrade}".
+- TUYỆT ĐỐI KHÔNG sinh câu hỏi chung chung hoặc ngoài phạm vi chủ đề "${effectiveTopic}".
+- Khối lớp: ${effectiveGrade}. Bộ sách giáo khoa: ${textbook}.
 - Cấu trúc đề thi:
   1. Phần I: Đúng ${mcTargetCount} câu trắc nghiệm 4 lựa chọn A, B, C, D (Tổng: ${mcPoints}đ).
   2. Phần II: Đúng ${tfTargetCount} câu trắc nghiệm Đúng/Sai, mỗi câu 4 ý a, b, c, d (Tổng: ${tfPoints}đ).
@@ -633,20 +998,24 @@ YÊU CẦU ĐẶC BIỆT BẮT BUỘC:
       const p2VanDung = activeMatrix?.part2?.vanDung ?? 1;
 
       systemDirectives = `
-BẠN LÀ CHUYÊN GIA KHẢO THÍ ĐANG RA ĐỀ THI TOÁN LỚP ${grade} THEO ĐÚNG MA TRẬN ĐẶC TẢ.
-YÊU CẦU BẮT BUỘC BÁM SÁT 100% MA TRẬN:
-- Phần I (Trắc nghiệm nhiều lựa chọn): Đúng chính xác ${mcTargetCount} câu hỏi:
-  * ${p1NhanBiet} câu cấp độ Nhận biết
-  * ${p1ThongHieu} câu cấp độ Thông hiểu
-  * ${p1VanDung} câu cấp độ Vận dụng
-  ${p1VanDungCao > 0 ? `* ${p1VanDungCao} câu cấp độ Vận dụng cao` : ''}
-  Tổng điểm Phần I: ${mcPoints}đ (mỗi câu ${(mcPoints / mcTargetCount).toFixed(2)}đ).
-- Phần II (Trắc nghiệm Đúng/Sai): Đúng chính xác ${tfTargetCount} câu (mỗi câu 4 ý a, b, c, d):
-  * Phân bổ các ý theo mức độ: ${p2NhanBiet} ý Nhận biết, ${p2ThongHieu} ý Thông hiểu, ${p2VanDung} ý Vận dụng.
-  Tổng điểm Phần II: ${tfPoints}đ.
-- Phần III (${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}): Đúng chính xác ${essayTargetCount} câu:
-  * Cấp độ Thông hiểu và Vận dụng chuẩn SGK lớp ${grade}.
-  Tổng điểm Phần III: ${essayPoints}đ.
+Bạn là chuyên gia thẩm định và ra đề thi Toán THPT Việt Nam (Chương trình GDPT 2018).
+NHIỆM VỤ ĐẶC BIỆT BẮT BUỘC:
+Hãy ĐỌC KỸ 100% NỘI DUNG FILE MA TRẬN / BẢNG ĐẶC TẢ ĐÍNH KÈM (File đính kèm "${matrixFileName}" là tài liệu Toán của KHỐI LỚP NÀO thì BẮT BUỘC RA ĐÚNG KHỐI LỚP ĐÓ).
+- KHỐI LỚP XÁC ĐỊNH BẮT BUỘC: TOÁN LỚP ${effectiveGrade}.
+- NẾU FILE LÀ MA TRẬN TOÁN 11 (HOẶC TÊN FILE CÓ SỐ 11 NHƯ 11.pdf):
+  * TẠO ĐỀ THI MÔN TOÁN LỚP 11 (bám sát các chuyên đề Lớp 11 trong file: Lượng giác, Dãy số - Cấp số cộng/nhân, Giới hạn, Hình học không gian quan hệ song song/vuông góc...).
+  * CẢNH BÁO TỐI CAO: TUYỆT ĐỐI KHÔNG RA KIẾN THỨC ĐẠO HÀM/TÍCH PHÂN/KHẢO SÁT HÀM SỐ CỦA LỚP 12!
+  * Tiêu đề đề thi PHẢI LÀ: "ĐỀ KIỂM TRA TOÁN LỚP 11 - [TÊN CHỦ ĐỀ TRONG MA TRẬN]".
+  * Mã đề thi PHẢI BẮT ĐẦU BẰNG "TOAN11-".
+- NẾU FILE LÀ MA TRẬN TOÁN 10:
+  * TẠO ĐỀ THI MÔN TOÁN LỚP 10 (Hàm số bậc hai, tam thức bậc hai, bất phương trình bậc hai, hệ thức lượng tam giác, vectơ, phương pháp toạ độ phẳng Oxy...).
+  * TUYỆT ĐỐI KHÔNG RA KIẾN THỨC LỚP 12!
+  * Tiêu đề đề thi PHẢI LÀ: "ĐỀ KIỂM TRA TOÁN LỚP 10 - [TÊN CHỦ ĐỀ TRONG MA TRẬN]".
+  * Mã đề thi PHẢI BẮT ĐẦU BẰNG "TOAN10-".
+- CẤU TRÚC ĐỀ PHẢI KHỚP ĐÚNG TỪNG CÂU, TỪNG MỨC ĐỘ NHẬN THỨC (Nhận biết, Thông hiểu, Vận dụng) và số lượng câu đã ghi rõ trong file ma trận:
+  * Phần I (Trắc nghiệm nhiều lựa chọn): Đúng chính xác ${mcTargetCount} câu (${p1NhanBiet} câu Nhận biết, ${p1ThongHieu} câu Thông hiểu, ${p1VanDung} câu Vận dụng). Tổng điểm: ${mcPoints}đ.
+  * Phần II (Trắc nghiệm Đúng/Sai): Đúng chính xác ${tfTargetCount} câu (${p2NhanBiet} ý Nhận biết, ${p2ThongHieu} ý Thông hiểu, ${p2VanDung} ý Vận dụng). Tổng điểm: ${tfPoints}đ.
+  * Phần III (${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}): Đúng chính xác ${essayTargetCount} câu chuẩn SGK lớp ${effectiveGrade}. Tổng điểm: ${essayPoints}đ.
 `;
     }
     // =========================================================================
@@ -711,13 +1080,13 @@ ${systemDirectives}
 
 Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) với schema:
 {
-  "title": "${mode === 'recreate' ? 'ĐỀ THI TÁI TẠO TƯƠNG ĐƯƠNG' : 'ĐỀ KIỂM TRA TOÁN'} LỚP ${grade} - ${(topic || 'CHUYÊN ĐỀ').toUpperCase()}",
-  "examCode": "${mode === 'recreate' ? 'TAITAO' : 'TOAN'}${grade}-${Math.floor(100 + Math.random() * 900)}",
-  "grade": "${grade}",
+  "title": "${mode === 'recreate' ? 'ĐỀ THI TÁI TẠO TƯƠNG ĐƯƠNG' : 'ĐỀ KIỂM TRA TOÁN'} LỚP ${effectiveGrade} - ${(effectiveTopic || 'CHUYÊN ĐỀ').toUpperCase()}",
+  "examCode": "${mode === 'recreate' ? 'TAITAO' : 'TOAN'}${effectiveGrade}-${Math.floor(100 + Math.random() * 900)}",
+  "grade": "${effectiveGrade}",
   "durationMinutes": ${activeMatrix?.durationMinutes || 45},
   "totalPoints": ${activeMatrix?.totalPoints || 10},
   "textbook": "${textbook}",
-  "topic": "${topic}",
+  "topic": "${effectiveTopic}",
   "part3Type": "${part3Type}",
   "multipleChoice": [
     {
@@ -795,27 +1164,58 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
     let examData: any = null;
 
     try {
+      const systemInstructionForGen =
+        mode === 'matrix'
+          ? `Bạn là chuyên gia thẩm định và ra đề thi Toán THPT Việt Nam.
+Nhiệm vụ: Hãy ĐỌC KỸ 100% NỘI DUNG FILE MA TRẬN/BẢNG ĐẶC TẢ ĐÍNH KÈM (File đính kèm là tài liệu Toán của KHỐI LỚP NÀO thì BẮT BUỘC RA ĐÚNG KHỐI LỚP ĐÓ).
+- Nếu file là Ma trận Toán 11: Tạo đề thi môn Toán Lớp 11 (bám sát các chuyên đề Lớp 11 trong file: Lượng giác, Dãy số - Cấp số cộng/nhân, Giới hạn, Hình học không gian quan hệ song song/vuông góc...). TUYỆT ĐỐI KHÔNG RA KIẾN THỨC ĐẠO HÀM/TÍCH PHÂN/KHẢO SÁT HÀM SỐ CỦA LỚP 12.
+- Cấu trúc đề phải khớp đúng từng câu, từng mức độ nhận thức (Nhận biết, Thông hiểu, Vận dụng) và số lượng câu đã ghi rõ trong file ma trận.
+Công thức toán học định dạng chuẩn LaTeX $...$.
+${STRICT_JSON_SYSTEM_INSTRUCTION}`
+          : `${SYSTEM_INSTRUCTION_EXAM_GEN}\n${STRICT_JSON_SYSTEM_INSTRUCTION}`;
+
       const responseText = await callGeminiWithResilience(payload, {
-        systemInstruction: SYSTEM_INSTRUCTION_EXAM_GEN,
+        systemInstruction: systemInstructionForGen,
         responseMimeType: 'application/json',
-        temperature: mode === 'recreate' ? 0.4 : 0.3,
+        temperature: 0.2,
       });
 
-      let cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const firstBrace = cleaned.indexOf('{');
-      const lastBrace = cleaned.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1) {
-        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-      }
-      examData = JSON.parse(cleaned);
+      examData = safeParseGeminiResponse(responseText);
       if (!examData.part3Type) {
         examData.part3Type = part3Type;
       }
-      if (!examData.grade) {
-        examData.grade = grade;
+      examData.grade = effectiveGrade;
+      if (!examData.topic || (effectiveGrade !== '12' && (examData.topic.includes('Lớp 12') || examData.topic.includes('Khảo sát') || examData.topic.includes('Tích phân')))) {
+        examData.topic = effectiveTopic;
       }
-      if (!examData.topic) {
-        examData.topic = topic;
+
+      // Hard guarantee: sync title and examCode to the exact grade
+      if (effectiveGrade === '11') {
+        examData.title = (examData.title || '')
+          .replace(/TOÁN\s*LỚP\s*12/gi, 'TOÁN LỚP 11')
+          .replace(/LỚP\s*12/gi, 'LỚP 11')
+          .replace(/Lớp\s*12/gi, 'Lớp 11')
+          .replace(/Khảo sát hàm số/gi, 'Lượng giác & Cấp số')
+          .replace(/Tích phân/gi, 'Giới hạn & Hình không gian');
+
+        if (!examData.title.toUpperCase().includes('LỚP 11')) {
+          examData.title = `ĐỀ KIỂM TRA TOÁN LỚP 11 - ${(examData.topic || effectiveTopic || 'MA TRẬN GDPT 2018').toUpperCase()}`;
+        }
+        if (!examData.examCode || examData.examCode.startsWith('TOAN12') || examData.examCode.startsWith('TOAN10') || examData.examCode.startsWith('SH-')) {
+          examData.examCode = `TOAN11-${Math.floor(100 + Math.random() * 900)}`;
+        }
+      } else if (effectiveGrade === '10') {
+        examData.title = (examData.title || '')
+          .replace(/TOÁN\s*LỚP\s*12/gi, 'TOÁN LỚP 10')
+          .replace(/LỚP\s*12/gi, 'LỚP 10')
+          .replace(/Lớp\s*12/gi, 'Lớp 10');
+
+        if (!examData.title.toUpperCase().includes('LỚP 10')) {
+          examData.title = `ĐỀ KIỂM TRA TOÁN LỚP 10 - ${(examData.topic || effectiveTopic || 'MA TRẬN GDPT 2018').toUpperCase()}`;
+        }
+        if (!examData.examCode || examData.examCode.startsWith('TOAN12')) {
+          examData.examCode = `TOAN10-${Math.floor(100 + Math.random() * 900)}`;
+        }
       }
 
       // Sanitize questions, prompts, and options to guarantee clean prefixes and single correct answer
@@ -878,6 +1278,12 @@ app.post('/api/recreate-exam', async (req, res) => {
 });
 
 // ==========================================
+// In-Memory & File Store for Teacher Essay Grading Calibration
+// (Used for Dynamic Few-Shot Prompt Tuning and Gemini SFT fine-tuning export)
+// ==========================================
+let globalCalibrationFeedbacks: any[] = [];
+
+// ==========================================
 // API 3: Grade Handwritten Essay using Gemini Vision
 // ==========================================
 app.post('/api/grade-essay', async (req, res) => {
@@ -889,7 +1295,13 @@ app.post('/api/grade-essay', async (req, res) => {
       questionText,
       maxPoints = 3.0,
       rubric = [],
+      calibrations = [],
     } = req.body;
+
+    // Merge incoming calibrations with server stored ones if empty
+    const effectiveCalibrations = (calibrations && calibrations.length > 0)
+      ? calibrations
+      : globalCalibrationFeedbacks.slice(0, 4);
 
     if (!imageUrl && !imageBase64) {
       return res.status(400).json({ success: false, error: 'Thiếu hình ảnh bài làm (imageUrl hoặc imageBase64)' });
@@ -935,6 +1347,22 @@ app.post('/api/grade-essay', async (req, res) => {
       })
       .join('\n');
 
+    const calibrationsSection = (effectiveCalibrations && effectiveCalibrations.length > 0)
+      ? `
+=== TIÊU CHUẨN HIỆU CHUẨN TỪ GIÁO VIÊN BỘ MÔN (FEW-SHOT TEACHER CALIBRATION & PROMPT TUNING) ===
+Dưới đây là các ví dụ mà Giáo viên bộ môn đã trực tiếp sửa điểm và hiệu chỉnh lời phê. Hãy học hỏi và chấm bài theo đúng chuẩn mực này:
+${effectiveCalibrations.slice(0, 4).map((c: any, idx: number) => `
+[Ví dụ hiệu chuẩn ${idx + 1}]
+- Đề bài: ${c.questionText}
+- Trích xuất chữ viết: ${c.ocrTranscription ? c.ocrTranscription.substring(0, 200) : 'Bài giải viết tay'}
+- Điểm AI ban đầu: ${c.aiScore}đ -> Điểm Giáo viên điều chỉnh: ${c.teacherScore}đ (Chênh lệch: ${c.scoreDelta > 0 ? `+${c.scoreDelta}` : c.scoreDelta}đ)
+- Lý do giáo viên điều chỉnh: ${c.reason}
+- Lời phê sư phạm chuẩn của Giáo viên: "${c.teacherFeedback}"
+`).join('\n')}
+QUY TẮC: Áp dụng tinh thần đánh giá trên của giáo viên (ví dụ nếu giáo viên khích lệ cách giải khác hoặc không trừ nặng lỗi số học nhỏ, hãy chấm tương tự).
+`
+      : '';
+
     const promptText = `
 ĐỀ BÀI TOÁN TỰ LUẬN:
 "${questionText || 'Bài toán khảo sát hàm số / hình học / tích phân THPT'}"
@@ -943,6 +1371,7 @@ THANG ĐIỂM TỐI ĐA: ${maxPoints} điểm.
 
 BAREM CHẤM ĐIỂM CHUẨN SGK GDPT 2018:
 ${rubricDescription || '- Chấm theo các bước biến đổi toán học chuẩn SGK cấp 3'}
+${calibrationsSection}
 
 Hãy phân tích ảnh bài làm viết tay kèm theo và thực hiện:
 1. "ocrTranscription": Trích xuất toàn bộ nội dung chữ viết và các bước giải toán mà học sinh đã viết (kèm công thức LaTeX nếu có).
@@ -990,13 +1419,12 @@ Trả về kết quả bằng định dạng JSON chuẩn (không bọc markdown
     if (!isSvg) {
       try {
         const responseText = await callGeminiWithResilience([imagePart, { text: promptText }], {
-          systemInstruction: HIGH_SCHOOL_MATH_GRADING_SYSTEM_INSTRUCTION,
+          systemInstruction: `${HIGH_SCHOOL_MATH_GRADING_SYSTEM_INSTRUCTION}\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
           responseMimeType: 'application/json',
           temperature: 0.2,
         });
 
-        const cleaned = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        evaluation = JSON.parse(cleaned);
+        evaluation = safeParseGeminiResponse(responseText);
       } catch (geminiErr: any) {
         console.warn('Gemini vision API error, falling back to rubric synthesizer:', geminiErr.message);
       }
@@ -1068,6 +1496,78 @@ Trả về kết quả bằng định dạng JSON chuẩn (không bọc markdown
   } catch (error: any) {
     console.error('Error grading essay:', error);
     return res.status(500).json({ success: false, error: error.message || 'Lỗi khi AI chấm bài tự luận' });
+  }
+});
+
+// ==========================================
+// API: Save Teacher Calibration Feedback
+// ==========================================
+app.post('/api/calibration-feedback', (req, res) => {
+  try {
+    const feedback = req.body;
+    if (!feedback || !feedback.id) {
+      return res.status(400).json({ success: false, error: 'Dữ liệu calibration không hợp lệ' });
+    }
+
+    const idx = globalCalibrationFeedbacks.findIndex((f) => f.id === feedback.id);
+    if (idx >= 0) {
+      globalCalibrationFeedbacks[idx] = feedback;
+    } else {
+      globalCalibrationFeedbacks.unshift(feedback);
+    }
+
+    // Keep up to 100 recent feedback records in memory
+    if (globalCalibrationFeedbacks.length > 100) {
+      globalCalibrationFeedbacks = globalCalibrationFeedbacks.slice(0, 100);
+    }
+
+    console.log(`[Calibration] Saved teacher feedback for submission: ${feedback.studentName} (delta: ${feedback.scoreDelta})`);
+    return res.json({ success: true, count: globalCalibrationFeedbacks.length });
+  } catch (err: any) {
+    console.error('Error in /api/calibration-feedback:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================================
+// API: Get Calibration Feedbacks List
+// ==========================================
+app.get('/api/calibration-feedbacks', (_req, res) => {
+  return res.json({ success: true, feedbacks: globalCalibrationFeedbacks });
+});
+
+// ==========================================
+// API: Export Gemini SFT Fine-Tuning Dataset (.jsonl)
+// ==========================================
+app.get('/api/export-finetune-dataset', (_req, res) => {
+  try {
+    // Generate JSONL matching Gemini Fine-Tuning Chat/Multimodal format
+    const lines = globalCalibrationFeedbacks.map((item) => {
+      const systemMsg = HIGH_SCHOOL_MATH_GRADING_SYSTEM_INSTRUCTION;
+      const userContent = `ĐỀ BÀI TOÁN TỰ LUẬN:\n"${item.questionText}"\n\nẢNH BÀI LÀM / OCR:\n"${item.ocrTranscription || 'Bài giải viết tay của học sinh'}"`;
+      const modelContent = JSON.stringify({
+        ocrTranscription: item.ocrTranscription || '',
+        totalScore: item.teacherScore,
+        aiScoreOriginal: item.aiScore,
+        overrideReason: item.reason,
+        teacherFeedback: item.teacherFeedback,
+      });
+
+      return JSON.stringify({
+        messages: [
+          { role: 'system', content: systemMsg },
+          { role: 'user', content: userContent },
+          { role: 'model', content: modelContent },
+        ],
+      });
+    });
+
+    const jsonlContent = lines.join('\n');
+    res.setHeader('Content-Type', 'application/x-jsonlines');
+    res.setHeader('Content-Disposition', 'attachment; filename="gemini_math_grading_finetune.jsonl"');
+    return res.send(jsonlContent);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

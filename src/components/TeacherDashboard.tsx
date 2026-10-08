@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   BookOpen,
@@ -27,6 +27,7 @@ import { TeacherExamStudio } from './TeacherExamStudio';
 import { GradebookReport } from './GradebookReport';
 import { ClassManagementModal } from './ClassManagementModal';
 import { DocumentExamStudio } from './DocumentExamStudio';
+import { TeacherEssayGradingModal } from './TeacherEssayGradingModal';
 import { exportGradebookToExcel } from '../services/api';
 import { AnswerMatrixRow } from '../services/examPermuter';
 
@@ -82,10 +83,18 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
   // Modals
   const [isClassModalOpen, setIsClassModalOpen] = useState<boolean>(false);
+  const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [selectedClassForLink, setSelectedClassForLink] = useState<string>(
-    classes.length > 0 ? classes[0].name : '10A1'
+    classes.length > 0 ? classes[0].name : '12A1'
   );
+
+  // Sync selectedClassForLink when classes change
+  useEffect(() => {
+    if (classes.length > 0 && !classes.some((c) => c.name === selectedClassForLink)) {
+      setSelectedClassForLink(classes[0].name);
+    }
+  }, [classes, selectedClassForLink]);
 
   // Link copy logic with class param
   const handleCopyExamLink = (clsName?: string) => {
@@ -112,7 +121,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       if (showToast) showToast('Chưa có bài thi nào được nộp để xuất bảng điểm.', 'info');
       return;
     }
-    exportGradebookToExcel(submissions, currentExam, selectedClassForLink || 'Toán 12');
+    exportGradebookToExcel(
+      submissions,
+      currentExam,
+      selectedClassForLink || (currentExam ? `Toán ${currentExam.grade}` : 'Toán 11')
+    );
     if (showToast) showToast('Đã xuất bảng điểm chuẩn form sư phạm Bộ GD&ĐT (.xlsx)!');
   };
 
@@ -162,6 +175,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
             <span>Bảng Thống Kê & Sổ Điểm ({submissions.length})</span>
           </button>
+
+          {currentExam && (
+            <div className="hidden md:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="truncate max-w-xs">Đang mở: <b className="text-indigo-700">{currentExam.title}</b> ({currentExam.examCode})</span>
+            </div>
+          )}
         </div>
 
         {/* Right: Quick Action Buttons */}
@@ -214,6 +234,17 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               </button>
             </div>
           )}
+
+          {/* NÚT: DUYỆT CHẤM TỰ LUẬN & CÂN CHỈNH AI */}
+          <button
+            type="button"
+            onClick={() => setIsEssayGradingModalOpen(true)}
+            className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 via-indigo-700 to-indigo-900 hover:from-indigo-700 hover:to-indigo-950 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Duyệt bài chấm tự luận, điều chỉnh điểm số của AI, thêm nhận xét sư phạm và cân chỉnh mô hình"
+          >
+            <Sparkles className="w-4 h-4 text-amber-300" />
+            <span>Duyệt Tự Luận & Cân Chỉnh AI</span>
+          </button>
 
           {/* NÚT: XUẤT BẢNG ĐIỂM EXCEL (.XLSX) */}
           <button
@@ -275,10 +306,21 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         classes={classes}
         roster={roster}
         currentExam={currentExam}
+        savedExams={savedExams}
         onSaveClass={onSaveClass}
         onDeleteClass={onDeleteClass}
         onSaveRoster={onSaveRoster}
         onDeleteStudent={onDeleteStudent}
+        showToast={showToast}
+      />
+
+      {/* MODAL: DUYỆT CHẤM TỰ LUẬN, GHI ĐÈ ĐIỂM & HIỆU CHUẨN PROMPT */}
+      <TeacherEssayGradingModal
+        isOpen={isEssayGradingModalOpen}
+        onClose={() => setIsEssayGradingModalOpen(false)}
+        submissions={submissions}
+        currentExam={currentExam}
+        teacherName={teacherProfile?.fullName || 'Giáo viên bộ môn Toán'}
         showToast={showToast}
       />
 
