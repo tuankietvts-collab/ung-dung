@@ -1158,13 +1158,11 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                           </span>
                         </div>
 
-                        {q.visualType && (
-                          <QuestionVisual
-                            visualType={q.visualType}
-                            caption={q.visualCaption}
-                            questionText={q.question}
-                          />
-                        )}
+                        <QuestionVisual
+                          visualType={q.visualType}
+                          caption={q.visualCaption}
+                          questionText={q.question}
+                        />
 
                         {q.customImageUrl && (
                           <div className="p-2.5 bg-white rounded-xl border border-slate-200 text-center">
@@ -1262,13 +1260,11 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                             <MathRenderer content={tf.prompt.replace(/^(?:Câu|Bài)\s*\d+\s*[:.]*\s*/i, '')} />
                           </div>
 
-                          {tf.visualType && (
-                            <QuestionVisual
-                              visualType={tf.visualType}
-                              caption={tf.visualCaption}
-                              questionText={tf.prompt}
-                            />
-                          )}
+                          <QuestionVisual
+                            visualType={tf.visualType}
+                            caption={tf.visualCaption}
+                            questionText={tf.prompt}
+                          />
 
                           {tf.customImageUrl && (
                             <div className="p-2.5 bg-white rounded-xl border border-slate-200 text-center">
@@ -1345,13 +1341,11 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                             </span>
                           </div>
 
-                          {essay.visualType && (
-                            <QuestionVisual
-                              visualType={essay.visualType}
-                              caption={essay.visualCaption}
-                              questionText={essay.question}
-                            />
-                          )}
+                          <QuestionVisual
+                            visualType={essay.visualType}
+                            caption={essay.visualCaption}
+                            questionText={essay.question}
+                          />
 
                           {essay.customImageUrl && (
                             <div className="p-2.5 bg-white rounded-xl border border-slate-200 text-center">

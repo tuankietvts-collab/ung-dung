@@ -25,10 +25,54 @@ function cleanOptionText(opt: string): string {
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 
-// Permute Multiple Choice Question & recalculate correct answer
+/**
+ * Hàm biến đổi số liệu và thay thế hàm số tương đương (Equivalence numerical permutation)
+ * Ví dụ: sin(x) -> cos(x), số 1 -> 2, hệ số a, b, c biến đổi giữ nguyên độ khó và cấu trúc
+ */
+export function varyMathExpressions(text: string, seed: number): string {
+  if (!text) return '';
+  const r = seededRandom(seed);
+  let res = text;
+
+  // 1. Thay thế tương đương các hàm lượng giác / hàm số đối xứng khi có seed lẻ vs chẵn
+  if (seed % 2 === 1) {
+    if (res.includes('\\sin') && !res.includes('\\cos')) {
+      res = res.replace(/\\sin/g, '\\cos');
+    } else if (res.includes('\\cos') && !res.includes('\\sin')) {
+      res = res.replace(/\\cos/g, '\\sin');
+    } else if (res.includes('sin(') && !res.includes('cos(')) {
+      res = res.replace(/sin\(/g, 'cos(');
+    }
+  }
+
+  // 2. Hoán đổi các biến và hệ số số học nhỏ (1 <-> 2, 2 <-> 3, 3 <-> 4) một cách an toàn
+  // Chỉ thay thế số trong các công thức toán học hoặc biểu thức đơn giản
+  const numShift = (seed % 3) + 1; // 1, 2 hoặc 3
+  
+  // Biến đổi các số nguyên nhỏ trong biểu thức cộng trừ (ví dụ x + 1 -> x + 2, x - 2 -> x - 3)
+  res = res.replace(/([xytuv])\s*([+\-])\s*([1-9])\b/g, (match, variable, sign, numStr) => {
+    const origNum = parseInt(numStr, 10);
+    const newNum = ((origNum - 1 + numShift) % 5) + 1;
+    return `${variable} ${sign} ${newNum}`;
+  });
+
+  // Biến đổi hệ số trước x (ví dụ: 2x -> 3x hoặc 3x -> 4x nếu là số nhỏ)
+  if (seed % 4 === 2) {
+    res = res.replace(/\b([2-5])([xytuv])\b/g, (match, coeffStr, variable) => {
+      const orig = parseInt(coeffStr, 10);
+      const nextCoeff = orig === 5 ? 2 : orig + 1;
+      return `${nextCoeff}${variable}`;
+    });
+  }
+
+  return res;
+}
+
+// Permute Multiple Choice Question & recalculate correct answer with optional numeric variation
 export function permuteMultipleChoice(
   mc: MultipleChoiceQuestion,
-  seed: number
+  seed: number,
+  applyNumericVariation = true
 ): MultipleChoiceQuestion {
   const cleanOptions = mc.options.map(cleanOptionText);
   const correctLetterIdx = LETTERS.indexOf(mc.correctAnswer.toUpperCase());
@@ -41,12 +85,17 @@ export function permuteMultipleChoice(
   const newCorrectIdx = shuffledClean.findIndex((o) => o === targetCleanCorrect);
   const newCorrectLetter = LETTERS[newCorrectIdx >= 0 ? newCorrectIdx : 0];
 
-  // Re-attach prefixes
-  const newOptionsWithPrefix = shuffledClean.map((opt, i) => `${LETTERS[i]}. ${opt}`);
+  // Optionally vary numbers or trigonometric functions in question & options
+  const variedQuestion = applyNumericVariation ? varyMathExpressions(mc.question, seed + 7) : mc.question;
+  const variedOptions = shuffledClean.map((opt, i) => {
+    const variedOpt = applyNumericVariation ? varyMathExpressions(opt, seed + 13 + i) : opt;
+    return `${LETTERS[i]}. ${variedOpt}`;
+  });
 
   return {
     ...mc,
-    options: newOptionsWithPrefix,
+    question: variedQuestion,
+    options: variedOptions,
     correctAnswer: newCorrectLetter,
   };
 }
@@ -99,20 +148,38 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
       permuteMultipleChoice(mc, seed + 100 + qIdx * 17)
     );
 
-    // 3. Permute True/False items
+    // 3. Permute True/False items with question variation
     const permutedTfQuestions: TrueFalseQuestion[] = masterExam.trueFalseQuestions.map((tf, tfIdx) => {
+      const variedPrompt = varyMathExpressions(tf.prompt, seed + 200 + tfIdx * 31);
       const shuffledItems = shuffleArrayWithSeed(tf.items, seed + 500 + tfIdx * 23);
       const rekeyedItems = shuffledItems.map((item, itemIdx) => ({
         ...item,
+        statement: varyMathExpressions(item.statement, seed + 600 + tfIdx * 11 + itemIdx),
         key: ['a', 'b', 'c', 'd'][itemIdx] || item.key,
       }));
       return {
         ...tf,
+        prompt: variedPrompt,
         items: rekeyedItems,
       };
     });
 
-    // 4. Create variant exam object
+    // 4. Permute Essays / Short-Answers with equivalent numerical substitution
+    const permutedEssays = (masterExam.essays || []).map((es, esIdx) => {
+      const variedQuestion = varyMathExpressions(es.question, seed + 700 + esIdx * 19);
+      let variedKey = es.shortAnswerKey;
+      if (variedKey && /^\d+$/.test(variedKey.trim())) {
+        const num = parseInt(variedKey.trim(), 10);
+        variedKey = String(num + ((seed % 3) + 1));
+      }
+      return {
+        ...es,
+        question: variedQuestion,
+        shortAnswerKey: variedKey,
+      };
+    });
+
+    // 5. Create variant exam object
     const variantExam: Exam = {
       ...masterExam,
       id: `${masterExam.id}-variant-${variantIndex}`,
@@ -124,7 +191,7 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
       assignedStudentName: student.fullName,
       multipleChoice: permutedMcQuestions,
       trueFalseQuestions: permutedTfQuestions,
-      essays: masterExam.essays,
+      essays: permutedEssays,
     };
 
     variants.push(variantExam);

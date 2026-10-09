@@ -4,6 +4,22 @@ export interface RubricStep {
   points: number;
 }
 
+export type QuestionVisualType =
+  | 'variation_table_rational'
+  | 'variation_table_cubic'
+  | 'variation_table_quartic'
+  | 'variation_table_quadratic'
+  | 'variation_table_custom'
+  | 'sign_table'
+  | 'plot_rational'
+  | 'plot_cubic'
+  | 'plot_quadratic'
+  | 'plot_quartic'
+  | 'plot_custom'
+  | 'statistics_table'
+  | 'geometry_pyramid'
+  | 'geometry_oxyz';
+
 export interface MultipleChoiceQuestion {
   id: string;
   question: string;
@@ -11,7 +27,7 @@ export interface MultipleChoiceQuestion {
   correctAnswer: string; // 'A' | 'B' | 'C' | 'D'
   points: number;
   explanation?: string;
-  visualType?: 'variation_table_rational' | 'variation_table_cubic' | 'plot_rational' | 'plot_cubic' | 'statistics_table' | 'geometry_pyramid';
+  visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
 }
@@ -27,7 +43,7 @@ export interface TrueFalseQuestion {
   prompt: string;
   items: TrueFalseSubItem[];
   pointsPerSub: number;
-  visualType?: 'variation_table_rational' | 'variation_table_cubic' | 'plot_rational' | 'plot_cubic' | 'statistics_table' | 'geometry_pyramid';
+  visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
 }
@@ -40,7 +56,7 @@ export interface EssayQuestion {
   type?: 'short_answer' | 'essay';
   shortAnswerKey?: string;
   shortAnswerPlaceholder?: string;
-  visualType?: 'variation_table_rational' | 'variation_table_cubic' | 'plot_rational' | 'plot_cubic' | 'statistics_table' | 'geometry_pyramid';
+  visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
 }
@@ -64,6 +80,9 @@ export interface Exam {
   essays: EssayQuestion[];
   createdAt: string;
   className?: string;
+  assignedClassNames?: string[];
+  assignedStudentIds?: string[];
+  assignedGroupDetails?: string;
   variants?: Exam[];
 }
 

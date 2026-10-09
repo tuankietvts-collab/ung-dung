@@ -30,8 +30,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
   // Login form state
-  const [loginUsername, setLoginUsername] = useState<string>('admin');
-  const [loginPassword, setLoginPassword] = useState<string>('123456');
+  const [loginUsername, setLoginUsername] = useState<string>('');
+  const [loginPassword, setLoginPassword] = useState<string>('');
 
   // Register form state
   const [regRole, setRegRole] = useState<UserRole>('teacher');
@@ -44,13 +44,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const handleAdminQuickFill = () => {
-    setLoginUsername('admin');
-    setLoginPassword('123456');
-    setActiveTab('login');
-    setErrorMessage(null);
-  };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -249,33 +242,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
           {/* TAB 1: FORM ĐĂNG NHẬP */}
           {activeTab === 'login' && (
             <div className="space-y-4">
-              {/* Admin Default Banner with 1-Click Fill Button */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-50 via-sky-50 to-blue-50 border border-indigo-200 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-                <div>
-                  <span className="font-extrabold text-indigo-900 block text-[11px] uppercase tracking-wider">
-                    Tài khoản Quản trị Admin tích hợp sẵn:
-                  </span>
-                  <div className="font-mono text-slate-800 font-bold text-xs mt-1">
-                    Tài khoản: <span className="text-indigo-700 font-black">admin</span> • Mật khẩu: <span className="text-indigo-700 font-black">123456</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    Quyền Admin: Quản lý kho đề, lớp học, tài khoản và chấm bài tự luận AI.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleAdminQuickFill}
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-2xs transition-all shrink-0 cursor-pointer self-start sm:self-auto flex items-center gap-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Điền Mặc Định</span>
-                </button>
-              </div>
-
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Tài khoản / Email (Admin, Giáo viên hoặc Học sinh)
+                    Tài khoản / Email (Giáo viên hoặc Học sinh)
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
@@ -284,7 +254,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
                       required
                       value={loginUsername}
                       onChange={(e) => setLoginUsername(e.target.value)}
-                      placeholder="admin hoặc email / tên đăng nhập"
+                      placeholder="Tên đăng nhập hoặc email..."
                       className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                     />
                   </div>

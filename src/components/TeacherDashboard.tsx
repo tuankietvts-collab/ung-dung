@@ -20,7 +20,8 @@ import {
   GraduationCap,
   Layers,
   ArrowRight,
-  ShieldAlert
+  ShieldAlert,
+  Send
 } from 'lucide-react';
 import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile } from '../types/exam';
 import { TeacherExamStudio } from './TeacherExamStudio';
@@ -28,6 +29,7 @@ import { GradebookReport } from './GradebookReport';
 import { ClassManagementModal } from './ClassManagementModal';
 import { DocumentExamStudio } from './DocumentExamStudio';
 import { TeacherEssayGradingModal } from './TeacherEssayGradingModal';
+import { AssignExamModal } from './AssignExamModal';
 import { exportGradebookToExcel } from '../services/api';
 import { AnswerMatrixRow } from '../services/examPermuter';
 
@@ -84,6 +86,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   // Modals
   const [isClassModalOpen, setIsClassModalOpen] = useState<boolean>(false);
   const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState<boolean>(false);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [selectedClassForLink, setSelectedClassForLink] = useState<string>(
     classes.length > 0 ? classes[0].name : '12A1'
@@ -186,6 +189,19 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
         {/* Right: Quick Action Buttons */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* NÚT: GIAO ĐỀ KIỂM TRA CHO LỚP / HỌC SINH (Nổi bật nhất trên thanh công cụ) */}
+          {currentExam && (
+            <button
+              type="button"
+              onClick={() => setIsAssignModalOpen(true)}
+              className="px-4 py-2.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white font-black text-xs rounded-xl shadow-md shadow-indigo-500/25 transition-all flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95 border border-white/20"
+              title="Giao đề thi này cho lớp học cụ thể, từng học sinh hoặc nhóm học sinh"
+            >
+              <Send className="w-4 h-4 text-sky-200" />
+              <span>Giao Đề Cho Lớp / Học Sinh</span>
+            </button>
+          )}
+
           {/* NÚT: QUẢN LÝ LỚP HỌC */}
           <button
             type="button"
@@ -321,6 +337,30 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         submissions={submissions}
         currentExam={currentExam}
         teacherName={teacherProfile?.fullName || 'Giáo viên bộ môn Toán'}
+        showToast={showToast}
+      />
+
+      {/* MODAL: GIAO ĐỀ THI CHO LỚP HOẶC HỌC SINH / NHÓM HỌC SINH */}
+      <AssignExamModal
+        isOpen={isAssignModalOpen}
+        onClose={() => setIsAssignModalOpen(false)}
+        exam={currentExam}
+        classes={classes}
+        roster={roster}
+        onAssignExam={async (assignedClasses, assignedStudentIds, note) => {
+          if (!currentExam) return;
+          const updatedExam: Exam = {
+            ...currentExam,
+            assignedClassNames: assignedClasses,
+            assignedStudentIds: assignedStudentIds,
+            assignedGroupDetails: note,
+            className: assignedClasses.length > 0 ? assignedClasses[0] : currentExam.className,
+          };
+          onExamCreated(updatedExam);
+          if (onSaveExamToCloud) {
+            await onSaveExamToCloud(updatedExam);
+          }
+        }}
         showToast={showToast}
       />
 

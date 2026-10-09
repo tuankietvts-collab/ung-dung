@@ -36,8 +36,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [role, setRole] = useState<UserRole>(defaultRole);
 
   // Form states
-  const [username, setUsername] = useState<string>('admin');
-  const [password, setPassword] = useState<string>('123456');
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [fullName, setFullName] = useState<string>('Thầy Trịnh Tuấn Kiệt');
   const [school, setSchool] = useState<string>('Bộ môn Toán THPT - GDPT 2018');
   const [className, setClassName] = useState<string>('10A1');
@@ -47,14 +47,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
-
-  // Quick auto-fill default admin credentials
-  const handleQuickAdmin = () => {
-    setActiveTab('login');
-    setUsername('admin');
-    setPassword('123456');
-    setErrorMessage(null);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -164,32 +156,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Form Body */}
         <div className="p-6 space-y-4">
 
-          {/* Quick Admin Auto-fill Button */}
+          {/* Student Login Guide */}
           {activeTab === 'login' && (
-            <>
-              <div className="p-3 bg-indigo-50 rounded-2xl border border-indigo-200 flex items-center justify-between text-xs">
-                <div>
-                  <span className="font-bold text-indigo-950 block">Tài khoản Admin Quản Trị:</span>
-                  <span className="text-[11px] text-indigo-700 font-mono">admin / 123456</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleQuickAdmin}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Điền Nhanh</span>
-                </button>
+            <div className="p-2.5 bg-indigo-50 rounded-xl border border-indigo-200 text-[11px] text-indigo-950 flex items-start gap-2">
+              <GraduationCap className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-indigo-900">Đăng nhập hệ thống:</span> Giáo viên và Học sinh nhập Tên tài khoản hoặc Email cùng Mật khẩu để bắt đầu.
               </div>
-
-              {/* Student Login Guide */}
-              <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-950 flex items-start gap-2">
-                <GraduationCap className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-amber-900">Dành cho Học Sinh:</span> Đăng nhập bằng tên tài khoản do Thầy/Cô cấp (ví dụ: <code className="bg-amber-100 px-1 rounded font-bold">12a1_01</code>, mật khẩu: <code className="bg-amber-100 px-1 rounded font-bold">123456</code>). Hoặc mở Link thi trực tiếp để làm bài ngay!
-                </div>
-              </div>
-            </>
+            </div>
           )}
 
           {errorMessage && (
@@ -291,7 +265,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="admin hoặc email..."
+                  placeholder="Tên đăng nhập hoặc email..."
                   className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>

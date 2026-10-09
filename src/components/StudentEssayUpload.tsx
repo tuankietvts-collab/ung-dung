@@ -367,13 +367,11 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
       </div>
 
       {/* Visual Diagram if available */}
-      {essay.visualType && (
-        <QuestionVisual
-          visualType={essay.visualType}
-          caption={essay.visualCaption}
-          questionText={essay.question}
-        />
-      )}
+      <QuestionVisual
+        visualType={essay.visualType}
+        caption={essay.visualCaption}
+        questionText={essay.question}
+      />
 
       {/* Attached image if available */}
       {essay.customImageUrl && (

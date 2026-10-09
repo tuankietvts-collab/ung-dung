@@ -57,19 +57,28 @@ export const DEFAULT_SAMPLE_EXAMS: Exam[] = [
     multipleChoice: [
       {
         id: 'mc_1',
-        question: 'Cho hàm số $y = f(x)$ có bảng biến thiên với $f\'(x) > 0$ trên $(-\\infty; 1)$ và $f\'(x) < 0$ trên $(1; +\\infty)$. Hàm số đã cho đồng biến trên khoảng nào dưới đây?',
-        options: ['A. $(-\\infty; 1)$', 'B. $(1; +\\infty)$', 'C. $(-1; 2)$', 'D. $(0; +\\infty)$'],
+        question: 'Cho hàm số $y = f(x)$ có bảng biến thiên như hình vẽ bên dưới. Hàm số đã cho đồng biến trên các khoảng nào sau đây?',
+        options: ['A. $(-\\infty; 0)$ và $(2; +\\infty)$', 'B. $(0; 2)$', 'C. $(-2; 2)$', 'D. $(-\\infty; 2)$'],
         correctAnswer: 'A',
         points: 0.25,
-        explanation: 'Vì đạo hàm $f\'(x) > 0$ trên khoảng $(-\\infty; 1)$ nên theo định lý về tính đơn điệu, hàm số đồng biến trên khoảng $(-\\infty; 1)$.'
+        visualType: 'variation_table_cubic',
+        visualCaption: 'Bảng biến thiên chuẩn SGK của hàm số $y = f(x)$',
+        explanation: 'Quan sát dòng dấu của $y\'$ trên bảng biến thiên, ta thấy $y\' > 0$ trên các khoảng $(-\\infty; 0)$ và $(2; +\\infty)$, do đó hàm số đồng biến trên các khoảng này.'
       },
       {
         id: 'mc_2',
-        question: 'Tập xác định của hàm số $y = \\log_2(x - 3)$ là:',
-        options: ['A. $(3; +\\infty)$', 'B. $[3; +\\infty)$', 'C. $(-\\infty; 3)$', 'D. $\\mathbb{R} \\setminus \\{3\\}$'],
+        question: 'Cho hàm số $y = \\dfrac{2x + 1}{x - 1}$ có đồ thị như hình vẽ bên. Khẳng định nào dưới đây là đúng?',
+        options: [
+          'A. Đồ thị có tiệm cận đứng $x = 1$, tiệm cận ngang $y = 2$',
+          'B. Đồ thị có tiệm cận đứng $x = 2$, tiệm cận ngang $y = 1$',
+          'C. Hàm số đồng biến trên từng khoảng xác định',
+          'D. Đồ thị đi qua điểm $O(0; 0)$'
+        ],
         correctAnswer: 'A',
         points: 0.25,
-        explanation: 'Hàm số $\\log_2(u)$ xác định khi $u > 0 \\iff x - 3 > 0 \\iff x > 3$. Vậy tập xác định là $D = (3; +\\infty)$.'
+        visualType: 'plot_rational',
+        visualCaption: 'Đồ thị hàm phân thức $y = \\dfrac{2x + 1}{x - 1}$',
+        explanation: 'Hàm số $y = \\frac{2x+1}{x-1}$ có $\\lim_{x \\to 1^+} y = +\\infty$ nên có TCĐ $x = 1$; $\\lim_{x \\to \\pm\\infty} y = 2$ nên có TCN $y = 2$.'
       },
       {
         id: 'mc_3',
@@ -96,7 +105,9 @@ export const DEFAULT_SAMPLE_EXAMS: Exam[] = [
     trueFalseQuestions: [
       {
         id: 'tf_1',
-        prompt: 'Cho hàm số bậc ba $y = f(x) = x^3 - 3x^2 + 2$ có đồ thị $(C)$. Xét tính đúng/sai của các mệnh đề sau:',
+        prompt: 'Cho hàm số bậc ba $y = f(x) = x^3 - 3x^2 + 2$ có đồ thị $(C)$ như hình vẽ bên. Xét tính đúng/sai của các mệnh đề sau:',
+        visualType: 'plot_cubic',
+        visualCaption: 'Đồ thị hàm số bậc ba $y = x^3 - 3x^2 + 2$',
         pointsPerSub: 0.25,
         items: [
           { key: 'a', statement: 'Hàm số đã cho đạt cực đại tại $x = 0$.', isCorrect: true },

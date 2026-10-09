@@ -29,9 +29,8 @@ export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
   onAuthSuccess,
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  // Default Admin Credentials: admin / 123456
-  const [usernameOrEmail, setUsernameOrEmail] = useState<string>('admin');
-  const [password, setPassword] = useState<string>('123456');
+  const [usernameOrEmail, setUsernameOrEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [fullName, setFullName] = useState<string>('Thầy Trịnh Tuấn Kiệt');
   const [school, setSchool] = useState<string>('Bộ môn Toán THPT - GDPT 2018');
   const [subject, setSubject] = useState<string>('Toán Học THPT');
@@ -77,12 +76,6 @@ export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
     }
   };
 
-  const handleAdminQuickFill = () => {
-    setUsernameOrEmail('admin');
-    setPassword('123456');
-    setMode('login');
-  };
-
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200 text-slate-900 animate-in zoom-in-95 duration-200 relative">
@@ -115,25 +108,6 @@ export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
           <p className="text-[11px] text-slate-500 max-w-xs mx-auto pt-1">
             Hệ thống tạo đề chuẩn ma trận GDPT 2018 & chấm tự luận bằng Gemini AI
           </p>
-        </div>
-
-        {/* Default Admin Notice Card */}
-        <div className="mb-4 p-3 rounded-2xl bg-gradient-to-r from-indigo-50 via-sky-50 to-blue-50 border border-indigo-200/80 text-xs text-indigo-950 flex items-center justify-between gap-2 shadow-2xs">
-          <div>
-            <span className="font-extrabold text-indigo-900 block text-[11px] uppercase tracking-wider">
-              Tài Khoản Admin Mặc Định:
-            </span>
-            <div className="font-mono text-slate-700 font-bold text-xs mt-0.5">
-              Tài khoản: <span className="text-indigo-700">admin</span> • Mật khẩu: <span className="text-indigo-700">123456</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleAdminQuickFill}
-            className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg shadow-2xs transition-all shrink-0 cursor-pointer"
-          >
-            Điền Sẵn
-          </button>
         </div>
 
         {/* Tab Toggle: [ĐĂNG NHẬP] / [ĐĂNG KÝ GIÁO VIÊN MỚI] */}
@@ -210,7 +184,7 @@ export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
                 required
                 value={usernameOrEmail}
                 onChange={(e) => setUsernameOrEmail(e.target.value)}
-                placeholder="admin"
+                placeholder="Tài khoản hoặc email..."
                 className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
               />
             </div>
@@ -227,7 +201,7 @@ export const TeacherAuthModal: React.FC<TeacherAuthModalProps> = ({
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="123456"
+                placeholder="••••••••"
                 className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
               />
             </div>

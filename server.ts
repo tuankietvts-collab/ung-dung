@@ -1074,7 +1074,7 @@ ${systemDirectives}
 ĐẶC BIỆT LƯU Ý VỀ CÔNG THỨC TOÁN HỌC & ĐỊNH DẠNG CÂU HỎI:
 - TUYỆT ĐỐI KHÔNG ghi 'Câu 1:', 'Câu 2:', 'Bài 1:' trong các trường 'question' hoặc 'prompt' vì hệ thống giao diện sẽ tự động đánh số thứ tự câu hỏi. Chỉ ghi trực tiếp nội dung bài toán (Ví dụ: "Cho hàm số bậc hai...", "Tập nghiệm của bất phương trình...").
 - Mọi công thức toán học, ký hiệu, phân số, tích phân, giới hạn, căn thức, vector PHẢI được viết bằng mã LaTeX chuẩn và bọc trong dấu đô-la đơn $...$ (ví dụ: $y = \\dfrac{2x+1}{x-1}$, $\\lim_{x \\to 1} f(x)$, $\\int_0^1 x^2\\,\\mathrm{d}x$, $(-\\infty; 2)$).
-- Các câu hỏi có thể kèm thuộc tính visualType: "variation_table_cubic" | "plot_cubic" | "plot_rational" | "statistics_table" | "geometry_pyramid" và visualCaption.
+- Các câu hỏi có thể kèm thuộc tính visualType: "variation_table_cubic" | "variation_table_rational" | "variation_table_quadratic" | "variation_table_quartic" | "sign_table" | "plot_cubic" | "plot_rational" | "plot_quadratic" | "plot_quartic" | "geometry_oxyz" | "geometry_pyramid" | "statistics_table" và visualCaption. BẮT BUỘC: Nếu câu hỏi nói về đồ thị ("có đồ thị như hình vẽ..."), gán visualType tương ứng ("plot_cubic", "plot_rational", "plot_quadratic"). Nếu câu hỏi nói về bảng biến thiên ("có bảng biến thiên như hình vẽ..."), gán visualType tương ứng ("variation_table_cubic", "variation_table_rational"). Nếu câu hỏi nói về bảng xét dấu, gán visualType: "sign_table".
 - Luôn đặt dấu cách giữa văn bản tiếng Việt và biểu thức toán.
 - Chú ý escape ký hiệu dấu gạch chéo ngược trong chuỗi JSON (ví dụ \\\\dfrac, \\\\lim).
 

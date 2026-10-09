@@ -1025,13 +1025,11 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                     </div>
 
                     {/* Question visual diagram (if needed) */}
-                    {mc.visualType && (
-                      <QuestionVisual
-                        visualType={mc.visualType}
-                        caption={mc.visualCaption}
-                        questionText={mc.question}
-                      />
-                    )}
+                    <QuestionVisual
+                      visualType={mc.visualType}
+                      caption={mc.visualCaption}
+                      questionText={mc.question}
+                    />
 
                     {/* Custom Snipped Image if teacher clipped from real paper */}
                     {mc.customImageUrl && (
@@ -1170,13 +1168,11 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                         />
                       </div>
 
-                      {tf.visualType && (
-                        <QuestionVisual
-                          visualType={tf.visualType}
-                          caption={tf.visualCaption}
-                          questionText={tf.prompt}
-                        />
-                      )}
+                      <QuestionVisual
+                        visualType={tf.visualType}
+                        caption={tf.visualCaption}
+                        questionText={tf.prompt}
+                      />
 
                       {tf.customImageUrl && (
                         <div className="my-3 p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
@@ -1362,13 +1358,11 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                         </div>
 
                         {/* Diagram if available */}
-                        {essay.visualType && (
-                          <QuestionVisual
-                            visualType={essay.visualType}
-                            caption={essay.visualCaption}
-                            questionText={essay.question}
-                          />
-                        )}
+                        <QuestionVisual
+                          visualType={essay.visualType}
+                          caption={essay.visualCaption}
+                          questionText={essay.question}
+                        />
 
                         {essay.customImageUrl && (
                           <div className="my-3 p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
