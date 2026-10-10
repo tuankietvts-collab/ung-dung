@@ -48,7 +48,8 @@ import {
   setStoredUser,
   logoutAppUser,
   getStoredExams,
-  getStoredClasses
+  getStoredClasses,
+  subscribeTeachersFromFirestore
 } from './services/firebase';
 import { isInvalidStudentName } from './services/studentRosterParser';
 import { TeacherDashboard } from './components/TeacherDashboard';
@@ -57,6 +58,7 @@ import { GradebookReport } from './components/GradebookReport';
 import { BackendCodeViewer } from './components/BackendCodeViewer';
 import { AuthPortal } from './components/AuthPortal';
 import { AuthModal } from './components/AuthModal';
+import { AdminTeacherApprovalModal } from './components/AdminTeacherApprovalModal';
 import { ClassManagementModal } from './components/ClassManagementModal';
 
 export default function App() {
@@ -84,7 +86,19 @@ export default function App() {
     return !!(p.get('exam') || p.get('examId') || p.get('code') || p.get('mode') === 'student');
   });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
-  const [isAuthDismissed, setIsAuthDismissed] = useState<boolean>(false);
+  const [isAdminTeacherModalOpen, setIsAdminTeacherModalOpen] = useState<boolean>(false);
+  const [pendingTeacherCount, setPendingTeacherCount] = useState<number>(0);
+
+  // Lắng nghe danh sách giáo viên chờ duyệt theo thời gian thực (Dành cho Admin)
+  useEffect(() => {
+    if (currentUser?.role === 'admin') {
+      const unsub = subscribeTeachersFromFirestore((teacherList) => {
+        const pending = teacherList.filter((t) => !t.isApproved).length;
+        setPendingTeacherCount(pending);
+      });
+      return () => unsub();
+    }
+  }, [currentUser?.role]);
 
   const [isCloudSaving, setIsCloudSaving] = useState<boolean>(false);
   const [backendUrl, setBackendUrl] = useState<string>('');
@@ -162,23 +176,35 @@ export default function App() {
       }
     );
 
-    // 4. Subscribe to class groups
+    return () => {
+      unsubExams();
+      unsubSubs();
+      unsubRoster();
+    };
+  }, []);
+
+  // Subscribe to class groups isolated per teacher (mỗi giáo viên có các lớp khác nhau)
+  useEffect(() => {
+    const teacherId = currentUser?.uid;
+    const isAdmin = currentUser?.role === 'admin';
+    const initialClasses = getStoredClasses(teacherId);
+    setClasses(initialClasses);
+
     const unsubClasses = subscribeClassGroupsFromFirestore(
       (classList) => {
         setClasses(classList);
       },
+      teacherId,
+      isAdmin,
       (err) => {
         console.warn('Classes subscription note:', err);
       }
     );
 
     return () => {
-      unsubExams();
-      unsubSubs();
-      unsubRoster();
       unsubClasses();
     };
-  }, []);
+  }, [currentUser?.uid, currentUser?.role]);
 
   // Whenever currentExam changes, calculate variants if exam exists
   useEffect(() => {
@@ -288,12 +314,19 @@ export default function App() {
   // Class and Roster management handlers
   const handleSaveClass = async (cls: ClassGroup) => {
     const cleanName = cls.name.trim().toUpperCase();
-    const cleanCls: ClassGroup = { ...cls, id: cleanName, name: cleanName };
+    const safeTeacherId = currentUser?.uid || 'admin_kiet';
+    const cleanCls: ClassGroup = {
+      ...cls,
+      id: `${cleanName}_${safeTeacherId}`,
+      name: cleanName,
+      teacherId: safeTeacherId,
+      teacherName: currentUser?.fullName || 'Thầy Trịnh Tuấn Kiệt'
+    };
     // 1. Optimistic update
-    setClasses((prev) => [cleanCls, ...prev.filter((c) => c.name !== cleanName && c.id !== cleanName)]);
+    setClasses((prev) => [cleanCls, ...prev.filter((c) => c.name !== cleanName && c.id !== cleanCls.id)]);
     // 2. Persist to Firestore & LocalStorage
     try {
-      await saveClassGroupToFirestore(cleanCls);
+      await saveClassGroupToFirestore(cleanCls, safeTeacherId);
     } catch (e: any) {
       console.warn('Sync class note:', e);
     }
@@ -344,8 +377,8 @@ export default function App() {
     setStudentRoster((prev) => prev.filter((s) => s.id !== studentId));
   };
 
-  // If not authenticated and NOT opening via direct exam link (?exam=...), require login portal first (unless dismissed via X)
-  if (!currentUser && !isDirectExamSession && !isAuthDismissed) {
+  // If not authenticated and NOT opening via direct exam link (?exam=...), require login portal first
+  if (!currentUser && !isDirectExamSession) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col justify-between">
         {toast && (
@@ -366,14 +399,7 @@ export default function App() {
             <span>{toast.message}</span>
           </div>
         )}
-        <AuthPortal
-          onAuthSuccess={handleAuthSuccess}
-          onClose={() => {
-            setIsAuthDismissed(true);
-            setActiveTab('teacher');
-            showToast('Đã đóng hộp thoại và chuyển về trang Giáo viên. Thầy/Cô có thể tạo lớp và soạn đề ngay!');
-          }}
-        />
+        <AuthPortal onAuthSuccess={handleAuthSuccess} />
       </div>
     );
   }
@@ -438,38 +464,57 @@ export default function App() {
 
               {/* Authenticated User Account Badge or Guest Login Button */}
               {currentUser ? (
-                <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium shadow-2xs ${
-                  currentUser.role === 'admin'
-                    ? 'bg-rose-50/90 border-rose-200 text-rose-950'
-                    : currentUser.role === 'teacher'
-                    ? 'bg-indigo-50/90 border-indigo-200 text-indigo-950'
-                    : 'bg-emerald-50/90 border-emerald-200 text-emerald-950'
-                }`}>
-                  {currentUser.role === 'admin' ? (
-                    <ShieldCheck className="w-4 h-4 text-rose-600 shrink-0" />
-                  ) : currentUser.role === 'teacher' ? (
-                    <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
-                  ) : (
-                    <GraduationCap className="w-4 h-4 text-emerald-600 shrink-0" />
-                  )}
-                  <span className="font-black">
-                    {currentUser.role === 'admin' ? 'Admin' : currentUser.role === 'teacher' ? 'GV' : 'HS'}:
-                  </span>
-                  <span className="font-bold truncate max-w-[140px]">{currentUser.fullName}</span>
-                  {(currentUser.school || currentUser.className) && (
-                    <span className="text-slate-400 font-medium hidden xl:inline text-[11px]">
-                      • {currentUser.school || currentUser.className}
+                <>
+                  <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium shadow-2xs ${
+                    currentUser.role === 'admin'
+                      ? 'bg-rose-50/90 border-rose-200 text-rose-950'
+                      : currentUser.role === 'teacher'
+                      ? 'bg-indigo-50/90 border-indigo-200 text-indigo-950'
+                      : 'bg-emerald-50/90 border-emerald-200 text-emerald-950'
+                  }`}>
+                    {currentUser.role === 'admin' ? (
+                      <ShieldCheck className="w-4 h-4 text-rose-600 shrink-0" />
+                    ) : currentUser.role === 'teacher' ? (
+                      <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                    ) : (
+                      <GraduationCap className="w-4 h-4 text-emerald-600 shrink-0" />
+                    )}
+                    <span className="font-black">
+                      {currentUser.role === 'admin' ? 'Admin' : currentUser.role === 'teacher' ? 'GV' : 'HS'}:
                     </span>
+                    <span className="font-bold truncate max-w-[140px]">{currentUser.fullName}</span>
+                    {(currentUser.school || currentUser.className) && (
+                      <span className="text-slate-400 font-medium hidden xl:inline text-[11px]">
+                        • {currentUser.school || currentUser.className}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleUserLogout}
+                      title="Đăng xuất khỏi hệ thống"
+                      className="p-1 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer ml-1"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {currentUser.role === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAdminTeacherModalOpen(true)}
+                      className="px-3.5 py-1.5 rounded-full bg-gradient-to-r from-rose-600 via-rose-700 to-indigo-700 hover:from-rose-700 hover:to-indigo-800 text-white font-black text-xs flex items-center gap-1.5 shadow-md shadow-rose-600/20 transition-all cursor-pointer hover:scale-105 active:scale-95"
+                      title="Quản trị các tài khoản giáo viên và duyệt giáo viên đăng ký"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-rose-200" />
+                      <span>Quản Trị Giáo Viên</span>
+                      {pendingTeacherCount > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] animate-pulse">
+                          {pendingTeacherCount}
+                        </span>
+                      )}
+                    </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleUserLogout}
-                    title="Đăng xuất khỏi hệ thống"
-                    className="p-1 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-100 transition-colors cursor-pointer ml-1"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                </>
               ) : (
                 <button
                   type="button"
@@ -535,6 +580,24 @@ export default function App() {
               ) : (
                 <>
                   {/* Admin & Teacher Navigation Tabs */}
+                  {currentUser.role === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAdminTeacherModalOpen(true)}
+                      className="px-3 sm:px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 shadow-2xs"
+                      title="Quản trị các tài khoản giáo viên và duyệt giáo viên đăng ký"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-rose-600" />
+                      <span className="hidden sm:inline">Duyệt Giáo Viên</span>
+                      <span className="sm:hidden">Duyệt GV</span>
+                      {pendingTeacherCount > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white text-[10px] font-black animate-pulse">
+                          {pendingTeacherCount}
+                        </span>
+                      )}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => setActiveTab('teacher')}
@@ -619,6 +682,8 @@ export default function App() {
             roster={studentRoster}
             classes={classes}
             teacherProfile={teacherProfile}
+            currentUser={currentUser}
+            isAdmin={currentUser?.role === 'admin'}
             onExamCreated={handleExamCreated}
             onSelectSavedExam={(exam) => setCurrentExam(exam)}
             onDeleteSubmission={async (subId) => {
@@ -688,6 +753,13 @@ export default function App() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         onAuthSuccess={handleAuthSuccess}
+        showToast={showToast}
+      />
+
+      {/* Admin Teacher Management & Approval Modal */}
+      <AdminTeacherApprovalModal
+        isOpen={isAdminTeacherModalOpen}
+        onClose={() => setIsAdminTeacherModalOpen(false)}
         showToast={showToast}
       />
 

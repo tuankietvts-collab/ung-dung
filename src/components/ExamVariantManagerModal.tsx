@@ -12,11 +12,16 @@ import {
   Shuffle,
   Eye,
   Download,
-  Award
+  Award,
+  Send,
+  Building,
+  Check,
+  SlidersHorizontal,
+  RefreshCw
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
-import { Exam } from '../types/exam';
-import { AnswerMatrixRow } from '../services/examPermuter';
+import { Exam, ClassGroup } from '../types/exam';
+import { AnswerMatrixRow, VariantGenerationConfig } from '../services/examPermuter';
 import { MathRenderer } from './MathRenderer';
 
 interface ExamVariantManagerModalProps {
@@ -28,6 +33,9 @@ interface ExamVariantManagerModalProps {
   onSelectVariantForExamRoom: (variant: Exam) => void;
   onTriggerAIVariation?: () => void;
   isGeneratingAI?: boolean;
+  onRecreateVariants?: (config: VariantGenerationConfig) => void;
+  classes?: ClassGroup[];
+  onAssignToClass?: (className: string) => void;
 }
 
 export const ExamVariantManagerModal: React.FC<ExamVariantManagerModalProps> = ({
@@ -39,12 +47,39 @@ export const ExamVariantManagerModal: React.FC<ExamVariantManagerModalProps> = (
   onSelectVariantForExamRoom,
   onTriggerAIVariation,
   isGeneratingAI = false,
+  onRecreateVariants,
+  classes = [],
+  onAssignToClass,
 }) => {
   const [activeTab, setActiveTab] = useState<'roster' | 'matrix' | 'ai_variants'>('roster');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [previewVariant, setPreviewVariant] = useState<Exam | null>(null);
 
+  // Cấu hình trộn đề & sinh n mã đề
+  const [shuffleMode, setShuffleMode] = useState<'shuffle_only' | 'numeric_variation'>('shuffle_only');
+  const [numVariants, setNumVariants] = useState<number>(() => variants.length > 0 ? variants.length : 4);
+  const [selectedClassToAssign, setSelectedClassToAssign] = useState<string>(() => classes.length > 0 ? classes[0].name : '');
+  const [isAssignedToast, setIsAssignedToast] = useState<boolean>(false);
+
   if (!isOpen) return null;
+
+  // Handle re-generating n variants with chosen mode
+  const handleRegenerate = () => {
+    if (onRecreateVariants) {
+      onRecreateVariants({
+        mode: shuffleMode,
+        numVariants: Math.max(1, Math.min(50, numVariants)),
+      });
+    }
+  };
+
+  const handleAssignToClassClick = () => {
+    if (onAssignToClass && selectedClassToAssign) {
+      onAssignToClass(selectedClassToAssign);
+      setIsAssignedToast(true);
+      setTimeout(() => setIsAssignedToast(false), 3000);
+    }
+  };
 
   // Filtered variants
   const filteredRows = answerMatrix.filter(
@@ -126,6 +161,131 @@ export const ExamVariantManagerModal: React.FC<ExamVariantManagerModalProps> = (
           >
             <X className="w-5 h-5" />
           </button>
+        </div>
+
+        {/* BẢNG ĐIỀU KHIỂN: TÙY CHỌN CHỈ TRỘN ĐỀ, TẠO n MÃ ĐỀ & GIAO THEO ĐƠN VỊ LỚP */}
+        <div className="p-4 bg-gradient-to-r from-indigo-50 via-sky-50 to-indigo-50 border-b border-indigo-100 shrink-0 space-y-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            {/* Tùy chọn 1: Chế độ trộn đề */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-black uppercase text-indigo-900 flex items-center gap-1.5">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-600" />
+                1. Chế Độ Trộn Đề:
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShuffleMode('shuffle_only')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                    shuffleMode === 'shuffle_only'
+                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                  }`}
+                  title="Chỉ hoán vị thứ tự câu hỏi và 4 phương án A, B, C, D; giữ nguyên 100% số liệu gốc của đề"
+                >
+                  <span className={`w-2 h-2 rounded-full ${shuffleMode === 'shuffle_only' ? 'bg-white' : 'bg-slate-400'}`} />
+                  <span>Chỉ Trộn Đề (Giữ nguyên số liệu gốc)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShuffleMode('numeric_variation')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                    shuffleMode === 'numeric_variation'
+                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                  }`}
+                  title="Xáo trộn câu hỏi, hoán vị phương án và biến đổi số liệu tương đương chống nhìn bài"
+                >
+                  <span className={`w-2 h-2 rounded-full ${shuffleMode === 'numeric_variation' ? 'bg-white' : 'bg-slate-400'}`} />
+                  <span>Trộn & Đổi Số Liệu Tương Đương</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Tùy chọn 2: Số lượng n mã đề */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-black uppercase text-indigo-900 flex items-center gap-1.5">
+                <Shuffle className="w-3.5 h-3.5 text-indigo-600" />
+                2. Tùy Chọn Số Lượng (n Mã Đề):
+              </label>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {[2, 4, 8, 24, 45].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setNumVariants(n)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      numVariants === n
+                        ? 'bg-indigo-700 text-white shadow-2xs'
+                        : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    {n} mã
+                  </button>
+                ))}
+                <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-2 py-0.5">
+                  <span className="text-[11px] text-slate-500 font-bold">Tùy chọn:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={numVariants}
+                    onChange={(e) => setNumVariants(Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 1)))}
+                    className="w-12 text-xs font-black text-indigo-700 text-center focus:outline-none"
+                  />
+                  <span className="text-[11px] text-slate-500 font-bold">mã</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleRegenerate}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Sinh ngay n mã đề mới với cấu hình đã chọn"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Tạo {numVariants} Mã Đề Ngay</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Giao đề theo đơn vị lớp */}
+          {classes && classes.length > 0 && onAssignToClass && (
+            <div className="pt-2 border-t border-indigo-200/70 flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-extrabold text-slate-700 flex items-center gap-1">
+                  <Building className="w-3.5 h-3.5 text-indigo-600" /> Giao {variants.length} mã đề cho đơn vị lớp:
+                </span>
+                <select
+                  value={selectedClassToAssign}
+                  onChange={(e) => setSelectedClassToAssign(e.target.value)}
+                  className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-xs font-black text-indigo-800 focus:outline-none"
+                >
+                  {classes.map((cls) => (
+                    <option key={cls.id || cls.name} value={cls.name}>
+                      Lớp {cls.name} ({cls.grade ? `Khối ${cls.grade}` : 'Toán'})
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={handleAssignToClassClick}
+                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                >
+                  <Send className="w-3 h-3" />
+                  <span>Giao Cho Lớp {selectedClassToAssign}</span>
+                </button>
+              </div>
+
+              {isAssignedToast && (
+                <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5" /> Đã giao {variants.length} mã đề cho lớp {selectedClassToAssign}!
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Navigation Tabs */}

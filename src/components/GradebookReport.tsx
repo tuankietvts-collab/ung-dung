@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   FileSpreadsheet,
   Download,
@@ -29,7 +29,7 @@ import {
   Sliders
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Exam, StudentSubmission, EssayGradingResult } from '../types/exam';
+import { Exam, StudentSubmission, EssayGradingResult, ClassGroup } from '../types/exam';
 import { exportGradebookToExcel, gradeEssayApi } from '../services/api';
 import { AnswerMatrixRow, generateFullClassSubmissions, generate45ExamVariants } from '../services/examPermuter';
 import { createHandwrittenMathSvg } from '../data/defaultExam';
@@ -42,6 +42,7 @@ interface GradebookReportProps {
   exam?: Exam | null;
   submissions: StudentSubmission[];
   className?: string;
+  classes?: ClassGroup[];
   variants?: Exam[];
   answerMatrix?: AnswerMatrixRow[];
   onDeleteSubmission?: (submissionId: string) => void;
@@ -51,6 +52,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   exam,
   submissions,
   className = 'Toán 12',
+  classes = [],
   variants = [],
   answerMatrix = [],
   onDeleteSubmission,
@@ -65,10 +67,12 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   const [submissionToDelete, setSubmissionToDelete] = useState<StudentSubmission | null>(null);
   const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
 
-  // Available classes in submissions
-  const classesList = Array.from(
-    new Set(submissions.map((s) => s.studentClass).filter(Boolean))
-  );
+  // Available classes in submissions + teacher's classes
+  const classesList = useMemo(() => {
+    const fromSubs = submissions.map((s) => s.studentClass?.trim()).filter(Boolean);
+    const fromTeacher = classes.map((c) => c.name?.trim()).filter(Boolean);
+    return Array.from(new Set([...fromTeacher, ...fromSubs])).sort();
+  }, [submissions, classes]);
 
   // Filtered submissions
   const filtered = submissions.filter((s) => {
@@ -102,28 +106,77 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
     return a.studentId.localeCompare(b.studentId, 'vi');
   });
 
-  // Comprehensive Statistics
-  const totalCount = submissions.length;
+  // 1. Target Submissions for current class filter
+  const currentClassSubmissions = selectedClassFilter === 'all'
+    ? submissions
+    : submissions.filter((s) => s.studentClass === selectedClassFilter);
+
+  // 2. Comprehensive Statistics for current selected class / all
+  const totalCount = currentClassSubmissions.length;
   const avgScore =
     totalCount > 0
-      ? (submissions.reduce((acc, cur) => acc + cur.totalScore, 0) / totalCount).toFixed(2)
+      ? (currentClassSubmissions.reduce((acc, cur) => acc + cur.totalScore, 0) / totalCount).toFixed(2)
       : '0.00';
   const highestScore =
-    totalCount > 0 ? Math.max(...submissions.map((s) => s.totalScore)).toFixed(2) : '0.00';
+    totalCount > 0 ? Math.max(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2) : '0.00';
   const lowestScore =
-    totalCount > 0 ? Math.min(...submissions.map((s) => s.totalScore)).toFixed(2) : '0.00';
+    totalCount > 0 ? Math.min(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2) : '0.00';
 
-  const countGioi = submissions.filter((s) => s.totalScore >= 8.0).length;
-  const countKha = submissions.filter((s) => s.totalScore >= 6.5 && s.totalScore < 8.0).length;
-  const countTB = submissions.filter((s) => s.totalScore >= 5.0 && s.totalScore < 6.5).length;
-  const universityViolations = submissions.filter(
+  const countGioi = currentClassSubmissions.filter((s) => s.totalScore >= 8.0).length;
+  const countKha = currentClassSubmissions.filter((s) => s.totalScore >= 6.5 && s.totalScore < 8.0).length;
+  const countTB = currentClassSubmissions.filter((s) => s.totalScore >= 5.0 && s.totalScore < 6.5).length;
+  const countYeu = currentClassSubmissions.filter((s) => s.totalScore < 5.0).length;
+  const universityViolations = currentClassSubmissions.filter(
     (s) => (s.tabViolations && s.tabViolations > 0) || s.essayAnswers?.essay1?.grading?.universityMethodDetected
   ).length;
+
+  // 3. Detailed Statistics Breakdown by Class (Thống kê theo từng đơn vị lớp chuẩn mẫu Bộ GD&ĐT)
+  const classBreakdownStats = useMemo(() => {
+    const fromSubs = submissions.map((s) => s.studentClass?.trim() || 'Chưa phân lớp').filter(Boolean);
+    const fromTeacher = classes.map((c) => c.name?.trim()).filter(Boolean);
+    const classNames = Array.from(
+      new Set([...fromTeacher, ...fromSubs])
+    ).sort();
+
+    return classNames.map((cName) => {
+      const classSubs = submissions.filter(
+        (s) => (s.studentClass?.trim() || 'Chưa phân lớp') === cName
+      );
+      const count = classSubs.length;
+      const scores = classSubs.map((s) => s.totalScore);
+      const avg = count > 0 ? scores.reduce((acc, v) => acc + v, 0) / count : 0;
+      const max = count > 0 ? Math.max(...scores) : 0;
+      const min = count > 0 ? Math.min(...scores) : 0;
+
+      const cGioi = classSubs.filter((s) => s.totalScore >= 8.0).length;
+      const cKha = classSubs.filter((s) => s.totalScore >= 6.5 && s.totalScore < 8.0).length;
+      const cTB = classSubs.filter((s) => s.totalScore >= 5.0 && s.totalScore < 6.5).length;
+      const cYeu = classSubs.filter((s) => s.totalScore < 5.0).length;
+      const passRate = count > 0 ? Math.round(((cGioi + cKha + cTB) / count) * 100) : 0;
+
+      return {
+        className: cName,
+        totalStudents: count,
+        avgScore: count > 0 ? avg.toFixed(2) : '—',
+        highestScore: count > 0 ? max.toFixed(2) : '—',
+        lowestScore: count > 0 ? min.toFixed(2) : '—',
+        countGioi: cGioi,
+        percentGioi: count > 0 ? Math.round((cGioi / count) * 100) : 0,
+        countKha: cKha,
+        percentKha: count > 0 ? Math.round((cKha / count) * 100) : 0,
+        countTB: cTB,
+        percentTB: count > 0 ? Math.round((cTB / count) * 100) : 0,
+        countYeu: cYeu,
+        percentYeu: count > 0 ? Math.round((cYeu / count) * 100) : 0,
+        passRate,
+      };
+    });
+  }, [submissions, classes]);
 
   const handleExportExcel = () => {
     if (exam) {
       exportGradebookToExcel(
-        filtered.length > 0 ? filtered : submissions,
+        filtered.length > 0 ? filtered : currentClassSubmissions,
         exam,
         selectedClassFilter !== 'all' ? selectedClassFilter : className
       );
@@ -462,7 +515,48 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
         </div>
       </div>
 
-      {/* Metric Cards */}
+      {/* THANH CHỌN NHANH ĐƠN VỊ LỚP */}
+      <div className="bg-white p-3.5 rounded-2xl border-2 border-indigo-200 shadow-2xs flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-black text-indigo-900 uppercase tracking-wider flex items-center gap-1.5 mr-1">
+            <Filter className="w-4 h-4 text-indigo-600" /> Xem Theo Lớp:
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedClassFilter('all')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              selectedClassFilter === 'all'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+          >
+            Tất Cả Các Lớp ({submissions.length} bài)
+          </button>
+          {classesList.map((cName) => {
+            const cCount = submissions.filter((s) => s.studentClass === cName).length;
+            return (
+              <button
+                key={cName}
+                type="button"
+                onClick={() => setSelectedClassFilter(cName)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  selectedClassFilter === cName
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/60'
+                }`}
+              >
+                🏫 Lớp {cName} ({cCount} bài)
+              </button>
+            );
+          })}
+        </div>
+
+        <span className="text-[11px] font-semibold text-slate-500">
+          Đang xem: <b className="text-indigo-700">{selectedClassFilter === 'all' ? 'Toàn bộ học sinh' : `Lớp ${selectedClassFilter}`}</b> ({currentClassSubmissions.length} em)
+        </span>
+      </div>
+
+      {/* Metric Cards (Tự động cập nhật theo lớp đang chọn) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
         <div className="bg-white p-4 rounded-xl border-2 border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between text-slate-500 mb-1">
@@ -470,7 +564,9 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
             <Users className="w-4 h-4 text-blue-600" />
           </div>
           <div className="text-2xl font-black text-slate-900">{totalCount} em</div>
-          <span className="text-[11px] font-semibold text-slate-500">Lớp {className} - 100% nộp</span>
+          <span className="text-[11px] font-semibold text-slate-500">
+            {selectedClassFilter === 'all' ? `Tổng ${classesList.length} lớp` : `Lớp ${selectedClassFilter}`}
+          </span>
         </div>
 
         <div className="bg-white p-4 rounded-xl border-2 border-slate-200 shadow-2xs">
@@ -479,7 +575,9 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
             <Award className="w-4 h-4 text-indigo-600" />
           </div>
           <div className="text-2xl font-black text-indigo-700">{avgScore}</div>
-          <span className="text-[11px] font-semibold text-emerald-600">Đạt chỉ tiêu chất lượng</span>
+          <span className="text-[11px] font-semibold text-emerald-600">
+            {parseFloat(avgScore) >= 6.5 ? 'Đạt chỉ tiêu chất lượng' : 'Cần ôn tập củng cố'}
+          </span>
         </div>
 
         <div className="bg-white p-4 rounded-xl border-2 border-slate-200 shadow-2xs">
@@ -498,10 +596,116 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
           </div>
           <div className="text-xs font-bold text-slate-800 space-y-0.5 mt-1">
             <div>Giỏi (≥8.0): <span className="font-extrabold text-emerald-700">{countGioi}</span> ({Math.round((countGioi / (totalCount || 1)) * 100)}%)</div>
-            <div>Khá (6.5 - 7.9): <span className="font-extrabold text-blue-700">{countKha}</span></div>
+            <div>Khá (6.5 - 7.9): <span className="font-extrabold text-blue-700">{countKha}</span> • TB: <span className="font-bold text-slate-700">{countTB}</span></div>
           </div>
         </div>
       </div>
+
+      {/* BẢNG THỐNG KÊ CHI TIẾT THEO TỪNG ĐƠN VỊ LỚP (CHUẨN BÁO CÁO BỘ GD&ĐT) */}
+      {classBreakdownStats.length > 0 && (
+        <div className="bg-white rounded-2xl border-2 border-indigo-200 shadow-md p-5 sm:p-6 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-indigo-600 inline-block" />
+              <h3 className="text-base font-black text-slate-900 uppercase tracking-tight">
+                Bảng Thống Kê So Sánh Chất Lượng Theo Đơn Vị Lớp
+              </h3>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                {classBreakdownStats.length} Lớp Học
+              </span>
+            </div>
+            <span className="text-xs text-slate-500 italic">
+              Bấm vào tên lớp bất kỳ để lọc ngay danh sách học sinh và bài thi của lớp đó
+            </span>
+          </div>
+
+          <div className="border border-slate-300 rounded-xl overflow-x-auto shadow-2xs">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-indigo-950 text-white uppercase text-[10px] tracking-wider font-sans">
+                <tr>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900 w-12">STT</th>
+                  <th className="py-2.5 px-3 border-r border-indigo-900">Lớp Học</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900">Số Bài Thi</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900 bg-indigo-900/60 font-black">Điểm TB</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900 text-emerald-300">Cao Nhất</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900 text-rose-300">Thấp Nhất</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900">Giỏi (≥8.0)</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900">Khá (6.5-7.9)</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900">Trung Bình (5-6.4)</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900">Dưới TB (&lt;5)</th>
+                  <th className="py-2.5 px-3 text-center border-r border-indigo-900 bg-emerald-950 text-emerald-300 font-black">Tỷ Lệ Đạt (≥5đ)</th>
+                  <th className="py-2.5 px-3 text-center">Thao Tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 font-medium">
+                {classBreakdownStats.map((st, idx) => {
+                  const isSelected = selectedClassFilter === st.className;
+                  return (
+                    <tr
+                      key={st.className}
+                      onClick={() => setSelectedClassFilter(st.className)}
+                      className={`cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-indigo-50/90 font-bold text-indigo-950'
+                          : 'hover:bg-slate-50 text-slate-800'
+                      }`}
+                    >
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200">{idx + 1}</td>
+                      <td className="py-2.5 px-3 border-r border-slate-200 font-extrabold text-indigo-700">
+                        Lớp {st.className}
+                        {isSelected && <span className="ml-1.5 text-[10px] bg-indigo-600 text-white px-1.5 py-0.2 rounded-full">Đang xem</span>}
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 font-bold">{st.totalStudents} em</td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 font-black text-indigo-700 text-sm bg-indigo-50/50">
+                        {st.avgScore}
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 font-extrabold text-emerald-700">
+                        {st.highestScore}
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 font-extrabold text-rose-700">
+                        {st.lowestScore}
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200">
+                        <span className="font-bold text-emerald-700">{st.countGioi}</span> ({st.percentGioi}%)
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200">
+                        <span className="font-bold text-blue-700">{st.countKha}</span> ({st.percentKha}%)
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200">
+                        <span className="font-bold text-slate-700">{st.countTB}</span> ({st.percentTB}%)
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200">
+                        <span className={`font-bold ${st.countYeu > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                          {st.countYeu}
+                        </span> ({st.percentYeu}%)
+                      </td>
+                      <td className="py-2.5 px-3 text-center border-r border-slate-200 font-black text-emerald-700 bg-emerald-50/50">
+                        {st.passRate}%
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedClassFilter(st.className);
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+                          }`}
+                        >
+                          {isSelected ? 'Đang Lọc' : 'Xem Điểm Lớp'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Main Gradebook Container: Formatted with border, bold text, and official style */}
       <div className="bg-white rounded-2xl border-2 border-slate-700 shadow-md p-6 sm:p-8 space-y-6">

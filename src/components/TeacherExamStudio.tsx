@@ -32,17 +32,20 @@ import {
   Database,
   PlusCircle,
   FolderOpen,
+  Send,
+  Building,
   X
 } from 'lucide-react';
-import { Exam, ExamMatrixData, StudentRosterItem, TeacherProfile } from '../types/exam';
+import { Exam, ExamMatrixData, StudentRosterItem, TeacherProfile, ClassGroup } from '../types/exam';
 import { generateExamApi, parseMatrixApi } from '../services/api';
 import { generateExamByMatrix, generateExamByPrompt } from '../services/examGenerator';
-import { AnswerMatrixRow } from '../services/examPermuter';
+import { AnswerMatrixRow, VariantGenerationConfig } from '../services/examPermuter';
 import { MathRenderer } from './MathRenderer';
 import { QuestionVisual } from './QuestionVisual';
 import { ImageSnipperModal } from './ImageSnipperModal';
 import { ExamVariantManagerModal } from './ExamVariantManagerModal';
 import { StudentRosterManagerModal } from './StudentRosterManagerModal';
+import { AssignExamModal } from './AssignExamModal';
 import { ExamLibraryModal } from './ExamLibraryModal';
 import { DocumentExamStudio } from './DocumentExamStudio';
 import { detectGradeFromFileName, getDefaultTopicForGrade, prepareMatrixUploadPayload } from '../services/fileUploadService';
@@ -54,12 +57,13 @@ interface TeacherExamStudioProps {
   variants?: Exam[];
   answerMatrix?: AnswerMatrixRow[];
   roster?: StudentRosterItem[];
+  classes?: ClassGroup[];
   onRosterUpdated?: (newRoster: StudentRosterItem[]) => void;
   onExamCreated: (newExam: Exam) => void;
   onSaveExamToCloud?: (exam: Exam) => Promise<void>;
   onDeleteExamFromCloud?: (examId: string) => Promise<void>;
   onSelectSavedExam?: (exam: Exam) => void;
-  onGenerate45Variants?: () => void;
+  onGenerate45Variants?: (config?: VariantGenerationConfig) => void;
   onSelectVariant?: (variant: Exam) => void;
   onSwitchToStudentView?: () => void;
   onQuickCreateSample?: () => void;
@@ -67,6 +71,7 @@ interface TeacherExamStudioProps {
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
   currentTeacher?: TeacherProfile | null;
   onLogoutTeacher?: () => void;
+  onAssignExam?: (assignedClasses: string[], assignedStudentIds: string[], note: string) => Promise<void> | void;
 }
 
 export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
@@ -75,6 +80,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
   variants = [],
   answerMatrix = [],
   roster = [],
+  classes = [],
   onRosterUpdated,
   onExamCreated,
   onSaveExamToCloud,
@@ -88,6 +94,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
   showToast,
   currentTeacher,
   onLogoutTeacher,
+  onAssignExam,
 }) => {
   // 3 Exam Creation Modes:
   // Cơ chế 1: Tạo theo yêu cầu (Prompt)
@@ -186,6 +193,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
 
   const [isSnipperOpen, setIsSnipperOpen] = useState<boolean>(false);
   const [isVariantModalOpen, setIsVariantModalOpen] = useState<boolean>(false);
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState<boolean>(false);
   const [isRosterModalOpen, setIsRosterModalOpen] = useState<boolean>(false);
   const [isLibraryModalOpen, setIsLibraryModalOpen] = useState<boolean>(false);
   const [isDocumentStudioOpen, setIsDocumentStudioOpen] = useState<boolean>(false);
@@ -1044,7 +1052,8 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Nút: Trộn Đề & Sinh n Mã Đề */}
                   <button
                     type="button"
                     onClick={() => {
@@ -1053,11 +1062,143 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                       }
                       setIsVariantModalOpen(true);
                     }}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                    className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Tùy chọn chỉ trộn đề hoặc tạo n mã đề (2, 4, 8, 24, 45 mã) chuẩn khảo thí"
                   >
                     <Shuffle className="w-4 h-4" />
-                    <span>Tạo 45 Mã Đề Cho Lớp</span>
+                    <span>Trộn Đề & Sinh n Mã Đề ({variants.length > 0 ? `${variants.length} Mã` : 'Khảo thí'})</span>
                   </button>
+
+                  {/* Nút: Giao Đề Cho Đơn Vị Lớp */}
+                  {onAssignExam && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAssignModalOpen(true)}
+                      className="px-4 py-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-700 hover:to-violet-700 text-white font-black text-xs rounded-xl shadow-md shadow-indigo-500/20 flex items-center gap-1.5 transition-all cursor-pointer hover:scale-102"
+                      title="Giao đề thi này cho đơn vị lớp học cụ thể (Ví dụ: 10A1, 10A2, 12A8)"
+                    >
+                      <Send className="w-4 h-4 text-sky-200" />
+                      <span>Giao Đề Cho Đơn Vị Lớp</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* KHUNG GIAO ĐỀ THEO ĐƠN VỊ LỚP (TRỰC QUAN & 1-CHẠM) */}
+              <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-sky-50 border-2 border-indigo-200 rounded-3xl p-4 sm:p-5 shadow-xs space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <Send className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight flex items-center gap-2">
+                        <span>Giao Đề Về Theo Đơn Vị Lớp</span>
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                          {currentExam.assignedClassNames && currentExam.assignedClassNames.length > 0
+                            ? `Đã giao: ${currentExam.assignedClassNames.join(', ')}`
+                            : 'Chưa gán lớp'}
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-600">
+                        Chỉ định đơn vị lớp nhận bài thi. Học sinh đúng lớp sẽ tự động thấy đề thi và nạp mã đề tương ứng khi vào thi.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (variants.length === 0 && onGenerate45Variants) {
+                          onGenerate45Variants();
+                        }
+                        setIsVariantModalOpen(true);
+                      }}
+                      className="px-3.5 py-2 bg-white hover:bg-slate-50 text-indigo-700 font-black text-xs rounded-xl border border-indigo-200 shadow-2xs flex items-center gap-1.5 cursor-pointer transition-all"
+                      title="Có tùy chọn chỉ trộn đề hoặc tạo ra n mã đề"
+                    >
+                      <Shuffle className="w-4 h-4 text-indigo-600" />
+                      <span>Trộn Đề & Tạo n Mã Đề</span>
+                    </button>
+
+                    {onAssignExam && (
+                      <button
+                        type="button"
+                        onClick={() => setIsAssignModalOpen(true)}
+                        className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                      >
+                        <Building className="w-4 h-4" />
+                        <span>Tùy Chọn Giao Đề</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Danh sách các lớp của giáo viên để giao 1-chạm */}
+                <div className="flex items-center gap-2 flex-wrap pt-2.5 border-t border-indigo-200/70">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                    <Building className="w-3.5 h-3.5 text-indigo-600" /> Giao Cho Lớp:
+                  </span>
+
+                  {classes.map((cls) => {
+                    const isAssigned = currentExam.assignedClassNames?.includes(cls.name);
+                    return (
+                      <button
+                        key={cls.id || cls.name}
+                        type="button"
+                        onClick={async () => {
+                          if (!onAssignExam) return;
+                          const currentList = currentExam.assignedClassNames || [];
+                          const nextList = isAssigned
+                            ? currentList.filter((n) => n !== cls.name)
+                            : [...currentList, cls.name];
+                          await onAssignExam(nextList, currentExam.assignedStudentIds || [], currentExam.assignedGroupDetails || '');
+                          onExamCreated({
+                            ...currentExam,
+                            assignedClassNames: nextList,
+                          });
+                          if (showToast) {
+                            showToast(
+                              !isAssigned
+                                ? `Đã giao đề cho Lớp ${cls.name} thành công!`
+                                : `Đã hủy giao đề cho Lớp ${cls.name}.`,
+                              'success'
+                            );
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer border ${
+                          isAssigned
+                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-2xs ring-2 ring-emerald-500/30'
+                            : 'bg-white hover:bg-indigo-50 text-slate-700 border-slate-300'
+                        }`}
+                      >
+                        {isAssigned ? <Check className="w-3.5 h-3.5 text-white" /> : <Building className="w-3.5 h-3.5 text-slate-400" />}
+                        <span>Lớp {cls.name}</span>
+                        {isAssigned && <span className="text-[10px] bg-emerald-700 px-1.5 py-0.5 rounded-full font-bold">✓ Đã giao</span>}
+                      </button>
+                    );
+                  })}
+
+                  {classes.length > 0 && onAssignExam && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const allNames = classes.map((c) => c.name);
+                        await onAssignExam(allNames, currentExam.assignedStudentIds || [], 'Giao tất cả các lớp');
+                        onExamCreated({
+                          ...currentExam,
+                          assignedClassNames: allNames,
+                        });
+                        if (showToast) {
+                          showToast(`Đã giao đề thi cho TẤT CẢ các lớp (${allNames.join(', ')})!`, 'success');
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl text-xs font-black bg-gradient-to-r from-blue-600 to-indigo-600 text-white border border-indigo-700 shadow-2xs hover:from-blue-700 hover:to-indigo-700 cursor-pointer"
+                    >
+                      Giao Tất Cả {classes.length} Lớp
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1077,10 +1218,40 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-300 mb-4 leading-relaxed">
+                <p className="text-xs text-slate-300 mb-3 leading-relaxed">
                   Đề thi chuẩn GDPT 2018 • Thời lượng: <b>{currentExam.durationMinutes} phút</b> • Thang điểm: <b>{currentExam.totalPoints}đ</b> • Khối: <b>Lớp {currentExam.grade}</b>
                   {currentExam.topic && <> • Chuyên đề: <span className="text-sky-300 font-semibold">{currentExam.topic}</span></>}
                 </p>
+
+                {/* Khung hiển thị Đơn Vị Lớp Được Giao Đề */}
+                <div className="flex items-center gap-2 flex-wrap mb-4 p-2.5 rounded-2xl bg-white/10 border border-white/15">
+                  <span className="text-xs font-bold text-sky-300 flex items-center gap-1">
+                    <Building className="w-3.5 h-3.5" /> Giao Cho Lớp:
+                  </span>
+                  {currentExam.assignedClassNames && currentExam.assignedClassNames.length > 0 ? (
+                    currentExam.assignedClassNames.map((clsName) => (
+                      <span
+                        key={clsName}
+                        className="px-2.5 py-0.5 rounded-full bg-emerald-500/30 text-emerald-200 border border-emerald-400/30 font-black text-xs"
+                      >
+                        🏫 Lớp {clsName}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-amber-200 italic font-medium">
+                      Chưa gán lớp cụ thể (Tất cả học sinh có link đều có thể thi)
+                    </span>
+                  )}
+                  {onAssignExam && (
+                    <button
+                      type="button"
+                      onClick={() => setIsAssignModalOpen(true)}
+                      className="ml-auto text-[11px] font-bold text-sky-300 hover:text-white underline cursor-pointer"
+                    >
+                      {currentExam.assignedClassNames && currentExam.assignedClassNames.length > 0 ? 'Chỉnh sửa lớp nhận đề →' : 'Giao cho lớp ngay →'}
+                    </button>
+                  )}
+                </div>
 
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                   <input
@@ -1431,10 +1602,52 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
           masterExam={currentExam}
           variants={variants}
           answerMatrix={answerMatrix}
+          classes={classes}
+          onRecreateVariants={(config) => {
+            if (onGenerate45Variants) {
+              onGenerate45Variants(config);
+            }
+          }}
+          onAssignToClass={async (className) => {
+            if (onAssignExam) {
+              await onAssignExam([className], [], `Giao ${variants.length} mã đề cho lớp ${className}`);
+            }
+            onExamCreated({
+              ...currentExam,
+              assignedClassNames: [className],
+            });
+            if (showToast) {
+              showToast(`Đã giao ${variants.length} mã đề cho lớp ${className}!`, 'success');
+            }
+          }}
           onSelectVariantForExamRoom={(variant) => {
             if (onSelectVariant) onSelectVariant(variant);
             if (onSwitchToStudentView) onSwitchToStudentView();
           }}
+        />
+      )}
+
+      {/* Giao Đề Cho Đơn Vị Lớp Modal */}
+      {currentExam && (
+        <AssignExamModal
+          isOpen={isAssignModalOpen}
+          onClose={() => setIsAssignModalOpen(false)}
+          exam={currentExam}
+          classes={classes}
+          roster={roster}
+          onAssignExam={async (targetClasses, targetStudentIds, note) => {
+            if (onAssignExam) {
+              await onAssignExam(targetClasses, targetStudentIds, note);
+            }
+            onExamCreated({
+              ...currentExam,
+              assignedClassNames: targetClasses,
+              assignedStudentIds: targetStudentIds,
+              assignedGroupDetails: note,
+            });
+            setIsAssignModalOpen(false);
+          }}
+          showToast={showToast}
         />
       )}
 

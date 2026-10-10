@@ -22,7 +22,7 @@ import {
   orderBy
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile, AppUser, UserRole, GradingCalibrationFeedback } from '../types/exam';
+import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile, AppUser, UserRole, GradingCalibrationFeedback, StudentAppeal } from '../types/exam';
 import { DEFAULT_SAMPLE_EXAMS } from '../data/defaultExam';
 import { isInvalidStudentName } from './studentRosterParser';
 
@@ -631,11 +631,25 @@ export function markClassAsDeletedLocally(classId: string): void {
   }
 }
 
-export function getStoredClasses(): ClassGroup[] {
+export function getStoredClasses(teacherId?: string): ClassGroup[] {
   try {
     const deleted = getDeletedClassIds();
-    const raw = localStorage.getItem(CLASSES_STORAGE_KEY);
-    const classes: ClassGroup[] = raw ? JSON.parse(raw) : DEFAULT_CLASSES;
+    const storageKey = teacherId ? `${CLASSES_STORAGE_KEY}_${teacherId}` : CLASSES_STORAGE_KEY;
+    const raw = localStorage.getItem(storageKey);
+    let classes: ClassGroup[] = [];
+    if (raw) {
+      classes = JSON.parse(raw);
+    } else if (!teacherId || teacherId === 'admin_kiet' || teacherId === 'teacher_default') {
+      classes = DEFAULT_CLASSES.map((c) => ({ ...c, teacherId: teacherId || 'admin_kiet' }));
+    } else {
+      // Mỗi giáo viên có danh sách lớp riêng biệt ban đầu
+      classes = [
+        { id: `10A1_${teacherId}`, name: '10A1', grade: '10', schoolYear: '2024 - 2025', teacherId, createdAt: new Date().toISOString() },
+        { id: `11A1_${teacherId}`, name: '11A1', grade: '11', schoolYear: '2024 - 2025', teacherId, createdAt: new Date().toISOString() },
+        { id: `12A1_${teacherId}`, name: '12A1', grade: '12', schoolYear: '2024 - 2025', teacherId, createdAt: new Date().toISOString() }
+      ];
+      localStorage.setItem(storageKey, JSON.stringify(classes));
+    }
     return classes.filter(
       (c) => !deleted.has(c.id) && !deleted.has(c.name) && !deleted.has(c.name?.toUpperCase()) && !deleted.has(c.id?.toUpperCase())
     );
@@ -644,17 +658,27 @@ export function getStoredClasses(): ClassGroup[] {
   }
 }
 
-export function saveClassesLocally(classes: ClassGroup[]): void {
+export function saveClassesLocally(classes: ClassGroup[], teacherId?: string): void {
   try {
-    localStorage.setItem(CLASSES_STORAGE_KEY, JSON.stringify(classes));
+    const storageKey = teacherId ? `${CLASSES_STORAGE_KEY}_${teacherId}` : CLASSES_STORAGE_KEY;
+    localStorage.setItem(storageKey, JSON.stringify(classes));
   } catch (e) {
     console.error('Error saving classes locally:', e);
   }
 }
 
-export async function saveClassGroupToFirestore(cls: ClassGroup): Promise<void> {
+export async function saveClassGroupToFirestore(cls: ClassGroup, teacherId?: string): Promise<void> {
   const cleanName = cls.name.trim().toUpperCase();
-  const safeId = (cls.id || cleanName).replace(/[\/\s#?]+/g, '_').toUpperCase();
+  const effectiveTeacherId = cls.teacherId || teacherId || 'admin_kiet';
+  const safeId = (cls.id && cls.id.includes('_') ? cls.id : `${cleanName}_${effectiveTeacherId}`).replace(/[\/\s#?]+/g, '_').toUpperCase();
+
+  const classData: ClassGroup = {
+    ...cls,
+    id: safeId,
+    name: cleanName,
+    teacherId: effectiveTeacherId,
+    createdAt: cls.createdAt || new Date().toISOString(),
+  };
 
   // If this class was previously deleted, remove from deleted tracking so it can be restored/re-created
   try {
@@ -665,9 +689,9 @@ export async function saveClassGroupToFirestore(cls: ClassGroup): Promise<void> 
       deleted.delete(cleanName);
       localStorage.setItem(DELETED_CLASSES_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
     }
-    const local = getStoredClasses();
-    const updated = [cls, ...local.filter((c) => c.id !== cls.id && c.name !== cls.name && c.name?.toUpperCase() !== cleanName)];
-    saveClassesLocally(updated);
+    const local = getStoredClasses(effectiveTeacherId);
+    const updated = [classData, ...local.filter((c) => c.id !== classData.id && c.name !== classData.name && c.name?.toUpperCase() !== cleanName)];
+    saveClassesLocally(updated, effectiveTeacherId);
   } catch (e) {
     console.error('Local class save note:', e);
   }
@@ -675,7 +699,7 @@ export async function saveClassGroupToFirestore(cls: ClassGroup): Promise<void> 
   const path = `${CLASSES_COLLECTION}/${safeId}`;
   try {
     const docRef = doc(db, CLASSES_COLLECTION, safeId);
-    await setDoc(docRef, { ...cls, id: safeId, name: cleanName, updatedAt: new Date().toISOString() }, { merge: true });
+    await setDoc(docRef, { ...classData, updatedAt: new Date().toISOString() }, { merge: true });
   } catch (error) {
     console.warn('Firestore class save note (saved locally):', error);
   }
@@ -683,6 +707,8 @@ export async function saveClassGroupToFirestore(cls: ClassGroup): Promise<void> 
 
 export function subscribeClassGroupsFromFirestore(
   onClasses: (classes: ClassGroup[]) => void,
+  teacherId?: string,
+  isAdmin: boolean = false,
   onError?: (err: any) => void
 ): () => void {
   const colRef = collection(db, CLASSES_COLLECTION);
@@ -699,21 +725,24 @@ export function subscribeClassGroupsFromFirestore(
           !deleted.has(item.name?.toUpperCase()) &&
           !deleted.has(item.id?.toUpperCase())
         ) {
-          list.push(item);
+          // If teacher is specified and not admin, only show classes for this teacher
+          if (isAdmin || !teacherId || item.teacherId === teacherId || (!item.teacherId && teacherId === 'admin_kiet')) {
+            list.push(item);
+          }
         }
       });
       if (list.length > 0) {
-        saveClassesLocally(list);
+        saveClassesLocally(list, teacherId);
         onClasses(list);
       } else {
         // Fallback to local stored classes if firestore collection is empty
-        const local = getStoredClasses();
+        const local = getStoredClasses(teacherId);
         onClasses(local);
       }
     },
     (error) => {
       console.warn('Class groups subscription fallback to local storage:', error);
-      const local = getStoredClasses();
+      const local = getStoredClasses(teacherId);
       onClasses(local);
       if (onError) onError(error);
     }
@@ -759,8 +788,192 @@ function saveRegisteredUserLocally(username: string, pass: string, user: AppUser
   }
 }
 
+export function saveRegisteredUsersListLocally(users: Array<{ username: string; pass: string; user: AppUser }>) {
+  try {
+    localStorage.setItem(REGISTERED_USERS_KEY, JSON.stringify(users));
+  } catch (e) {
+    console.error('Error saving users list:', e);
+  }
+}
+
+export function getRegisteredTeachers(): AppUser[] {
+  const local = getStoredRegisteredUsers().map((u) => u.user);
+  return local.filter((u) => u.role === 'teacher');
+}
+
+/**
+ * Lắng nghe danh sách giáo viên thời gian thực từ Firestore và LocalStorage
+ */
+export function subscribeTeachersFromFirestore(
+  onTeachers: (teachers: AppUser[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, TEACHERS_COLLECTION);
+  const unsubscribe = onSnapshot(
+    colRef,
+    (snapshot) => {
+      const firestoreList: AppUser[] = [];
+      snapshot.forEach((docSnap) => {
+        firestoreList.push(docSnap.data() as AppUser);
+      });
+      // Merge with local stored registered teachers
+      const local = getRegisteredTeachers();
+      const map = new Map<string, AppUser>();
+      local.forEach((t) => map.set(t.uid, t));
+      firestoreList.forEach((t) => {
+        if (t.role === 'teacher') {
+          map.set(t.uid, { ...(map.get(t.uid) || {}), ...t });
+        }
+      });
+      const combined = Array.from(map.values()).sort((a, b) =>
+        (b.createdAt || '').localeCompare(a.createdAt || '')
+      );
+      onTeachers(combined);
+    },
+    (error) => {
+      console.warn('Teachers subscription fallback to local storage:', error);
+      const local = getRegisteredTeachers();
+      onTeachers(local);
+      if (onError) onError(error);
+    }
+  );
+  return unsubscribe;
+}
+
+export async function approveTeacherUser(teacherUid: string, approve: boolean = true): Promise<void> {
+  const users = getStoredRegisteredUsers();
+  const updated = users.map((u) => {
+    if (u.user.uid === teacherUid || u.user.username.toLowerCase() === teacherUid.toLowerCase()) {
+      return {
+        ...u,
+        user: {
+          ...u.user,
+          isApproved: approve,
+          approvedAt: approve ? new Date().toISOString() : undefined,
+          approvedBy: 'admin',
+        },
+      };
+    }
+    return u;
+  });
+  saveRegisteredUsersListLocally(updated);
+
+  try {
+    const userDocRef = doc(db, USERS_COLLECTION, teacherUid);
+    await setDoc(userDocRef, { isApproved: approve, approvedAt: approve ? new Date().toISOString() : null }, { merge: true });
+
+    const teacherDocRef = doc(db, TEACHERS_COLLECTION, teacherUid);
+    await setDoc(teacherDocRef, { isApproved: approve, approvedAt: approve ? new Date().toISOString() : null }, { merge: true });
+  } catch (e) {
+    console.warn('Teacher approval Firestore sync note:', e);
+  }
+}
+
+/**
+ * Cập nhật thông tin tài khoản giáo viên (Họ tên, Trường, Bộ môn, Mật khẩu mới)
+ */
+export async function updateTeacherAccount(
+  teacherUid: string,
+  updates: Partial<AppUser> & { newPassword?: string }
+): Promise<void> {
+  const users = getStoredRegisteredUsers();
+  const updated = users.map((u) => {
+    if (u.user.uid === teacherUid || u.user.username.toLowerCase() === teacherUid.toLowerCase()) {
+      return {
+        ...u,
+        pass: updates.newPassword ? updates.newPassword.trim() : u.pass,
+        user: {
+          ...u.user,
+          ...updates,
+        },
+      };
+    }
+    return u;
+  });
+  saveRegisteredUsersListLocally(updated);
+
+  try {
+    const patch: any = { ...updates, updatedAt: new Date().toISOString() };
+    if (updates.newPassword) {
+      patch.passHash = updates.newPassword.trim();
+    }
+    delete patch.newPassword;
+
+    const teacherDocRef = doc(db, TEACHERS_COLLECTION, teacherUid);
+    await setDoc(teacherDocRef, patch, { merge: true });
+
+    const userDocRef = doc(db, USERS_COLLECTION, teacherUid);
+    await setDoc(userDocRef, patch, { merge: true });
+  } catch (e) {
+    console.warn('Teacher update note:', e);
+  }
+}
+
+/**
+ * Xóa vĩnh viễn tài khoản giáo viên khỏi hệ thống
+ */
+export async function deleteTeacherAccount(teacherUid: string): Promise<void> {
+  const users = getStoredRegisteredUsers().filter(
+    (u) => u.user.uid !== teacherUid && u.user.username.toLowerCase() !== teacherUid.toLowerCase()
+  );
+  saveRegisteredUsersListLocally(users);
+
+  try {
+    const teacherDocRef = doc(db, TEACHERS_COLLECTION, teacherUid);
+    await deleteDoc(teacherDocRef);
+    const userDocRef = doc(db, USERS_COLLECTION, teacherUid);
+    await deleteDoc(userDocRef);
+  } catch (e) {
+    console.warn('Teacher delete note:', e);
+  }
+}
+
+/**
+ * Quản trị viên (Admin) tạo trực tiếp tài khoản giáo viên mới đã duyệt sẵn
+ */
+export async function createTeacherAccountByAdmin(params: {
+  fullName: string;
+  username: string;
+  password: string;
+  school?: string;
+  subject?: string;
+}): Promise<AppUser> {
+  const cleanUsername = params.username.trim();
+  const cleanPass = params.password.trim();
+  const cleanName = params.fullName.trim();
+  const uid = `teacher_${cleanUsername.replace(/[^a-zA-Z0-9_]/g, '_')}_${Date.now()}`;
+
+  const newUser: AppUser = {
+    uid,
+    role: 'teacher',
+    fullName: cleanName,
+    username: cleanUsername,
+    email: cleanUsername.includes('@') ? cleanUsername : `${cleanUsername}@edumath.edu.vn`,
+    school: params.school || 'Trường THPT',
+    subject: params.subject || 'Toán Học THPT',
+    createdAt: new Date().toISOString(),
+    isApproved: true,
+    approvedAt: new Date().toISOString(),
+    approvedBy: 'admin',
+  };
+
+  saveRegisteredUserLocally(cleanUsername, cleanPass, newUser);
+
+  try {
+    const teacherDocRef = doc(db, TEACHERS_COLLECTION, uid);
+    await setDoc(teacherDocRef, { ...newUser, passHash: cleanPass }, { merge: true });
+    const userDocRef = doc(db, USERS_COLLECTION, uid);
+    await setDoc(userDocRef, { ...newUser, passHash: cleanPass }, { merge: true });
+  } catch (e) {
+    console.warn('Admin create teacher Firestore note:', e);
+  }
+
+  return newUser;
+}
+
 /**
  * Register a new user (Teacher or Student)
+ * Quyền giáo viên: Bắt buộc chờ Admin phê duyệt mới được vào ứng dụng
  */
 export async function registerAppUser(params: {
   role: UserRole;
@@ -776,6 +989,9 @@ export async function registerAppUser(params: {
   const cleanName = params.fullName.trim();
   const uid = `${params.role}_${cleanUsername.replace(/[^a-zA-Z0-9_]/g, '_')}_${Date.now()}`;
 
+  // Admin hoặc Học sinh: duyệt ngay; Giáo viên: chờ admin duyệt (isApproved = false)
+  const isApproved = params.role === 'admin' || params.role === 'student' || cleanUsername.toLowerCase() === 'admin';
+
   const newUser: AppUser = {
     uid,
     role: params.role,
@@ -786,11 +1002,16 @@ export async function registerAppUser(params: {
     className: params.className || '',
     subject: params.subject || (params.role === 'teacher' ? 'Toán Học THPT' : 'Toán'),
     createdAt: new Date().toISOString(),
+    isApproved,
+    approvedAt: isApproved ? new Date().toISOString() : undefined,
+    approvedBy: isApproved ? 'system' : undefined,
   };
 
   // 1. Save locally for instant access
   saveRegisteredUserLocally(cleanUsername, cleanPass, newUser);
-  setStoredUser(newUser);
+  if (isApproved) {
+    setStoredUser(newUser);
+  }
 
   // 2. Save to Firestore
   try {
@@ -799,7 +1020,7 @@ export async function registerAppUser(params: {
 
     if (params.role === 'teacher') {
       const teacherDocRef = doc(db, TEACHERS_COLLECTION, uid);
-      await setDoc(teacherDocRef, newUser, { merge: true });
+      await setDoc(teacherDocRef, { ...newUser, passHash: cleanPass }, { merge: true });
     }
   } catch (err) {
     console.warn('Firestore user registration save note:', err);
@@ -950,6 +1171,9 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
       u.pass === cleanPass
   );
   if (matchedLocal) {
+    if (matchedLocal.user.role === 'teacher' && matchedLocal.user.isApproved !== true && matchedLocal.user.username.toLowerCase() !== 'admin') {
+      throw new Error('Tài khoản Giáo viên này đang chờ Quản trị viên (Admin) phê duyệt. Vui lòng liên hệ Admin để kích hoạt tài khoản!');
+    }
     setStoredUser(matchedLocal.user);
     return matchedLocal.user;
   }
@@ -972,6 +1196,7 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
       className: matchedStudent.className,
       sbd: matchedStudent.sbd,
       createdAt: matchedStudent.createdAt || new Date().toISOString(),
+      isApproved: true,
     };
     saveRegisteredUserLocally(clean, cleanPass, studentUser);
     setStoredUser(studentUser);
@@ -988,6 +1213,9 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
       if (userData.passHash && userData.passHash !== cleanPass) {
         throw new Error('Mật khẩu không chính xác.');
       }
+      if (userData.role === 'teacher' && userData.isApproved !== true && userData.username?.toLowerCase() !== 'admin') {
+        throw new Error('Tài khoản Giáo viên này đang chờ Quản trị viên (Admin) phê duyệt. Vui lòng liên hệ Admin để kích hoạt tài khoản!');
+      }
       const user: AppUser = {
         uid: userData.uid || safeId,
         role: userData.role || 'teacher',
@@ -999,33 +1227,103 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
         subject: userData.subject,
         sbd: userData.sbd,
         createdAt: userData.createdAt,
+        isApproved: userData.isApproved ?? true,
       };
       setStoredUser(user);
       return user;
     }
   } catch (dbErr: any) {
-    if (dbErr.message === 'Mật khẩu không chính xác.') throw dbErr;
+    if (dbErr.message.includes('Mật khẩu') || dbErr.message.includes('chờ Quản trị viên')) throw dbErr;
   }
 
-  // 5. Fallback user login
-  const nameMatch = clean.split('@')[0];
-  const isStudent =
-    clean.includes('hs') ||
-    clean.includes('student') ||
-    /^(10|11|12)[a-zA-Z]/.test(clean);
-  const fallbackUser: AppUser = {
-    uid: `user_${nameMatch}`,
-    role: isStudent ? 'student' : 'teacher',
-    fullName: nameMatch.charAt(0).toUpperCase() + nameMatch.slice(1),
-    username: clean,
-    email: clean.includes('@') ? clean : `${clean}@edumath.edu.vn`,
-    school: 'Trường THPT',
-    className: isStudent ? '12A1' : '',
-    subject: 'Toán Học',
+  // 5. Nếu không khớp bất kỳ tài khoản nào:
+  throw new Error('Tên đăng nhập hoặc mật khẩu không chính xác. Giáo viên vui lòng đăng ký tài khoản và chờ Admin phê duyệt.');
+}
+
+/**
+ * Gửi khiếu nại bài thi của học sinh
+ */
+export async function submitStudentAppeal(appeal: Omit<StudentAppeal, 'id' | 'createdAt' | 'status'>): Promise<StudentAppeal> {
+  const newAppeal: StudentAppeal = {
+    ...appeal,
+    id: `appeal_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    status: 'pending',
     createdAt: new Date().toISOString(),
   };
-  setStoredUser(fallbackUser);
-  return fallbackUser;
+
+  try {
+    const subDocRef = doc(db, SUBMISSIONS_COLLECTION, appeal.submissionId);
+    const snap = await getDoc(subDocRef);
+    if (snap.exists()) {
+      const data = snap.data() as StudentSubmission;
+      const appeals = [...(data.appeals || []), newAppeal];
+      await setDoc(subDocRef, { appeals }, { merge: true });
+    }
+  } catch (err) {
+    console.warn('Appeal submission update note:', err);
+  }
+
+  try {
+    const appealDocRef = doc(db, 'edumath_appeals', newAppeal.id);
+    await setDoc(appealDocRef, newAppeal, { merge: true });
+  } catch (err) {
+    console.warn('Appeal firestore save note:', err);
+  }
+
+  return newAppeal;
+}
+
+/**
+ * Giáo viên hoặc Admin xử lý khiếu nại / phúc khảo của học sinh
+ */
+export async function resolveStudentAppeal(
+  submissionId: string,
+  appealId: string,
+  reply: string,
+  status: 'accepted' | 'rejected',
+  adjustedScore?: number
+): Promise<void> {
+  try {
+    const subDocRef = doc(db, SUBMISSIONS_COLLECTION, submissionId);
+    const snap = await getDoc(subDocRef);
+    if (snap.exists()) {
+      const target = snap.data() as StudentSubmission;
+      const appeals = (target.appeals || []).map((a: StudentAppeal) =>
+        a.id === appealId
+          ? {
+              ...a,
+              status,
+              teacherReply: reply,
+              adjustedScore,
+              resolvedAt: new Date().toISOString(),
+            }
+          : a
+      );
+      const updates: Partial<StudentSubmission> = { appeals };
+      if (status === 'accepted' && typeof adjustedScore === 'number') {
+        updates.totalScore = adjustedScore;
+      }
+      await setDoc(subDocRef, updates, { merge: true });
+    }
+  } catch (err) {
+    console.warn('Error resolving submission appeal in firestore:', err);
+  }
+
+  try {
+    const appealDocRef = doc(db, 'edumath_appeals', appealId);
+    await setDoc(
+      appealDocRef,
+      {
+        status,
+        teacherReply: reply,
+        adjustedScore,
+        resolvedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('Resolve appeal note:', err);
+  }
 }
 
 /**

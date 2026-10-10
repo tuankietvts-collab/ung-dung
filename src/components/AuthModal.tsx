@@ -300,15 +300,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               )}
               <span>{activeTab === 'login' ? 'Đăng Nhập Vào Hệ Thống' : 'Hoàn Tất Đăng Ký'}</span>
             </button>
-
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer mt-2"
-            >
-              <X className="w-3.5 h-3.5" />
-              <span>Đóng Cửa Sổ & Về Trang Giáo Viên</span>
-            </button>
           </form>
 
         </div>

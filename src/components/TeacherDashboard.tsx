@@ -21,17 +21,20 @@ import {
   Layers,
   ArrowRight,
   ShieldAlert,
-  Send
+  Send,
+  ShieldCheck
 } from 'lucide-react';
-import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile } from '../types/exam';
+import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile, AppUser } from '../types/exam';
 import { TeacherExamStudio } from './TeacherExamStudio';
 import { GradebookReport } from './GradebookReport';
 import { ClassManagementModal } from './ClassManagementModal';
 import { DocumentExamStudio } from './DocumentExamStudio';
 import { TeacherEssayGradingModal } from './TeacherEssayGradingModal';
 import { AssignExamModal } from './AssignExamModal';
+import { AdminTeacherApprovalModal } from './AdminTeacherApprovalModal';
 import { exportGradebookToExcel } from '../services/api';
-import { AnswerMatrixRow } from '../services/examPermuter';
+import { AnswerMatrixRow, VariantGenerationConfig } from '../services/examPermuter';
+import { subscribeTeachersFromFirestore } from '../services/firebase';
 
 interface TeacherDashboardProps {
   currentExam: Exam | null;
@@ -40,6 +43,8 @@ interface TeacherDashboardProps {
   roster: StudentRosterItem[];
   classes: ClassGroup[];
   teacherProfile?: TeacherProfile | null;
+  currentUser?: AppUser | null;
+  isAdmin?: boolean;
   onExamCreated: (newExam: Exam) => void;
   onSelectSavedExam: (exam: Exam) => void;
   onDeleteSubmission?: (submissionId: string) => void;
@@ -49,7 +54,7 @@ interface TeacherDashboardProps {
   onDeleteStudent: (studentId: string) => Promise<void>;
   onSaveExamToCloud?: (exam: Exam) => Promise<void>;
   onDeleteExamFromCloud?: (examId: string) => Promise<void>;
-  onGenerate45Variants?: () => void;
+  onGenerate45Variants?: (config?: VariantGenerationConfig) => void;
   variants?: Exam[];
   answerMatrix?: AnswerMatrixRow[];
   isCloudSaving?: boolean;
@@ -64,6 +69,8 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   roster,
   classes,
   teacherProfile,
+  currentUser,
+  isAdmin = false,
   onExamCreated,
   onSelectSavedExam,
   onDeleteSubmission,
@@ -87,7 +94,22 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [isClassModalOpen, setIsClassModalOpen] = useState<boolean>(false);
   const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
   const [isAssignModalOpen, setIsAssignModalOpen] = useState<boolean>(false);
+  const [isTeacherApprovalModalOpen, setIsTeacherApprovalModalOpen] = useState<boolean>(false);
+  const [pendingTeachersCount, setPendingTeachersCount] = useState<number>(0);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
+
+  const effectiveIsAdmin = isAdmin || currentUser?.role === 'admin';
+
+  // Real-time tracking of pending teacher registrations for Admin
+  useEffect(() => {
+    if (effectiveIsAdmin) {
+      const unsub = subscribeTeachersFromFirestore((teacherList) => {
+        const pending = teacherList.filter((t) => !t.isApproved).length;
+        setPendingTeachersCount(pending);
+      });
+      return () => unsub();
+    }
+  }, [effectiveIsAdmin]);
   const [selectedClassForLink, setSelectedClassForLink] = useState<string>(
     classes.length > 0 ? classes[0].name : '12A1'
   );
@@ -98,6 +120,29 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       setSelectedClassForLink(classes[0].name);
     }
   }, [classes, selectedClassForLink]);
+
+  // Handle assigning exam to classes / students
+  const handleAssignExam = async (assignedClasses: string[], assignedStudentIds: string[], note: string) => {
+    if (!currentExam) return;
+    const updatedExam: Exam = {
+      ...currentExam,
+      assignedClassNames: assignedClasses,
+      assignedStudentIds: assignedStudentIds,
+      assignedGroupDetails: note,
+      className: assignedClasses.length > 0 ? assignedClasses[0] : currentExam.className,
+    };
+    onExamCreated(updatedExam);
+    if (onSaveExamToCloud) {
+      await onSaveExamToCloud(updatedExam);
+    }
+    if (showToast) {
+      showToast(
+        assignedClasses.length > 0
+          ? `Đã giao đề [${updatedExam.examCode}] thành công cho lớp ${assignedClasses.join(', ')}!`
+          : `Đã giao đề [${updatedExam.examCode}] cho ${assignedStudentIds.length} học sinh!`
+      );
+    }
+  };
 
   // Link copy logic with class param
   const handleCopyExamLink = (clsName?: string) => {
@@ -179,6 +224,27 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             <span>Bảng Thống Kê & Sổ Điểm ({submissions.length})</span>
           </button>
 
+          {effectiveIsAdmin && (
+            <button
+              type="button"
+              onClick={() => setIsTeacherApprovalModalOpen(true)}
+              className="px-4 py-2.5 rounded-2xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-xs bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-300"
+              title="Quản trị các tài khoản của giáo viên và duyệt giáo viên đăng ký"
+            >
+              <ShieldCheck className="w-4 h-4 text-rose-600" />
+              <span>👑 Quản Trị Giáo Viên & Duyệt Đăng Ký</span>
+              {pendingTeachersCount > 0 ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white animate-pulse">
+                  {pendingTeachersCount} Chờ Duyệt
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                  Đã Kích Hoạt
+                </span>
+              )}
+            </button>
+          )}
+
           {currentExam && (
             <div className="hidden md:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -199,6 +265,24 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
             >
               <Send className="w-4 h-4 text-sky-200" />
               <span>Giao Đề Cho Lớp / Học Sinh</span>
+            </button>
+          )}
+
+          {/* NÚT: QUẢN TRỊ & DUYỆT GIÁO VIÊN (DÀNH CHO ADMIN) */}
+          {effectiveIsAdmin && (
+            <button
+              type="button"
+              onClick={() => setIsTeacherApprovalModalOpen(true)}
+              className="px-3.5 py-2 bg-gradient-to-r from-rose-600 via-rose-700 to-indigo-700 hover:from-rose-700 hover:to-indigo-800 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer hover:scale-102"
+              title="Quản trị các tài khoản giáo viên và duyệt giáo viên đăng ký"
+            >
+              <Users className="w-4 h-4 text-rose-200" />
+              <span>Quản Trị Giáo Viên</span>
+              {pendingTeachersCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] animate-pulse">
+                  {pendingTeachersCount}
+                </span>
+              )}
             </button>
           )}
 
@@ -281,13 +365,16 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           currentExam={currentExam}
           savedExams={savedExams}
           roster={roster}
+          classes={classes}
           currentTeacher={teacherProfile || null}
           onExamCreated={onExamCreated}
           onSelectSavedExam={onSelectSavedExam}
           onSaveExamToCloud={onSaveExamToCloud}
           onDeleteExamFromCloud={onDeleteExamFromCloud}
           onGenerate45Variants={onGenerate45Variants}
+          onAssignExam={handleAssignExam}
           variants={variants}
+          answerMatrix={answerMatrix}
           isCloudSaving={isCloudSaving}
           showToast={showToast}
           onSwitchToStudentView={onSwitchToStudentView}
@@ -309,6 +396,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           exam={currentExam}
           submissions={submissions}
           className={selectedClassForLink}
+          classes={classes}
           variants={variants}
           answerMatrix={answerMatrix}
           onDeleteSubmission={onDeleteSubmission}
@@ -347,20 +435,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         exam={currentExam}
         classes={classes}
         roster={roster}
-        onAssignExam={async (assignedClasses, assignedStudentIds, note) => {
-          if (!currentExam) return;
-          const updatedExam: Exam = {
-            ...currentExam,
-            assignedClassNames: assignedClasses,
-            assignedStudentIds: assignedStudentIds,
-            assignedGroupDetails: note,
-            className: assignedClasses.length > 0 ? assignedClasses[0] : currentExam.className,
-          };
-          onExamCreated(updatedExam);
-          if (onSaveExamToCloud) {
-            await onSaveExamToCloud(updatedExam);
-          }
-        }}
+        onAssignExam={handleAssignExam}
+        showToast={showToast}
+      />
+
+      {/* MODAL: QUẢN TRỊ TÀI KHOẢN GIÁO VIÊN & DUYỆT ĐĂNG KÝ (DÀNH CHO ADMIN) */}
+      <AdminTeacherApprovalModal
+        isOpen={isTeacherApprovalModalOpen}
+        onClose={() => setIsTeacherApprovalModalOpen(false)}
         showToast={showToast}
       />
 

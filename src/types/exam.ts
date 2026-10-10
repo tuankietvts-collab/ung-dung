@@ -138,6 +138,22 @@ export interface EssayGradingResult {
   finalTeacherNote: string;
 }
 
+export interface StudentAppeal {
+  id: string;
+  submissionId: string;
+  examCode: string;
+  studentId: string;
+  studentName: string;
+  studentClass: string;
+  questionRef: string; // e.g. "Câu 1 Phần III", "Điểm toàn bài"
+  reason: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  teacherReply?: string;
+  adjustedScore?: number;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
 export interface StudentSubmission {
   id: string;
   studentName: string;
@@ -164,6 +180,7 @@ export interface StudentSubmission {
   teacherGeneralComment?: string;
   isTeacherReviewed?: boolean;
   reviewedAt?: string;
+  appeals?: StudentAppeal[];
 }
 
 export interface ClassGroup {
@@ -173,6 +190,8 @@ export interface ClassGroup {
   schoolYear: string; // Ví dụ: "2024 - 2025"
   studentCount?: number;
   createdAt?: string;
+  teacherId?: string;
+  teacherName?: string;
 }
 
 export interface StudentRosterItem {
@@ -201,6 +220,9 @@ export interface AppUser {
   subject?: string;
   sbd?: string;
   createdAt?: string;
+  isApproved?: boolean; // Với giáo viên: phải được admin phê duyệt mới đăng nhập được
+  approvedAt?: string;
+  approvedBy?: string;
 }
 
 export interface TeacherProfile {

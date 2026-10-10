@@ -23,10 +23,9 @@ import { registerAppUser, loginAppUser } from '../services/firebase';
 
 interface AuthPortalProps {
   onAuthSuccess: (user: AppUser) => void;
-  onClose?: () => void;
 }
 
-export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }) => {
+export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
   // Login form state
@@ -44,10 +43,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [registeredSuccessMessage, setRegisteredSuccessMessage] = useState<string | null>(null);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setRegisteredSuccessMessage(null);
     if (!loginUsername.trim() || !loginPassword.trim()) {
       setErrorMessage('Vui lòng nhập Tên đăng nhập và Mật khẩu.');
       return;
@@ -68,6 +69,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setRegisteredSuccessMessage(null);
 
     if (!regFullName.trim() || !regUsername.trim() || !regPassword.trim()) {
       setErrorMessage('Vui lòng điền đầy đủ Họ và tên, Email/Tên đăng nhập và Mật khẩu.');
@@ -90,6 +92,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
         className: regRole === 'student' ? regClass.trim() : undefined,
         subject: regRole === 'teacher' ? regSubject.trim() : 'Toán',
       });
+      if (user.role === 'teacher' && !user.isApproved) {
+        setActiveTab('login');
+        setRegisteredSuccessMessage(
+          'Đăng ký tài khoản Giáo viên thành công! Tài khoản của Thầy/Cô đang chờ Quản trị viên (Admin) phê duyệt trước khi có thể đăng nhập.'
+        );
+        return;
+      }
       onAuthSuccess(user);
     } catch (err: any) {
       console.error('Register error:', err);
@@ -123,22 +132,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 text-xs font-semibold text-slate-600">
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>Hệ thống trực tuyến sẵn sàng</span>
           </div>
-
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-300 transition-all cursor-pointer shadow-xs hover:border-slate-400"
-              title="Đóng để về trang Giáo viên"
-            >
-              <X className="w-4 h-4 text-rose-500" />
-              <span>Về Trang Giáo Viên</span>
-            </button>
-          )}
         </div>
       </header>
 
@@ -147,18 +144,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
         <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-200/90 relative overflow-hidden">
           {/* Decorative accent top bar */}
           <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-500" />
-
-          {/* Close button 'X' on top-right of dialog */}
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="absolute top-4 right-4 z-20 w-9 h-9 rounded-2xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 flex items-center justify-center transition-colors cursor-pointer border border-slate-200 shadow-2xs group"
-              title="Đóng cửa sổ để trở về trang Giáo viên"
-            >
-              <X className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            </button>
-          )}
 
           {/* Heading */}
           <div className="text-center space-y-2 mb-6">
@@ -236,6 +221,14 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
             <div className="mb-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2.5 font-medium animate-in fade-in">
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
               <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* Success / Approval Message */}
+          {registeredSuccessMessage && (
+            <div className="mb-4 p-3.5 rounded-xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-900 flex items-start gap-2.5 font-medium animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+              <span>{registeredSuccessMessage}</span>
             </div>
           )}
 
@@ -333,6 +326,15 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
                     <span>🎓 Học Sinh</span>
                   </button>
                 </div>
+
+                {regRole === 'teacher' && (
+                  <div className="mt-2 p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <b>Quy định bảo mật:</b> Tài khoản Giáo viên sau khi đăng ký sẽ cần Quản trị viên (Admin) phê duyệt trước khi có thể đăng nhập.
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -459,23 +461,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, onClose }
                 )}
               </button>
             </form>
-          )}
-
-          {/* Quick return to teacher page if teacher just wants to compose or explore */}
-          {onClose && (
-            <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
-              <span className="text-slate-500 font-medium">
-                Thầy/Cô muốn vào thẳng trang quản trị soạn đề?
-              </span>
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold flex items-center gap-1.5 transition-colors cursor-pointer border border-indigo-200"
-              >
-                <span>✕ Đóng & Về Trang Giáo Viên</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
           )}
         </div>
       </main>

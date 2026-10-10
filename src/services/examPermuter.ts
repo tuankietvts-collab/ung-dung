@@ -116,45 +116,57 @@ export interface Generated45Package {
   totalVariants: number;
 }
 
+export interface VariantGenerationConfig {
+  mode?: 'shuffle_only' | 'numeric_variation';
+  numVariants?: number;
+}
+
 /**
  * Thuật toán sinh các mã đề xáo trộn chuẩn khảo thí:
  * 1. Hoán vị thứ tự các câu hỏi trắc nghiệm
  * 2. Hoán vị vị trí các phương án A, B, C, D của từng câu và tự động cập nhật correctAnswer tương ứng
  * 3. Hoán vị thứ tự các ý Đúng/Sai
- * 4. Tự động liên kết từng mã đề tương ứng với danh sách học sinh thực tế của giáo viên
+ * 4. Hỗ trợ 2 chế độ:
+ *    - 'shuffle_only': Chỉ trộn thứ tự câu & đáp án A-B-C-D, giữ nguyên 100% số liệu gốc
+ *    - 'numeric_variation': Thay thế tương đương số liệu, hàm số (sin <-> cos, hệ số) giữ nguyên độ khó ma trận
+ * 5. Cho phép giáo viên tùy chọn số lượng n mã đề (ví dụ 2, 4, 8, 24, 45...)
  */
-export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterItem[] = []): Generated45Package {
-  const variants: Exam[] = [];
-  const answerMatrix: AnswerMatrixRow[] = [];
-  const totalVariants = roster.length > 0 ? roster.length : 24;
+export function generate45ExamVariants(
+  masterExam: Exam,
+  roster: StudentRosterItem[] = [],
+  config: VariantGenerationConfig = { mode: 'numeric_variation', numVariants: 24 }
+): Generated45Package {
+  const mode = config.mode || 'numeric_variation';
+  const applyNumericVariation = mode === 'numeric_variation';
 
-  for (let i = 0; i < totalVariants; i++) {
-    const variantIndex = i + 1;
+  // Số lượng mã đề mong muốn (n mã đề)
+  let targetVariantCount = config.numVariants || (roster.length > 0 ? Math.min(roster.length, 45) : 24);
+  if (targetVariantCount < 1) targetVariantCount = 1;
+
+  const variants: Exam[] = [];
+  const variantAnswerMaps: { mc: Record<string, string>; tf: Record<string, string> }[] = [];
+
+  // 1. Tạo đúng n mã đề độc lập
+  for (let vIdx = 0; vIdx < targetVariantCount; vIdx++) {
+    const variantIndex = vIdx + 1;
     const examCode = `MÃ-${100 + variantIndex}`;
-    const student = roster[i] || {
-      id: `HS-${String(variantIndex).padStart(2, '0')}`,
-      fullName: `Học sinh ${variantIndex}`,
-      className: masterExam.grade ? `Lớp ${masterExam.grade}` : 'Lớp Toán',
-      sbd: `SBD-${String(variantIndex).padStart(2, '0')}`,
-      stt: variantIndex,
-    };
     const seed = (masterExam.id.length * 1000) + variantIndex * 9973;
 
-    // 1. Permute Multiple Choice questions order
+    // A. Trộn thứ tự câu trắc nghiệm
     const shuffledMcOrder = shuffleArrayWithSeed(masterExam.multipleChoice, seed + 1);
 
-    // 2. Permute each MC's options
+    // B. Trộn các phương án A, B, C, D (có hoặc không đổi số liệu)
     const permutedMcQuestions = shuffledMcOrder.map((mc, qIdx) =>
-      permuteMultipleChoice(mc, seed + 100 + qIdx * 17)
+      permuteMultipleChoice(mc, seed + 100 + qIdx * 17, applyNumericVariation)
     );
 
-    // 3. Permute True/False items with question variation
+    // C. Trộn True/False
     const permutedTfQuestions: TrueFalseQuestion[] = masterExam.trueFalseQuestions.map((tf, tfIdx) => {
-      const variedPrompt = varyMathExpressions(tf.prompt, seed + 200 + tfIdx * 31);
+      const variedPrompt = applyNumericVariation ? varyMathExpressions(tf.prompt, seed + 200 + tfIdx * 31) : tf.prompt;
       const shuffledItems = shuffleArrayWithSeed(tf.items, seed + 500 + tfIdx * 23);
       const rekeyedItems = shuffledItems.map((item, itemIdx) => ({
         ...item,
-        statement: varyMathExpressions(item.statement, seed + 600 + tfIdx * 11 + itemIdx),
+        statement: applyNumericVariation ? varyMathExpressions(item.statement, seed + 600 + tfIdx * 11 + itemIdx) : item.statement,
         key: ['a', 'b', 'c', 'd'][itemIdx] || item.key,
       }));
       return {
@@ -164,11 +176,11 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
       };
     });
 
-    // 4. Permute Essays / Short-Answers with equivalent numerical substitution
+    // D. Trộn Tự luận / Trả lời ngắn
     const permutedEssays = (masterExam.essays || []).map((es, esIdx) => {
-      const variedQuestion = varyMathExpressions(es.question, seed + 700 + esIdx * 19);
+      const variedQuestion = applyNumericVariation ? varyMathExpressions(es.question, seed + 700 + esIdx * 19) : es.question;
       let variedKey = es.shortAnswerKey;
-      if (variedKey && /^\d+$/.test(variedKey.trim())) {
+      if (applyNumericVariation && variedKey && /^\d+$/.test(variedKey.trim())) {
         const num = parseInt(variedKey.trim(), 10);
         variedKey = String(num + ((seed % 3) + 1));
       }
@@ -179,7 +191,6 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
       };
     });
 
-    // 5. Create variant exam object
     const variantExam: Exam = {
       ...masterExam,
       id: `${masterExam.id}-variant-${variantIndex}`,
@@ -187,8 +198,6 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
       examCode,
       masterExamCode: masterExam.examCode,
       variantIndex,
-      assignedStudentId: student.sbd || student.id,
-      assignedStudentName: student.fullName,
       multipleChoice: permutedMcQuestions,
       trueFalseQuestions: permutedTfQuestions,
       essays: permutedEssays,
@@ -196,7 +205,7 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
 
     variants.push(variantExam);
 
-    // 5. Build Answer Matrix Row
+    // Đáp án của mã đề này
     const mcAnswersMap: Record<string, string> = {};
     permutedMcQuestions.forEach((q, idx) => {
       mcAnswersMap[`Câu ${idx + 1}`] = q.correctAnswer;
@@ -208,12 +217,39 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
       tfAnswersMap[`Câu ${permutedMcQuestions.length + idx + 1}`] = pattern;
     });
 
+    variantAnswerMaps.push({ mc: mcAnswersMap, tf: tfAnswersMap });
+  }
+
+  // 2. Phân bổ n mã đề này cho danh sách học sinh (nếu có roster)
+  const answerMatrix: AnswerMatrixRow[] = [];
+  const totalStudents = roster.length > 0 ? roster.length : targetVariantCount;
+
+  for (let sIdx = 0; sIdx < totalStudents; sIdx++) {
+    // Phân bổ tuần hoàn các mã đề trong số n mã đề đã tạo
+    const assignedVariantIdx = sIdx % targetVariantCount;
+    const assignedVariant = variants[assignedVariantIdx];
+    const ansMap = variantAnswerMaps[assignedVariantIdx];
+
+    const student = roster[sIdx] || {
+      id: `HS-${String(sIdx + 1).padStart(2, '0')}`,
+      fullName: `Học sinh ${sIdx + 1}`,
+      className: masterExam.grade ? `Lớp ${masterExam.grade}` : 'Lớp Toán',
+      sbd: `SBD-${String(sIdx + 1).padStart(2, '0')}`,
+      stt: sIdx + 1,
+    };
+
+    // Gán thông tin học sinh vào variant nếu 1-1
+    if (sIdx < variants.length && roster.length > 0 && roster.length === targetVariantCount) {
+      variants[sIdx].assignedStudentId = student.sbd || student.id;
+      variants[sIdx].assignedStudentName = student.fullName;
+    }
+
     answerMatrix.push({
-      examCode,
+      examCode: assignedVariant.examCode,
       studentId: student.sbd || student.id,
       studentName: student.fullName,
-      mcAnswers: mcAnswersMap,
-      tfAnswers: tfAnswersMap,
+      mcAnswers: ansMap.mc,
+      tfAnswers: ansMap.tf,
     });
   }
 
@@ -221,7 +257,7 @@ export function generate45ExamVariants(masterExam: Exam, roster: StudentRosterIt
     masterExam,
     variants,
     answerMatrix,
-    totalVariants,
+    totalVariants: targetVariantCount,
   };
 }
 
