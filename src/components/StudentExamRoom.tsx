@@ -27,7 +27,12 @@ import {
   Search,
   Eye,
   X,
-  XCircle
+  XCircle,
+  MessageSquarePlus,
+  RefreshCw,
+  FolderKanban,
+  CheckCircle,
+  History
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Exam, StudentSubmission, EssayGradingResult, StudentRosterItem, AppUser } from '../types/exam';
@@ -38,6 +43,7 @@ import { MathFormulaEditor } from './MathFormulaEditor';
 import { MathLiveField } from './MathLiveField';
 import { isInvalidStudentName } from '../services/studentRosterParser';
 import { sanitizeExamQuestions } from '../services/examPermuter';
+import { submitStudentAppeal } from '../services/firebase';
 
 // Helper for mathematical answer comparison (supports LaTeX \frac, decimals, intervals, expressions)
 const isMathShortAnswerCorrect = (studentAns: string, key: string): boolean => {
@@ -95,9 +101,12 @@ const isMathShortAnswerCorrect = (studentAns: string, key: string): boolean => {
 
 interface StudentExamRoomProps {
   exam: Exam | null;
+  savedExams?: Exam[];
+  submissions?: StudentSubmission[];
   currentUser?: AppUser | null;
   variants?: Exam[];
   roster?: StudentRosterItem[];
+  onSelectExam?: (exam: Exam) => void;
   onSelectVariant?: (variant: Exam) => void;
   onSubmit: (submission: StudentSubmission) => void;
   onViewGradebook: () => void;
@@ -108,9 +117,12 @@ interface StudentExamRoomProps {
 
 export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
   exam: rawExam,
+  savedExams = [],
+  submissions = [],
   currentUser,
   variants = [],
   roster = [],
+  onSelectExam,
   onSelectVariant,
   onSubmit,
   onViewGradebook,
@@ -138,6 +150,9 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
       if (currentUser.sbd || currentUser.username) setStudentId(currentUser.sbd || currentUser.username);
     }
   }, [currentUser]);
+
+  // Tab mode for Student Portal: 'exam' (doing exam) or 'dashboard' (viewing assigned exams list)
+  const [studentPortalTab, setStudentPortalTab] = useState<'exam' | 'assigned_list'>('exam');
   const [isExamStarted, setIsExamStarted] = useState<boolean>(false);
   const [entryError, setEntryError] = useState<string | null>(null);
   const [isEditInfoOpen, setIsEditInfoOpen] = useState<boolean>(false);
@@ -198,6 +213,82 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     essay: number;
     total: number;
   } | null>(null);
+
+  // Last submitted object for appeal reference
+  const [activeSubmission, setActiveSubmission] = useState<StudentSubmission | null>(null);
+
+  // Appeal Modal State
+  const [isAppealModalOpen, setIsAppealModalOpen] = useState<boolean>(false);
+  const [appealQuestionRef, setAppealQuestionRef] = useState<string>('Điểm toàn bài');
+  const [appealReason, setAppealReason] = useState<string>('');
+  const [isSubmittingAppeal, setIsSubmittingAppeal] = useState<boolean>(false);
+  const [appealSuccessMsg, setAppealSuccessMsg] = useState<string | null>(null);
+
+  // Count past attempts by this student for the active exam
+  const myPastSubmissionsForExam = React.useMemo(() => {
+    if (!exam) return [];
+    const effectiveName = studentName.trim().toLowerCase();
+    const effectiveId = studentId.trim().toLowerCase();
+    return submissions.filter((s) => {
+      const matchExam = s.examId === exam.id || s.examCode === exam.examCode;
+      const matchStudent =
+        (effectiveName && s.studentName.trim().toLowerCase() === effectiveName) ||
+        (effectiveId && s.studentId.trim().toLowerCase() === effectiveId);
+      return matchExam && matchStudent;
+    });
+  }, [submissions, exam, studentName, studentId]);
+
+  const pastAttemptsCount = myPastSubmissionsForExam.length;
+  const currentAttemptNumber = pastAttemptsCount + 1;
+  const maxAllowedAttempts = exam?.maxAttempts !== undefined ? exam.maxAttempts : 1; // 0 = unlimited
+  const isAttemptsExceeded = maxAllowedAttempts > 0 && pastAttemptsCount >= maxAllowedAttempts;
+
+  // Local storage key for preserving student progress across accidental exits / refreshes
+  const progressStorageKey = React.useMemo(() => {
+    if (!exam) return '';
+    const sid = studentId.trim() || studentName.trim() || 'guest';
+    return `edumath_progress_${exam.id || exam.examCode}_${sid}`;
+  }, [exam?.id, exam?.examCode, studentId, studentName]);
+
+  // Restore saved progress when starting or loading exam
+  useEffect(() => {
+    if (!progressStorageKey || typeof window === 'undefined') return;
+    try {
+      const saved = localStorage.getItem(progressStorageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mcAnswers) setMcAnswers(parsed.mcAnswers);
+        if (parsed.tfAnswers) setTfAnswers(parsed.tfAnswers);
+        if (parsed.shortAnswers) setShortAnswers(parsed.shortAnswers);
+        if (parsed.essayGradingData) setEssayGradingData(parsed.essayGradingData);
+        if (typeof parsed.timeLeft === 'number' && parsed.timeLeft > 0) setTimeLeft(parsed.timeLeft);
+        if (parsed.assignedExamCode) setAssignedExamCode(parsed.assignedExamCode);
+        if (parsed.isExamStarted) setIsExamStarted(true);
+      }
+    } catch (e) {
+      console.warn('Error restoring exam progress:', e);
+    }
+  }, [progressStorageKey]);
+
+  // Auto-save in-progress answers every time they change
+  useEffect(() => {
+    if (!progressStorageKey || !isExamStarted || isSubmitted || typeof window === 'undefined') return;
+    try {
+      const dataToSave = {
+        mcAnswers,
+        tfAnswers,
+        shortAnswers,
+        essayGradingData,
+        timeLeft,
+        assignedExamCode,
+        isExamStarted: true,
+        savedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(progressStorageKey, JSON.stringify(dataToSave));
+    } catch (e) {
+      // storage quota or ignore
+    }
+  }, [progressStorageKey, isExamStarted, isSubmitted, mcAnswers, tfAnswers, shortAnswers, essayGradingData, timeLeft, assignedExamCode]);
 
   // Reset exam room whenever active exam changes
   useEffect(() => {
@@ -449,6 +540,8 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
       studentClass: finalStudentClass,
       studentId: finalStudentId,
       examCode: assignedExamCode || exam.examCode,
+      examId: exam.id,
+      attemptNumber: currentAttemptNumber,
       submittedAt: nowStr,
       startTime: examStartTimeRef.current || new Date().toISOString(),
       tabViolations,
@@ -463,7 +556,17 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
       examSnapshot: exam,
     };
 
+    setActiveSubmission(newSubmission);
     onSubmit(newSubmission);
+
+    // Clear progress from localStorage upon completed submission
+    if (progressStorageKey && typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(progressStorageKey);
+      } catch (e) {
+        // ignore
+      }
+    }
   };
 
   // Trigger auto submit when time is up
@@ -668,7 +771,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
               </div>
             )}
 
-            {/* Thông tin bài thi: [Tên đề thi] • [Khối lớp] • [Thời gian làm bài] • [Cấu trúc đề] */}
+            {/* Thông tin bài thi: [Tên đề thi] • [Khối lớp] • [Thời gian làm bài] • [Số lần làm bài] • [Cấu trúc đề] */}
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs space-y-2">
               <div className="flex justify-between items-start font-bold gap-2">
                 <span className="text-slate-500 shrink-0">Đề thi:</span>
@@ -681,10 +784,47 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 <span>•</span>
                 <span>Thời gian: <b className="text-emerald-700 font-bold">{durationMinutes} phút</b></span>
                 <span>•</span>
-                <span className="text-slate-700">
-                  Cấu trúc: <b>{exam.multipleChoice.length} TN + {exam.trueFalseQuestions.length} Đ/S + {exam.essays.length} {part3Mode === 'short_answer' ? 'TL ngắn' : 'Tự luận'}</b>
+                <span>
+                  Lần thi: <b className="text-amber-700 font-black">Lần {currentAttemptNumber}{maxAllowedAttempts > 0 ? ` / ${maxAllowedAttempts}` : ' (Không giới hạn)'}</b>
                 </span>
               </div>
+              <div className="text-[11px] text-slate-500 pt-0.5">
+                Cấu trúc: <b>{exam.multipleChoice.length} TN + {exam.trueFalseQuestions.length} Đ/S + {exam.essays.length} {part3Mode === 'short_answer' ? 'TL ngắn' : 'Tự luận'}</b>
+              </div>
+
+              {/* Progress restoration notice if saved in localStorage */}
+              {progressStorageKey && typeof window !== 'undefined' && localStorage.getItem(progressStorageKey) && (
+                <div className="p-2.5 rounded-xl bg-indigo-50/80 border border-indigo-200 text-indigo-950 flex items-center justify-between gap-2 mt-1">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold">
+                    <History className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Hệ thống đã tự động bảo lưu tiến trình làm bài dở của em trước đó!</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        localStorage.removeItem(progressStorageKey);
+                        setMcAnswers({});
+                        setTfAnswers({});
+                        setShortAnswers({});
+                        setEssayGradingData({});
+                        setTimeLeft(durationMinutes * 60);
+                      } catch (e) {}
+                    }}
+                    className="text-[10px] text-rose-600 hover:underline font-bold shrink-0 cursor-pointer"
+                  >
+                    Làm lại từ đầu
+                  </button>
+                </div>
+              )}
+
+              {/* Attempt limit exceeded warning */}
+              {isAttemptsExceeded && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold flex items-center gap-2 mt-1">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Em đã hoàn thành đủ số lần thi quy định ({maxAllowedAttempts} lần). Vui lòng xem điểm và lời giải chi tiết bên dưới.</span>
+                </div>
+              )}
             </div>
 
             {/* Error Message */}
@@ -836,6 +976,149 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 <span>BẮT ĐẦU LÀM BÀI ➔</span>
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Top Navigation Bar: Chọn giữa Làm bài thi trực tiếp & Danh sách bài thi đã được giao */}
+      <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setStudentPortalTab('exam')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+              studentPortalTab === 'exam'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+          >
+            <GraduationCap className="w-4 h-4" />
+            <span>Phòng Làm Bài Thi</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStudentPortalTab('assigned_list')}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
+              studentPortalTab === 'assigned_list'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+          >
+            <FolderKanban className="w-4 h-4 text-emerald-600" />
+            <span>Đề Thi Được Giao ({savedExams.length})</span>
+          </button>
+        </div>
+
+        {/* Student personal info pill */}
+        <div className="text-xs text-slate-600 flex items-center gap-2">
+          <span className="font-bold">Học sinh:</span>
+          <span className="font-extrabold text-indigo-700">{studentName || 'Chưa đăng nhập'}</span>
+          {studentClass && (
+            <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-[11px] font-bold text-indigo-800">
+              Lớp {studentClass}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* VIEW DANH SÁCH BÀI KIỂM TRA GIÁO VIÊN ĐÃ GIAO (CÁCH 2) */}
+      {studentPortalTab === 'assigned_list' && (
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div>
+              <h3 className="text-base sm:text-lg font-black text-slate-900">
+                Danh Sách Bài Thi Giáo Viên Đã Giao Cho Em
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Bấm vào bài thi để bắt đầu làm bài. Tiến trình làm bài và số lần nộp bài được ghi nhận tự động.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {savedExams.map((ex) => {
+              const mySubs = submissions.filter(
+                (s) =>
+                  (s.examId === ex.id || s.examCode === ex.examCode) &&
+                  ((studentName && s.studentName.trim().toLowerCase() === studentName.trim().toLowerCase()) ||
+                    (studentId && s.studentId.trim().toLowerCase() === studentId.trim().toLowerCase()))
+              );
+              const isDone = mySubs.length > 0;
+              const hasDraft =
+                typeof window !== 'undefined' &&
+                !!localStorage.getItem(`edumath_progress_${ex.id || ex.examCode}_${studentId || studentName || 'guest'}`);
+              const maxAtt = ex.maxAttempts !== undefined ? ex.maxAttempts : 1;
+              const isOver = maxAtt > 0 && mySubs.length >= maxAtt;
+
+              return (
+                <div
+                  key={ex.id}
+                  className="p-5 rounded-2xl border border-slate-200 bg-white hover:border-indigo-400 hover:shadow-md transition-all flex flex-col justify-between space-y-4"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs px-2 py-0.5 bg-slate-100 text-slate-800 rounded font-bold">
+                        {ex.examCode}
+                      </span>
+                      <span
+                        className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                          isDone
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : hasDraft
+                            ? 'bg-amber-100 text-amber-900'
+                            : 'bg-indigo-50 text-indigo-700'
+                        }`}
+                      >
+                        {isDone
+                          ? `Đã nộp (${mySubs.length} lần)`
+                          : hasDraft
+                          ? 'Đang làm dở'
+                          : 'Chưa làm'}
+                      </span>
+                    </div>
+
+                    <h4 className="font-black text-slate-900 text-sm line-clamp-2">{ex.title}</h4>
+
+                    <div className="text-xs text-slate-500 space-y-0.5">
+                      <div>Khối lớp: <b className="text-slate-700">Lớp {ex.grade}</b></div>
+                      <div>Thời gian: <b className="text-emerald-700">{ex.durationMinutes || 45} phút</b></div>
+                      <div>
+                        Quy định: <b className="text-slate-700">{maxAtt === 0 ? 'Không giới hạn lần thi' : `Tối đa ${maxAtt} lần làm`}</b>
+                      </div>
+                      {isDone && (
+                        <div className="text-amber-800 font-bold pt-1">
+                          Điểm cao nhất: {Math.max(...mySubs.map((s) => s.totalScore)).toFixed(2)}đ
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onSelectExam) onSelectExam(ex);
+                        setStudentPortalTab('exam');
+                        setIsExamStarted(false);
+                        setIsSubmitted(false);
+                      }}
+                      className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        isOver
+                          ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          : hasDraft
+                          ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      }`}
+                    >
+                      <span>
+                        {isOver ? 'Xem Điểm & Đề Bài' : hasDraft ? 'Tiếp Tục Làm Bài Dở ➔' : 'Vào Làm Bài Này ➔'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1002,6 +1285,46 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 <Eye className="w-3.5 h-3.5" />
                 {showDetailedSolutions ? 'Ẩn Lời Giải Chi Tiết' : 'Xem Điểm & Lời Giải Chi Tiết'}
               </button>
+
+              {/* Nút Khiếu Nại Điểm Cho Học Sinh */}
+              <button
+                type="button"
+                onClick={() => {
+                  setAppealSuccessMsg(null);
+                  setAppealReason('');
+                  setAppealQuestionRef('Điểm toàn bài');
+                  setIsAppealModalOpen(true);
+                }}
+                className="px-3.5 py-2 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow transition-colors cursor-pointer flex items-center gap-1.5"
+                title="Gửi khiếu nại nếu em thấy ứng dụng chấm chưa đúng"
+              >
+                <MessageSquarePlus className="w-3.5 h-3.5 text-white" />
+                <span>Khiếu Nại Chấm Điểm</span>
+              </button>
+
+              {/* Nút Làm Lại Đề Thi (Nếu giáo viên cho phép làm nhiều lần) */}
+              {!isAttemptsExceeded && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSubmitted(false);
+                    setIsExamStarted(false);
+                    setIsTimeUp(false);
+                    setCalculatedScore(null);
+                    setMcAnswers({});
+                    setTfAnswers({});
+                    setShortAnswers({});
+                    setEssayGradingData({});
+                    setTimeLeft(durationMinutes * 60);
+                  }}
+                  className="px-3.5 py-2 bg-indigo-500/80 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl shadow transition-colors cursor-pointer flex items-center gap-1.5"
+                  title="Làm lại đề thi (Tính lần thi tiếp theo)"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Làm Lại Đề (Lần {currentAttemptNumber + 1})</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => window.print()}
@@ -2166,6 +2489,151 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 <Trophy className="w-4 h-4 text-amber-300" /> Bảng Điểm Toàn Lớp
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KHIẾU NẠI / PHÚC KHẢO ĐIỂM DÀNH CHO HỌC SINH */}
+      {isAppealModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-200 text-slate-900">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center shrink-0">
+                  <MessageSquarePlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Khiếu Nại & Phúc Khảo Bài Thi</h3>
+                  <p className="text-xs text-slate-500">Gửi trực tiếp đến Thầy/Cô để thẩm định lại điểm bài làm</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAppealModalOpen(false)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {appealSuccessMsg ? (
+              <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 space-y-3 text-center">
+                <CheckCircle className="w-10 h-10 text-emerald-600 mx-auto" />
+                <div className="font-black text-sm">{appealSuccessMsg}</div>
+                <p className="text-xs text-emerald-800">
+                  Thầy/Cô sẽ nhận được yêu cầu phúc khảo của em trong Bảng Điểm Điện Tử và phản hồi kèm điểm cập nhật nếu được duyệt.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setIsAppealModalOpen(false)}
+                  className="px-5 py-2.5 bg-emerald-600 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer hover:bg-emerald-700"
+                >
+                  Đóng Hộp Thoại
+                </button>
+              </div>
+            ) : (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!appealReason.trim()) return;
+                  setIsSubmittingAppeal(true);
+                  try {
+                    const subId =
+                      activeSubmission?.id ||
+                      myPastSubmissionsForExam[0]?.id ||
+                      `${assignedExamCode || exam.examCode}_${studentClass}_${studentName}_${Date.now()}`;
+                    await submitStudentAppeal({
+                      submissionId: subId,
+                      examCode: assignedExamCode || exam.examCode,
+                      studentId: studentId || 'HS',
+                      studentName: studentName || 'Học sinh',
+                      studentClass: studentClass || 'Lớp',
+                      questionRef: appealQuestionRef,
+                      reason: appealReason.trim(),
+                    });
+                    setAppealSuccessMsg('Đã gửi đơn khiếu nại thành công đến Giáo viên!');
+                  } catch (err: any) {
+                    alert('Lỗi gửi khiếu nại: ' + (err.message || 'Vui lòng thử lại'));
+                  } finally {
+                    setIsSubmittingAppeal(false);
+                  }
+                }}
+                className="space-y-4"
+              >
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Học sinh:</span>
+                    <span className="font-bold text-slate-900">{studentName} (Lớp {studentClass})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Mã đề:</span>
+                    <span className="font-mono font-bold text-indigo-700">{assignedExamCode || exam.examCode}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Điểm hiện tại:</span>
+                    <span className="font-black text-amber-700">
+                      {calculatedScore ? calculatedScore.total.toFixed(2) : (myPastSubmissionsForExam[0]?.totalScore?.toFixed(2) || '—')}đ
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Chọn câu hoặc mục cần khiếu nại:
+                  </label>
+                  <select
+                    value={appealQuestionRef}
+                    onChange={(e) => setAppealQuestionRef(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900"
+                  >
+                    <option value="Điểm toàn bài">Điểm toàn bộ bài thi</option>
+                    <option value="Phần I: Trắc nghiệm 4 lựa chọn">Phần I: Trắc nghiệm 4 lựa chọn</option>
+                    <option value="Phần II: Câu hỏi Đúng/Sai">Phần II: Câu hỏi Đúng/Sai</option>
+                    <option value="Phần III: Trả lời ngắn / Tự luận">Phần III: Trả lời ngắn / Tự luận</option>
+                    {exam.essays.map((es, idx) => {
+                      const qN = exam.multipleChoice.length + exam.trueFalseQuestions.length + idx + 1;
+                      return (
+                        <option key={es.id} value={`Câu ${qN} (Phần III)`}>
+                          Câu {qN}: {es.question.slice(0, 40)}...
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Lý do khiếu nại & dẫn chứng của em: <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={4}
+                    required
+                    value={appealReason}
+                    onChange={(e) => setAppealReason(e.target.value)}
+                    placeholder="Ví dụ: Em tính ra kết quả là 1/2 và đã biến đổi đúng theo công thức SGK, nhưng hệ thống báo sai; hoặc bài làm tự luận của em viết đủ các bước lập luận..."
+                    className="w-full p-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-600"
+                  />
+                </div>
+
+                <div className="flex gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsAppealModalOpen(false)}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+                  >
+                    Hủy bỏ
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingAppeal || !appealReason.trim()}
+                    className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>{isSubmittingAppeal ? 'Đang gửi...' : 'Gửi Đơn Khiếu Nại'}</span>
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

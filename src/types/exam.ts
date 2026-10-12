@@ -87,6 +87,8 @@ export interface Exam {
   assignedClassNames?: string[];
   assignedStudentIds?: string[];
   assignedGroupDetails?: string;
+  maxAttempts?: number; // Số lần làm bài tối đa cho phép (1, 2, 3... hoặc undefined/0 là không giới hạn)
+  variantCount?: number; // Số mã đề cần sinh (ví dụ: 1, 2, 4, 8, 24, 45)
   variants?: Exam[];
 }
 
@@ -164,6 +166,8 @@ export interface StudentSubmission {
   studentClass: string;
   studentId: string;
   examCode: string;
+  examId?: string;
+  attemptNumber?: number; // Lần làm bài thứ mấy (1, 2, 3...)
   submittedAt: string;
   startTime?: string;
   tabViolations?: number;

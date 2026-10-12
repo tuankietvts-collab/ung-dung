@@ -327,10 +327,42 @@ export default function App() {
   };
 
   // Assign Exam to Classes/Students
-  const handleAssignExam = async (assignedClasses: string[], assignedStudentIds: string[], note: string) => {
+  const handleAssignExam = async (
+    assignedClasses: string[],
+    assignedStudentIds: string[],
+    note: string,
+    options?: {
+      variantCount?: number;
+      durationMinutes?: number;
+      maxAttempts?: number;
+    }
+  ) => {
     if (!currentExam) return;
+    const variantCount = options?.variantCount || currentExam.variantCount || 4;
+    const durationMinutes = options?.durationMinutes || currentExam.durationMinutes || 45;
+    const maxAttempts = options?.maxAttempts !== undefined ? options.maxAttempts : (currentExam.maxAttempts ?? 1);
+
+    // Auto-generate variants if requested
+    let generatedVariants = variantPackage?.variants || [];
+    if (variantCount > 1) {
+      try {
+        const pkg = generate45ExamVariants(currentExam, studentRoster, {
+          mode: 'shuffle_only',
+          numVariants: variantCount
+        });
+        setVariantPackage(pkg);
+        generatedVariants = pkg.variants;
+      } catch (err) {
+        console.warn('Auto variant generation warning:', err);
+      }
+    }
+
     const updatedExam: Exam = {
       ...currentExam,
+      variantCount,
+      durationMinutes,
+      maxAttempts,
+      variants: generatedVariants,
       assignedClassNames: assignedClasses,
       assignedStudentIds: assignedStudentIds,
       assignedGroupDetails: note,
@@ -341,7 +373,7 @@ export default function App() {
     setIsAssignModalOpen(false);
     showToast(
       assignedClasses.length > 0
-        ? `Đã giao đề [${updatedExam.examCode}] thành công cho lớp ${assignedClasses.join(', ')}!`
+        ? `Đã giao đề [${updatedExam.examCode}] (${variantCount} mã đề, ${durationMinutes}p, tối đa ${maxAttempts === 0 ? '∞' : maxAttempts} lần làm) thành công cho lớp ${assignedClasses.join(', ')}!`
         : `Đã giao đề [${updatedExam.examCode}] cho ${assignedStudentIds.length} học sinh!`
     );
   };
@@ -835,9 +867,12 @@ export default function App() {
           {currentNav === 'student_room' && (
             <StudentExamRoom
               exam={currentExam}
+              savedExams={savedExams}
+              submissions={submissions}
               currentUser={currentUser}
               variants={variantPackage?.variants || []}
               roster={studentRoster}
+              onSelectExam={(selectedExam) => setCurrentExam(selectedExam)}
               onSelectVariant={(variant) => setCurrentExam(variant)}
               onSubmit={handleNewSubmission}
               onViewGradebook={() => {
@@ -918,10 +953,18 @@ export default function App() {
               {subGradingTab === 'gradebook' && (
                 <GradebookReport
                   exam={currentExam}
+                  exams={savedExams}
                   submissions={submissions}
                   className={currentExam?.className || submissions[0]?.studentClass || (studentRoster[0]?.className) || 'Toàn Khối'}
+                  classes={classes}
                   variants={variantPackage?.variants || []}
                   answerMatrix={variantPackage?.answerMatrix || []}
+                  onSelectExam={(ex) => setCurrentExam(ex)}
+                  onUpdateSubmission={async (updated) => {
+                    setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                    await saveSubmissionToFirestore(updated);
+                    showToast('Đã lưu kết quả phúc khảo bài thi thành công!');
+                  }}
                   onDeleteSubmission={async (subId) => {
                     await deleteSubmissionFromFirestore(subId);
                     setSubmissions((prev) => prev.filter((s) => s.id !== subId));

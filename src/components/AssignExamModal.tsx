@@ -22,7 +22,16 @@ interface AssignExamModalProps {
   exam: Exam | null;
   classes: ClassGroup[];
   roster: StudentRosterItem[];
-  onAssignExam: (assignedClasses: string[], assignedStudentIds: string[], note: string) => Promise<void> | void;
+  onAssignExam: (
+    assignedClasses: string[],
+    assignedStudentIds: string[],
+    note: string,
+    options?: {
+      variantCount?: number;
+      durationMinutes?: number;
+      maxAttempts?: number;
+    }
+  ) => Promise<void> | void;
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -37,6 +46,11 @@ export const AssignExamModal: React.FC<AssignExamModalProps> = ({
 }) => {
   // Target Selection: 'class' (giao cả lớp), 'students' (giao học sinh cụ thể), 'group' (nhóm học sinh)
   const [assignMode, setAssignMode] = useState<'class' | 'students' | 'group'>('class');
+
+  // Quy định kiểm tra (Bước 1)
+  const [variantCount, setVariantCount] = useState<number>(exam?.variantCount || 4);
+  const [durationMinutes, setDurationMinutes] = useState<number>(exam?.durationMinutes || 45);
+  const [maxAttempts, setMaxAttempts] = useState<number>(exam?.maxAttempts ?? 1); // 1 = 1 lần, 2, 3, 0 = không giới hạn
 
   // Selected classes
   const [selectedClasses, setSelectedClasses] = useState<string[]>(() => {
@@ -138,7 +152,11 @@ export const AssignExamModal: React.FC<AssignExamModalProps> = ({
           ? `Giao cho toàn bộ lớp: ${selectedClasses.join(', ')}`
           : `Giao cho ${selectedStudentIds.length} học sinh cụ thể`);
 
-      await onAssignExam(targetClasses, targetStudents, note);
+      await onAssignExam(targetClasses, targetStudents, note, {
+        variantCount,
+        durationMinutes,
+        maxAttempts,
+      });
 
       // Save to localStorage for quick lookup
       try {
@@ -153,7 +171,7 @@ export const AssignExamModal: React.FC<AssignExamModalProps> = ({
       if (showToast) {
         showToast(
           assignMode === 'class'
-            ? `Đã giao đề [${exam.examCode}] thành công cho lớp ${selectedClasses.join(', ')}!`
+            ? `Đã giao đề [${exam.examCode}] (${variantCount} mã đề, ${durationMinutes}p, tối đa ${maxAttempts === 0 ? '∞' : maxAttempts} lần làm) cho lớp ${selectedClasses.join(', ')}!`
             : `Đã giao đề [${exam.examCode}] cho ${selectedStudentIds.length} học sinh!`,
           'success'
         );
@@ -270,6 +288,131 @@ export const AssignExamModal: React.FC<AssignExamModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-5">
+
+          {/* BƯỚC 1: CẤU HÌNH ĐỀ KIỂM TRA, THỜI GIAN & SỐ LẦN LÀM BÀI */}
+          <div className="p-4 bg-gradient-to-r from-indigo-50/80 via-sky-50/60 to-purple-50/50 rounded-2xl border border-indigo-200/80 space-y-3.5 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <span>Bước 1: Tùy Chọn Cấu Hình Đề Thi & Thời Gian & Số Lần Làm Bài</span>
+              </span>
+              <span className="text-[10px] font-bold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-200">
+                Chuẩn Khảo Thí GDPT 2018
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* 1. Số lượng mã đề sinh ra */}
+              <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-1.5">
+                <label className="text-[11px] font-black text-slate-700 block uppercase tracking-wider">
+                  Số mã đề cần sinh ra:
+                </label>
+                <select
+                  value={variantCount}
+                  onChange={(e) => setVariantCount(Number(e.target.value))}
+                  className="w-full px-2.5 py-1.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  <option value={1}>1 mã đề gốc ({exam.examCode})</option>
+                  <option value={4}>4 mã đề hoán vị (101, 102, 103, 104)</option>
+                  <option value={8}>8 mã đề hoán vị</option>
+                  <option value={24}>24 mã đề chuẩn bộ môn</option>
+                  <option value={45}>45 mã đề riêng từng học sinh</option>
+                </select>
+                <p className="text-[10px] text-slate-500 leading-tight">
+                  Tự động xáo trộn câu hỏi & hoán vị phương án chống sao chép bài.
+                </p>
+              </div>
+
+              {/* 2. Tùy chọn thời gian làm bài */}
+              <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-1.5">
+                <label className="text-[11px] font-black text-slate-700 block uppercase tracking-wider">
+                  Thời gian làm bài:
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={5}
+                    max={180}
+                    value={durationMinutes}
+                    onChange={(e) => setDurationMinutes(Math.max(1, Number(e.target.value)))}
+                    className="w-20 px-2.5 py-1.5 text-xs font-black bg-slate-50 border border-slate-300 rounded-lg text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-center"
+                  />
+                  <span className="text-xs font-bold text-slate-600">phút</span>
+                  <div className="flex items-center gap-1 ml-auto">
+                    {[15, 45, 90].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setDurationMinutes(m)}
+                        className={`px-1.5 py-0.5 text-[10px] font-bold rounded cursor-pointer ${
+                          durationMinutes === m ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {m}p
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500 leading-tight">
+                  Hệ thống đếm ngược và tự động thu bài khi hết giờ.
+                </p>
+              </div>
+
+              {/* 3. Tùy chọn số lần làm bài */}
+              <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs space-y-1.5">
+                <label className="text-[11px] font-black text-slate-700 block uppercase tracking-wider">
+                  Số lần làm bài tối đa:
+                </label>
+                <select
+                  value={maxAttempts}
+                  onChange={(e) => setMaxAttempts(Number(e.target.value))}
+                  className="w-full px-2.5 py-1.5 text-xs font-bold bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  <option value={1}>1 lần duy nhất (Thi chính thức)</option>
+                  <option value={2}>2 lần (Cho phép sửa sai 1 lần)</option>
+                  <option value={3}>3 lần</option>
+                  <option value={0}>Không giới hạn (Ôn luyện tự do)</option>
+                </select>
+                <p className="text-[10px] text-slate-500 leading-tight">
+                  {maxAttempts === 1 ? 'Khóa bài thi sau lần nộp đầu tiên.' : `Học sinh có thể làm lại lần 2, lần 3... tính điểm lần mới.`}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* HƯỚNG DẪN 2 CÁCH HỌC SINH LÀM BÀI */}
+          <div className="p-3.5 bg-blue-50/70 rounded-2xl border border-blue-200 text-xs text-blue-950 space-y-2">
+            <div className="font-black flex items-center gap-1.5 text-blue-900">
+              <Share2 className="w-4 h-4 text-blue-600" />
+              <span>Bước 2: Học Sinh Có 2 Cách Để Vào Làm Bài Thi:</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+              <div className="p-2.5 rounded-xl bg-white border border-blue-200 space-y-1">
+                <div className="font-bold text-indigo-700">Cách 1: Vào qua Đường Link giáo viên gửi</div>
+                <p className="text-slate-600">
+                  Học sinh bấm link nhận được, đăng nhập theo username và mật khẩu giáo viên cung cấp để vào ngay phòng thi cá nhân.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="mt-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] border border-indigo-200 flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedLink ? <Check className="w-3 h-3 text-emerald-600" /> : <Share2 className="w-3 h-3" />}
+                  <span>{copiedLink ? 'Đã sao chép link!' : 'Sao chép link làm bài'}</span>
+                </button>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white border border-blue-200 space-y-1">
+                <div className="font-bold text-indigo-700">Cách 2: Đăng nhập từ trang chủ</div>
+                <p className="text-slate-600">
+                  Học sinh truy cập website, chọn <b>Đăng nhập Học sinh</b> để vào trang cá nhân. Tại đây hệ thống sẽ tự động hiển thị bài thi giáo viên đã giao để học sinh bấm vào làm bài.
+                </p>
+                <div className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1 mt-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                  <span>Tự động bảo lưu tiến trình nếu lỡ thoát ra và đăng nhập lại!</span>
+                </div>
+              </div>
+            </div>
+          </div>
           
           {/* TAB 1: GIAO CHO CẢ LỚP */}
           {assignMode === 'class' && (

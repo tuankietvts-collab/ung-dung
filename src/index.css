@@ -44,15 +44,17 @@ body {
   color: #0f172a;
 }
 
-/* MathLive Virtual Keyboard Mobile Optimizations */
-:root {
-  --keyboard-zindex: 999999;
-}
-
+/* Hide MathLive duplicate floating bottom keyboard (Replaced by clean in-app math drawer/panel) */
+math-virtual-keyboard-container,
 .ML__keyboard,
 math-field + div[class*="ML__keyboard"],
 div[part="virtual-keyboard"] {
-  z-index: 999999 !important;
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  height: 0 !important;
+  width: 0 !important;
 }
 
 math-field {

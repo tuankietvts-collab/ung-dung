@@ -40,42 +40,110 @@ import { TeacherEssayGradingModal } from './TeacherEssayGradingModal';
 
 interface GradebookReportProps {
   exam?: Exam | null;
+  exams?: Exam[];
   submissions: StudentSubmission[];
   className?: string;
   classes?: ClassGroup[];
   variants?: Exam[];
   answerMatrix?: AnswerMatrixRow[];
   onDeleteSubmission?: (submissionId: string) => void;
+  onUpdateSubmission?: (submission: StudentSubmission) => void;
+  onSelectExam?: (exam: Exam) => void;
 }
 
 export const GradebookReport: React.FC<GradebookReportProps> = ({
   exam,
+  exams = [],
   submissions,
   className = 'Toán 12',
   classes = [],
   variants = [],
   answerMatrix = [],
   onDeleteSubmission,
+  onUpdateSubmission,
+  onSelectExam,
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedSubmission, setSelectedSubmission] = useState<StudentSubmission | null>(null);
   const [modalTab, setModalTab] = useState<'mc' | 'essay'>('mc');
   const [isAnswerMatrixOpen, setIsAnswerMatrixOpen] = useState<boolean>(false);
-  const [filterCategory, setFilterCategory] = useState<'all' | 'gioi' | 'kha' | 'violation'>('all');
+  const [filterCategory, setFilterCategory] = useState<'all' | 'gioi' | 'kha' | 'violation' | 'appeals'>('all');
+  
+  // 1. CHỌN BÀI KIỂM TRA CỤ THỂ
+  const [selectedExamFilter, setSelectedExamFilter] = useState<string>(() => {
+    return exam?.id || (exams.length > 0 ? exams[0].id : 'all');
+  });
+
+  // 2. CHỌN LỚP CỤ THỂ
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
+  
   const [sortOption, setSortOption] = useState<'abc' | 'stt' | 'score_desc'>('abc');
   const [submissionToDelete, setSubmissionToDelete] = useState<StudentSubmission | null>(null);
   const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
 
-  // Available classes in submissions + teacher's classes
+  // Modal xử lý khiếu nại (Teacher Appeal Review)
+  const [appealToReview, setAppealToReview] = useState<{
+    submission: StudentSubmission;
+    appealIndex: number;
+  } | null>(null);
+  const [appealTeacherReply, setAppealTeacherReply] = useState<string>('');
+  const [appealAdjustedScore, setAppealAdjustedScore] = useState<string>('');
+
+  // Extract distinct exams from exams prop + submissions
+  const availableExams = useMemo(() => {
+    const map = new Map<string, { id: string; code: string; title: string; count: number }>();
+    if (exams && exams.length > 0) {
+      exams.forEach((e) => {
+        map.set(e.id, { id: e.id, code: e.examCode, title: e.title, count: 0 });
+      });
+    }
+    if (exam && !map.has(exam.id)) {
+      map.set(exam.id, { id: exam.id, code: exam.examCode, title: exam.title, count: 0 });
+    }
+    submissions.forEach((s) => {
+      const eId = s.examId || s.examCode;
+      if (eId) {
+        if (!map.has(eId)) {
+          map.set(eId, {
+            id: eId,
+            code: s.examCode,
+            title: s.examSnapshot?.title || `Đề ${s.examCode}`,
+            count: 0,
+          });
+        }
+        const item = map.get(eId)!;
+        item.count += 1;
+      }
+    });
+    return Array.from(map.values());
+  }, [exams, exam, submissions]);
+
+  // Active exam object
+  const activeSelectedExam = useMemo(() => {
+    if (selectedExamFilter === 'all') return exam || (exams && exams[0]) || null;
+    return (
+      exams.find((e) => e.id === selectedExamFilter || e.examCode === selectedExamFilter) ||
+      (exam?.id === selectedExamFilter ? exam : null)
+    );
+  }, [exams, exam, selectedExamFilter]);
+
+  // First: filter submissions by selected exam
+  const examSubmissions = useMemo(() => {
+    if (selectedExamFilter === 'all') return submissions;
+    return submissions.filter(
+      (s) => s.examId === selectedExamFilter || s.examCode === selectedExamFilter
+    );
+  }, [submissions, selectedExamFilter]);
+
+  // Available classes in this exam's submissions + teacher's classes
   const classesList = useMemo(() => {
-    const fromSubs = submissions.map((s) => s.studentClass?.trim()).filter(Boolean);
+    const fromSubs = examSubmissions.map((s) => s.studentClass?.trim()).filter(Boolean);
     const fromTeacher = classes.map((c) => c.name?.trim()).filter(Boolean);
     return Array.from(new Set([...fromTeacher, ...fromSubs])).sort();
-  }, [submissions, classes]);
+  }, [examSubmissions, classes]);
 
   // Filtered submissions
-  const filtered = submissions.filter((s) => {
+  const filtered = examSubmissions.filter((s) => {
     const matchesSearch =
       s.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.studentId.toLowerCase().includes(searchTerm.toLowerCase());
@@ -87,7 +155,13 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
 
     if (filterCategory === 'gioi') return s.totalScore >= 8.0;
     if (filterCategory === 'kha') return s.totalScore >= 6.5 && s.totalScore < 8.0;
-    if (filterCategory === 'violation') return (s.tabViolations && s.tabViolations > 0) || !!s.essayAnswers?.essay1?.grading?.universityMethodDetected;
+    if (filterCategory === 'violation')
+      return (
+        (s.tabViolations && s.tabViolations > 0) ||
+        !!s.essayAnswers?.essay1?.grading?.universityMethodDetected
+      );
+    if (filterCategory === 'appeals')
+      return s.appeals && s.appeals.length > 0;
     return true;
   });
 
@@ -106,40 +180,57 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
     return a.studentId.localeCompare(b.studentId, 'vi');
   });
 
-  // 1. Target Submissions for current class filter
-  const currentClassSubmissions = selectedClassFilter === 'all'
-    ? submissions
-    : submissions.filter((s) => s.studentClass === selectedClassFilter);
+  // 1. Target Submissions for current class filter within this exam
+  const currentClassSubmissions =
+    selectedClassFilter === 'all'
+      ? examSubmissions
+      : examSubmissions.filter((s) => s.studentClass === selectedClassFilter);
 
-  // 2. Comprehensive Statistics for current selected class / all
+  // 2. Comprehensive Statistics for current selected exam and class
   const totalCount = currentClassSubmissions.length;
   const avgScore =
     totalCount > 0
-      ? (currentClassSubmissions.reduce((acc, cur) => acc + cur.totalScore, 0) / totalCount).toFixed(2)
+      ? (
+          currentClassSubmissions.reduce((acc, cur) => acc + cur.totalScore, 0) /
+          totalCount
+        ).toFixed(2)
       : '0.00';
   const highestScore =
-    totalCount > 0 ? Math.max(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2) : '0.00';
+    totalCount > 0
+      ? Math.max(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2)
+      : '0.00';
   const lowestScore =
-    totalCount > 0 ? Math.min(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2) : '0.00';
+    totalCount > 0
+      ? Math.min(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2)
+      : '0.00';
 
   const countGioi = currentClassSubmissions.filter((s) => s.totalScore >= 8.0).length;
-  const countKha = currentClassSubmissions.filter((s) => s.totalScore >= 6.5 && s.totalScore < 8.0).length;
-  const countTB = currentClassSubmissions.filter((s) => s.totalScore >= 5.0 && s.totalScore < 6.5).length;
+  const countKha = currentClassSubmissions.filter(
+    (s) => s.totalScore >= 6.5 && s.totalScore < 8.0
+  ).length;
+  const countTB = currentClassSubmissions.filter(
+    (s) => s.totalScore >= 5.0 && s.totalScore < 6.5
+  ).length;
   const countYeu = currentClassSubmissions.filter((s) => s.totalScore < 5.0).length;
+  const countAppeals = currentClassSubmissions.filter(
+    (s) => s.appeals && s.appeals.length > 0
+  ).length;
   const universityViolations = currentClassSubmissions.filter(
-    (s) => (s.tabViolations && s.tabViolations > 0) || s.essayAnswers?.essay1?.grading?.universityMethodDetected
+    (s) =>
+      (s.tabViolations && s.tabViolations > 0) ||
+      s.essayAnswers?.essay1?.grading?.universityMethodDetected
   ).length;
 
-  // 3. Detailed Statistics Breakdown by Class (Thống kê theo từng đơn vị lớp chuẩn mẫu Bộ GD&ĐT)
+  // 3. Detailed Statistics Breakdown by Class for this specific exam
   const classBreakdownStats = useMemo(() => {
-    const fromSubs = submissions.map((s) => s.studentClass?.trim() || 'Chưa phân lớp').filter(Boolean);
+    const fromSubs = examSubmissions
+      .map((s) => s.studentClass?.trim() || 'Chưa phân lớp')
+      .filter(Boolean);
     const fromTeacher = classes.map((c) => c.name?.trim()).filter(Boolean);
-    const classNames = Array.from(
-      new Set([...fromTeacher, ...fromSubs])
-    ).sort();
+    const classNames = Array.from(new Set([...fromTeacher, ...fromSubs])).sort();
 
     return classNames.map((cName) => {
-      const classSubs = submissions.filter(
+      const classSubs = examSubmissions.filter(
         (s) => (s.studentClass?.trim() || 'Chưa phân lớp') === cName
       );
       const count = classSubs.length;
@@ -171,7 +262,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
         passRate,
       };
     });
-  }, [submissions, classes]);
+  }, [examSubmissions, classes]);
 
   const handleExportExcel = () => {
     if (exam) {
@@ -515,45 +606,167 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
         </div>
       </div>
 
-      {/* THANH CHỌN NHANH ĐƠN VỊ LỚP */}
-      <div className="bg-white p-3.5 rounded-2xl border-2 border-indigo-200 shadow-2xs flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-black text-indigo-900 uppercase tracking-wider flex items-center gap-1.5 mr-1">
-            <Filter className="w-4 h-4 text-indigo-600" /> Xem Theo Lớp:
-          </span>
-          <button
-            type="button"
-            onClick={() => setSelectedClassFilter('all')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              selectedClassFilter === 'all'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-            }`}
-          >
-            Tất Cả Các Lớp ({submissions.length} bài)
-          </button>
-          {classesList.map((cName) => {
-            const cCount = submissions.filter((s) => s.studentClass === cName).length;
-            return (
-              <button
-                key={cName}
-                type="button"
-                onClick={() => setSelectedClassFilter(cName)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  selectedClassFilter === cName
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/60'
-                }`}
-              >
-                🏫 Lớp {cName} ({cCount} bài)
-              </button>
-            );
-          })}
+      {/* THANH ĐIỀU HƯỚNG THỐNG KÊ KHOA HỌC: THEO BÀI KIỂM TRA & THEO LỚP CỤ THỂ */}
+      <div className="bg-white p-4 sm:p-5 rounded-3xl border-2 border-indigo-200 shadow-xs space-y-4">
+        {/* TẦNG 1: CHỌN BÀI KIỂM TRA CỤ THỂ */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
+              <BookOpen className="w-4 h-4 text-indigo-600" />
+              <span>1. Chọn Bài Kiểm Tra Cụ Thể ({availableExams.length} đề thi):</span>
+            </span>
+            <span className="text-[11px] text-slate-500 font-semibold">
+              Đang chọn: <b className="text-indigo-700">{activeSelectedExam?.title || 'Tất cả bài kiểm tra'}</b>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-nowrap sm:flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedExamFilter('all');
+                setSelectedClassFilter('all');
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                selectedExamFilter === 'all'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+            >
+              <span>Tất Cả Bài Kiểm Tra</span>
+              <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-mono">
+                {submissions.length}
+              </span>
+            </button>
+
+            {availableExams.map((ex) => {
+              const isSelected = selectedExamFilter === ex.id || selectedExamFilter === ex.code;
+              return (
+                <button
+                  key={ex.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedExamFilter(ex.id);
+                    setSelectedClassFilter('all');
+                    if (onSelectExam) {
+                      const fullEx = exams.find((e) => e.id === ex.id);
+                      if (fullEx) onSelectExam(fullEx);
+                    }
+                  }}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-300'
+                      : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-900 border border-indigo-200'
+                  }`}
+                >
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 bg-black/15 rounded">
+                    {ex.code}
+                  </span>
+                  <span className="truncate max-w-[200px]">{ex.title}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                      isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-200/70 text-indigo-950'
+                    }`}
+                  >
+                    {ex.count} bài
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <span className="text-[11px] font-semibold text-slate-500">
-          Đang xem: <b className="text-indigo-700">{selectedClassFilter === 'all' ? 'Toàn bộ học sinh' : `Lớp ${selectedClassFilter}`}</b> ({currentClassSubmissions.length} em)
-        </span>
+        {/* TẦNG 2: CHỌN LỚP CỤ THỂ CHO BÀI KIỂM TRA ĐANG CHỌN */}
+        <div className="pt-3 border-t border-slate-200/80 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-emerald-600" />
+              <span>2. Chọn Lớp Cụ Thể (Lọc theo danh sách lớp):</span>
+            </span>
+            <span className="text-[11px] text-slate-500 font-semibold">
+              {currentClassSubmissions.length} bài nộp của lớp đang chọn
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-nowrap sm:flex-wrap">
+            <button
+              type="button"
+              onClick={() => setSelectedClassFilter('all')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                selectedClassFilter === 'all'
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+            >
+              Toàn Bộ Các Lớp ({examSubmissions.length} bài)
+            </button>
+
+            {classesList.map((cName) => {
+              const cCount = examSubmissions.filter((s) => s.studentClass === cName).length;
+              const isSelected = selectedClassFilter === cName;
+              return (
+                <button
+                  key={cName}
+                  type="button"
+                  onClick={() => setSelectedClassFilter(cName)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                    isSelected
+                      ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-300'
+                      : 'bg-emerald-50/70 hover:bg-emerald-100 text-emerald-950 border border-emerald-200'
+                  }`}
+                >
+                  <span>🏫 Lớp {cName}</span>
+                  <span
+                    className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+                      isSelected ? 'bg-white text-emerald-800' : 'bg-emerald-200 text-emerald-900'
+                    }`}
+                  >
+                    {cCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* TẦNG 3: BỘ LỌC HỌC LỰC & KHIẾU NẠI ĐIỂM THI */}
+        <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-black uppercase text-slate-400 mr-1">Bộ lọc:</span>
+            {[
+              { id: 'all', label: `Tất cả (${totalCount})` },
+              { id: 'gioi', label: `Giỏi ≥8.0 (${countGioi})`, color: 'emerald' },
+              { id: 'kha', label: `Khá 6.5-7.9 (${countKha})`, color: 'blue' },
+              { id: 'violation', label: `Vi phạm tab (${universityViolations})`, color: 'rose' },
+              { id: 'appeals', label: `Khiếu nại điểm (${countAppeals})`, color: 'amber' },
+            ].map((cat) => {
+              const isActive = filterCategory === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setFilterCategory(cat.id as any)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="text-[11px] font-bold text-slate-500">
+            {selectedExamFilter !== 'all' && (
+              <span className="text-indigo-700 mr-2">
+                Đề: {activeSelectedExam?.examCode}
+              </span>
+            )}
+            Lớp: <b className="text-slate-800">{selectedClassFilter === 'all' ? 'Toàn bộ' : selectedClassFilter}</b>
+          </div>
+        </div>
       </div>
 
       {/* Metric Cards (Tự động cập nhật theo lớp đang chọn) */}
@@ -816,6 +1029,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                 <th className="p-3 border-r border-slate-700 font-black min-w-[170px]">HỌ VÀ TÊN</th>
                 <th className="p-3 border-r border-slate-700 text-center w-20 font-black">LỚP</th>
                 <th className="p-3 border-r border-slate-700 text-center font-black w-24 bg-indigo-950/60">MÃ ĐỀ</th>
+                <th className="p-3 border-r border-slate-700 text-center font-black w-20 bg-slate-900">LẦN THI</th>
                 <th className="p-3 border-r border-slate-700 text-center font-black w-36">THỜI GIAN NỘP</th>
                 <th className="p-3 border-r border-slate-700 text-center font-black w-24 bg-rose-950/40 text-rose-200">
                   VI PHẠM
@@ -837,7 +1051,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
             <tbody className="divide-y divide-slate-300 bg-white">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="p-8 text-center text-slate-500 bg-slate-50/50">
+                  <td colSpan={13} className="p-8 text-center text-slate-500 bg-slate-50/50">
                     <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
                       <FileSpreadsheet className="w-8 h-8 text-slate-400" />
                       <span className="font-bold text-sm text-slate-700">Chưa có bài thi nào được nộp</span>
@@ -872,11 +1086,30 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                     {/* [Họ và tên] */}
                     <td className="p-3 font-extrabold text-slate-900 border-r border-slate-300">
                       <div className="text-sm font-black text-slate-900">{sub.studentName}</div>
-                      {sub.studentId && (
-                        <span className="text-[10px] font-mono text-slate-500">
-                          SBD: {sub.studentId}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                        {sub.studentId && (
+                          <span className="text-[10px] font-mono text-slate-500">
+                            SBD: {sub.studentId}
+                          </span>
+                        )}
+                        {sub.appeals && sub.appeals.length > 0 && (() => {
+                          const firstAppeal = sub.appeals[0];
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAppealToReview({ submission: sub, appealIndex: 0 });
+                                setAppealTeacherReply(firstAppeal?.teacherReply || '');
+                                setAppealAdjustedScore(String(firstAppeal?.adjustedScore || sub.totalScore));
+                              }}
+                              className="inline-flex items-center gap-1 text-[10px] font-black bg-amber-100 text-amber-900 hover:bg-amber-200 border border-amber-300 px-2 py-0.5 rounded-full cursor-pointer animate-pulse"
+                            >
+                              <AlertTriangle className="w-3 h-3 text-amber-600" />
+                              <span>Khiếu nại ({sub.appeals.length})</span>
+                            </button>
+                          );
+                        })()}
+                      </div>
                     </td>
 
                     {/* [Lớp] */}
@@ -888,6 +1121,13 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                     <td className="p-3 text-center border-r border-slate-300 bg-indigo-50/30">
                       <span className="inline-block px-2 py-0.5 rounded font-mono font-black text-[11px] bg-indigo-100 text-indigo-800 border border-indigo-200">
                         {sub.examCode || exam?.examCode || 'TOAN12'}
+                      </span>
+                    </td>
+
+                    {/* [Lần thi] */}
+                    <td className="p-3 text-center border-r border-slate-300 font-bold text-xs">
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                        Lần {sub.attemptNumber || 1}
                       </span>
                     </td>
 
@@ -1488,6 +1728,167 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Xử Lý Khiếu Nại Của Học Sinh */}
+      {appealToReview && (() => {
+        const sub = appealToReview.submission;
+        const appeal = sub.appeals?.[appealToReview.appealIndex];
+        if (!appeal) return null;
+
+        const handleAcceptAppeal = async () => {
+          const newScore = parseFloat(appealAdjustedScore);
+          const validScore = isNaN(newScore) ? sub.totalScore : Math.min(10, Math.max(0, newScore));
+
+          const updatedAppeals = (sub.appeals || []).map((app, idx) =>
+            idx === appealToReview.appealIndex
+              ? {
+                  ...app,
+                  status: 'accepted' as const,
+                  teacherReply: appealTeacherReply.trim() || 'Giáo viên đã duyệt phúc khảo và cập nhật điểm.',
+                  adjustedScore: validScore,
+                  resolvedAt: new Date().toLocaleString('vi-VN'),
+                }
+              : app
+          );
+
+          const updatedSub: StudentSubmission = {
+            ...sub,
+            totalScore: validScore,
+            appeals: updatedAppeals,
+          };
+
+          if (onUpdateSubmission) {
+            onUpdateSubmission(updatedSub);
+          }
+          await saveSubmissionToFirestore(updatedSub);
+          setAppealToReview(null);
+        };
+
+        const handleRejectAppeal = async () => {
+          const updatedAppeals = (sub.appeals || []).map((app, idx) =>
+            idx === appealToReview.appealIndex
+              ? {
+                  ...app,
+                  status: 'rejected' as const,
+                  teacherReply: appealTeacherReply.trim() || 'Giáo viên đã kiểm tra lại, bài làm chấm đúng theo barem SGK.',
+                  resolvedAt: new Date().toLocaleString('vi-VN'),
+                }
+              : app
+          );
+
+          const updatedSub: StudentSubmission = {
+            ...sub,
+            appeals: updatedAppeals,
+          };
+
+          if (onUpdateSubmission) {
+            onUpdateSubmission(updatedSub);
+          }
+          await saveSubmissionToFirestore(updatedSub);
+          setAppealToReview(null);
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in zoom-in-95 duration-200 text-slate-900">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
+                    <AlertTriangle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">Xử Lý Đơn Khiếu Nại Điểm Thi</h3>
+                    <p className="text-xs text-slate-500">Phúc khảo kết quả làm bài của học sinh</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAppealToReview(null)}
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Thông tin học sinh */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-xs space-y-1.5">
+                <div className="flex justify-between items-center font-bold">
+                  <span className="text-slate-500">Học sinh:</span>
+                  <span className="text-slate-900 font-black">{sub.studentName} (Lớp {sub.studentClass})</span>
+                </div>
+                <div className="flex justify-between items-center font-semibold">
+                  <span className="text-slate-500">Điểm hiện tại:</span>
+                  <span className="text-indigo-700 font-mono font-black text-sm">{sub.totalScore.toFixed(2)}đ</span>
+                </div>
+                <div className="flex justify-between items-center font-semibold">
+                  <span className="text-slate-500">Nội dung khiếu nại:</span>
+                  <span className="text-amber-800 font-bold">{appeal.questionRef}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-400 text-[11px]">
+                  <span>Thời điểm gửi:</span>
+                  <span>{appeal.createdAt}</span>
+                </div>
+              </div>
+
+              {/* Lý do học sinh trình bày */}
+              <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-200 text-xs space-y-1">
+                <span className="font-bold text-amber-900 block">Lý do học sinh khiếu nại:</span>
+                <p className="text-slate-800 leading-relaxed italic font-serif">"{appeal.reason}"</p>
+              </div>
+
+              {/* Nhập phản hồi của giáo viên */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 block uppercase tracking-wider">
+                  Lời nhắn / Phản hồi của Thầy/Cô:
+                </label>
+                <textarea
+                  rows={2}
+                  value={appealTeacherReply}
+                  onChange={(e) => setAppealTeacherReply(e.target.value)}
+                  placeholder="Ghi nhận xét phản hồi cho học sinh..."
+                  className="w-full p-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
+
+              {/* Điều chỉnh điểm số nếu chấp thuận */}
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider shrink-0">
+                  Điểm mới sau phúc khảo:
+                </label>
+                <input
+                  type="number"
+                  step="0.25"
+                  min="0"
+                  max="10"
+                  value={appealAdjustedScore}
+                  onChange={(e) => setAppealAdjustedScore(e.target.value)}
+                  className="w-24 px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm font-black text-emerald-700 text-center focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                />
+                <span className="text-xs text-slate-500 font-bold">điểm</span>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleRejectAppeal}
+                  className="py-2.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs rounded-xl transition-colors cursor-pointer text-center"
+                >
+                  Giữ Nguyên Điểm (Bác Bỏ)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAcceptAppeal}
+                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Duyệt & Cập Nhật Điểm</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Teacher Essay Grading & Calibration Modal */}
       <TeacherEssayGradingModal
