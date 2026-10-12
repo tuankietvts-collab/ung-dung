@@ -26,14 +26,72 @@ import {
   FileCheck,
   Search,
   Eye,
-  X
+  X,
+  XCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Exam, StudentSubmission, EssayGradingResult, StudentRosterItem, AppUser } from '../types/exam';
 import { StudentEssayUpload } from './StudentEssayUpload';
 import { MathRenderer } from './MathRenderer';
 import { QuestionVisual } from './QuestionVisual';
+import { MathFormulaEditor } from './MathFormulaEditor';
+import { MathLiveField } from './MathLiveField';
 import { isInvalidStudentName } from '../services/studentRosterParser';
+import { sanitizeExamQuestions } from '../services/examPermuter';
+
+// Helper for mathematical answer comparison (supports LaTeX \frac, decimals, intervals, expressions)
+const isMathShortAnswerCorrect = (studentAns: string, key: string): boolean => {
+  if (!studentAns || !key) return false;
+  const sRaw = studentAns.trim();
+  const kRaw = key.trim();
+  if (sRaw.toLowerCase() === kRaw.toLowerCase()) return true;
+
+  // Normalize LaTeX expressions
+  const normalize = (str: string) => {
+    return str
+      .replace(/^\$+|\$+$/g, '') // remove leading/trailing $
+      .replace(/\\left|\\right/g, '') // remove \left, \right
+      .replace(/\\,/g, '') // remove thin space
+      .replace(/\\;/g, ';') // semicolon
+      .replace(/\\quad|\\qquad/g, '')
+      .replace(/\\displaystyle/g, '')
+      .replace(/\\text\{([^}]+)\}/g, '$1')
+      .replace(/\\mathrm\{([^}]+)\}/g, '$1')
+      .replace(/\\mathbf\{([^}]+)\}/g, '$1')
+      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1/$2') // \frac{a}{b} -> a/b
+      .replace(/\s+/g, '') // strip whitespace
+      .toLowerCase();
+  };
+
+  const normS = normalize(sRaw);
+  const normK = normalize(kRaw);
+  if (normS === normK) return true;
+
+  // Check with comma vs dot decimal in numbers (e.g. 0,5 vs 0.5)
+  const dotS = normS.replace(/,/g, '.');
+  const dotK = normK.replace(/,/g, '.');
+  if (dotS === dotK) return true;
+
+  // Numeric equivalence check (e.g. 1/2 == 0.5 or 0.5 == 1/2)
+  const parseNumeric = (str: string): number | null => {
+    const fracMatch = str.match(/^(-?\d+(?:\.\d+)?)\/(-?\d+(?:\.\d+)?)$/);
+    if (fracMatch) {
+      const num = parseFloat(fracMatch[1]);
+      const den = parseFloat(fracMatch[2]);
+      if (den !== 0) return num / den;
+    }
+    const val = parseFloat(str);
+    return isNaN(val) ? null : val;
+  };
+
+  const valS = parseNumeric(dotS);
+  const valK = parseNumeric(dotK);
+  if (valS !== null && valK !== null) {
+    return Math.abs(valS - valK) < 0.0001;
+  }
+
+  return false;
+};
 
 interface StudentExamRoomProps {
   exam: Exam | null;
@@ -49,7 +107,7 @@ interface StudentExamRoomProps {
 }
 
 export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
-  exam,
+  exam: rawExam,
   currentUser,
   variants = [],
   roster = [],
@@ -60,6 +118,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
   backendUrl = '',
   onOpenAuthModal,
 }) => {
+  const exam = React.useMemo(() => (rawExam ? sanitizeExamQuestions(rawExam) : null), [rawExam]);
   // Check URL parameters for direct link access
   const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const initialName = urlParams?.get('student') || urlParams?.get('name') || currentUser?.fullName || '';
@@ -107,7 +166,13 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
 
   const [part3Mode, setPart3Mode] = useState<'short_answer' | 'essay'>(initialPart3Type);
   const [essayGradingData, setEssayGradingData] = useState<
-    Record<string, { imageUrl: string; imageUrls?: string[]; grading?: EssayGradingResult }>
+    Record<string, {
+      imageUrl?: string;
+      imageUrls?: string[];
+      typedSolution?: string;
+      submissionType?: 'image' | 'typed' | 'both';
+      grading?: EssayGradingResult;
+    }>
   >({});
 
   // Countdown Timer State
@@ -178,21 +243,39 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     }));
   };
 
-  // Handle Essay grading callback (supporting multiple images)
+  // Handle Essay grading callback (supporting multiple images and direct typed solutions)
   const handleEssayGraded = (
     essayId: string,
-    result: EssayGradingResult,
-    imageUrl: string,
-    imageUrls?: string[]
+    result: EssayGradingResult | null,
+    imageUrl?: string,
+    imageUrls?: string[],
+    typedSolution?: string
   ) => {
-    setEssayGradingData((prev) => ({
-      ...prev,
-      [essayId]: {
-        imageUrl,
-        imageUrls: imageUrls || (imageUrl ? [imageUrl] : []),
-        grading: result,
-      },
-    }));
+    setEssayGradingData((prev) => {
+      const existing = prev[essayId] || {};
+      const newUrls = imageUrls !== undefined ? imageUrls : (imageUrl ? [imageUrl] : existing.imageUrls || []);
+      const newPrimary = imageUrl !== undefined ? imageUrl : (newUrls[0] || existing.imageUrl || '');
+      const newSolution = typedSolution !== undefined ? typedSolution : existing.typedSolution;
+      const newGrading = result !== undefined ? (result || undefined) : existing.grading;
+
+      let subType: 'image' | 'typed' | 'both' = 'image';
+      if (newSolution?.trim() && (newPrimary || (newUrls && newUrls.length > 0))) {
+        subType = 'both';
+      } else if (newSolution?.trim()) {
+        subType = 'typed';
+      }
+
+      return {
+        ...prev,
+        [essayId]: {
+          imageUrl: newPrimary,
+          imageUrls: newUrls,
+          typedSolution: newSolution,
+          submissionType: subType,
+          grading: newGrading,
+        },
+      };
+    });
   };
 
   // Handle Starting the Exam
@@ -317,7 +400,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
         const studentAns = (shortAnswers[essay.id] || '').trim();
         if (studentAns) {
           if (essay.shortAnswerKey) {
-            const isCorrect = studentAns.toLowerCase() === essay.shortAnswerKey.trim().toLowerCase();
+            const isCorrect = isMathShortAnswerCorrect(studentAns, essay.shortAnswerKey);
             if (isCorrect) essayScore += essay.maxPoints || 0.5;
           } else {
             essayScore += essay.maxPoints || 0.5;
@@ -456,7 +539,8 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     if (part3Mode === 'short_answer') {
       return !!shortAnswers[id]?.trim();
     }
-    return !!essayGradingData[id]?.imageUrl;
+    const ans = essayGradingData[id];
+    return !!(ans?.imageUrl || (ans?.imageUrls && ans.imageUrls.length > 0) || ans?.typedSolution?.trim());
   };
 
   const answeredMcCount = exam.multipleChoice.filter((q) => isMcAnswered(q.id)).length;
@@ -1374,45 +1458,80 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                           </div>
                         )}
 
-                        {/* 1 Ô INPUT DUY NHẤT để học sinh nhập đáp số - placeholder: "Nhập kết quả..." */}
+                        {/* Ô NHẬP ĐÁP SỐ TOÁN HỌC TRỰC QUAN WYSIWYG VỚI MATHLIVE & BÀN PHÍM ẢO */}
                         <div className="mt-5 pt-4 border-t border-slate-200">
-                          <div className="flex items-center justify-between mb-2">
-                            <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                              Đáp số của thí sinh:
-                            </label>
-                            {isDone && (
-                              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1">
-                                <CheckCircle2 className="w-3.5 h-3.5" /> Đã nhập đáp số
-                              </span>
-                            )}
-                          </div>
-                          <div className="relative max-w-md">
-                            <input
-                              type="text"
-                              value={shortAnswers[essay.id] || ''}
-                              onChange={(e) =>
-                                setShortAnswers((prev) => ({ ...prev, [essay.id]: e.target.value }))
-                              }
-                              disabled={isExamLocked}
-                              placeholder="Nhập kết quả..."
-                              className="w-full px-4 py-3 text-base sm:text-lg font-bold bg-white border-2 border-slate-300 rounded-xl focus:border-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-100 text-slate-900 placeholder:text-slate-400 placeholder:font-normal placeholder:text-sm shadow-2xs transition-all disabled:bg-slate-100 disabled:text-slate-500"
-                            />
-                          </div>
+                          <MathLiveField
+                            mode="short_answer"
+                            value={shortAnswers[essay.id] || ''}
+                            onChange={(latex) =>
+                              setShortAnswers((prev) => ({ ...prev, [essay.id]: latex }))
+                            }
+                            disabled={isExamLocked}
+                            label="Đáp số của thí sinh (Ô nhập MathLive chuẩn SGK):"
+                            placeholder="Chạm vào đây để nhập đáp số toán học..."
+                          />
 
                           {/* Lời giải chi tiết sau khi kết thúc làm bài (Chỉ khi đã nộp bài và bật xem giải) */}
-                          {isSubmitted && showDetailedSolutions && essay.shortAnswerKey && (
-                            <div className="mt-3.5 p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-950 space-y-1">
-                              <div className="font-black text-indigo-800 flex items-center gap-1.5">
-                                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                <span>Đáp số chính xác: {essay.shortAnswerKey}</span>
-                              </div>
-                              {shortAnswers[essay.id] && (
-                                <div className="text-[11px] text-slate-600">
-                                  Đáp số bạn đã nhập: <b>{shortAnswers[essay.id]}</b>
+                          {isSubmitted && showDetailedSolutions && essay.shortAnswerKey && (() => {
+                            const isCorrectAns = isMathShortAnswerCorrect(shortAnswers[essay.id] || '', essay.shortAnswerKey);
+                            const displayKey = essay.shortAnswerKey.trim().startsWith('$') ? essay.shortAnswerKey : `$${essay.shortAnswerKey}$`;
+                            const studentAnsLatex = shortAnswers[essay.id]?.trim();
+                            const displayStudent = studentAnsLatex
+                              ? (studentAnsLatex.startsWith('$') ? studentAnsLatex : `$${studentAnsLatex}$`)
+                              : '';
+
+                            return (
+                              <div className={`mt-3.5 p-3.5 rounded-xl border text-xs space-y-2 ${
+                                isCorrectAns
+                                  ? 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
+                                  : 'bg-rose-50/70 border-rose-300 text-rose-950'
+                              }`}>
+                                <div className="flex items-center justify-between font-black text-sm">
+                                  <div className="flex items-center gap-1.5">
+                                    {isCorrectAns ? (
+                                      <>
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                        <span className="text-emerald-800">Kết quả: Đúng (+{essay.maxPoints || 0.5}đ)</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                                        <span className="text-rose-800">Kết quả: Chưa chính xác (0đ)</span>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          )}
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
+                                  <div className="p-2 rounded-lg bg-white/80 border border-slate-200">
+                                    <div className="text-[10px] uppercase font-bold text-slate-500 mb-0.5">Đáp số chuẩn SGK:</div>
+                                    <div className="font-bold text-indigo-700 text-sm">
+                                      <MathRenderer content={displayKey} />
+                                    </div>
+                                  </div>
+                                  <div className="p-2 rounded-lg bg-white/80 border border-slate-200">
+                                    <div className="text-[10px] uppercase font-bold text-slate-500 mb-0.5">Đáp số em đã nhập:</div>
+                                    {displayStudent ? (
+                                      <div className={`font-bold text-sm ${isCorrectAns ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                        <MathRenderer content={displayStudent} />
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400 italic">Chưa trả lời</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {essay.sampleSolution && (
+                                  <div className="pt-2 border-t border-slate-200/60 text-xs">
+                                    <div className="font-bold text-slate-700 mb-1">💡 Hướng dẫn giải chi tiết:</div>
+                                    <div className="p-2.5 rounded-lg bg-white/90 border border-slate-200 text-slate-800">
+                                      <MathRenderer content={essay.sampleSolution} />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -1422,8 +1541,9 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 /* ========================================================================= */
                 /* TRƯỜNG HỢP 2: TỰ LUẬN                                                     */
                 /* Hiển thị nội dung câu hỏi và thang điểm.                                  */
-                /* Khu vực nộp bài: Cho phép học sinh tải lên NHIỀU ẢNH (Trang 1, Trang 2...)*/
-                /* từ thư viện hoặc chụp camera trực tiếp, có thumbnail xem trước & nút xóa. */
+                /* Khu vực nộp bài: Cho phép học sinh lựa chọn 2 phương thức song song:      */
+                /* Cách 1: Gõ bài giải trực tiếp bằng công cụ MathType (chuẩn SGK)          */
+                /* Cách 2: Viết ra giấy thi và chụp ảnh tải lên (nhiều trang)               */
                 /* ========================================================================= */
                 <div className="space-y-6">
                   {exam.essays.map((essay, eIdx) => {
@@ -1439,9 +1559,13 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                           isStudentExamView={true}
                           existingImageUrl={essayGradingData[essay.id]?.imageUrl}
                           existingImageUrls={essayGradingData[essay.id]?.imageUrls}
+                          existingTypedSolution={essayGradingData[essay.id]?.typedSolution}
                           existingResult={essayGradingData[essay.id]?.grading}
-                          onGraded={(result, imageUrl, imageUrls) =>
-                            handleEssayGraded(essay.id, result, imageUrl, imageUrls)
+                          onSolutionChange={(typedSolution, imageUrls) =>
+                            handleEssayGraded(essay.id, null, imageUrls?.[0] || '', imageUrls, typedSolution)
+                          }
+                          onGraded={(result, imageUrl, imageUrls, typedSolution) =>
+                            handleEssayGraded(essay.id, result, imageUrl, imageUrls, typedSolution)
                           }
                         />
                       </div>

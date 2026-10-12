@@ -1330,6 +1330,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                         selectedSubmission.teacherOverrides?.essay1;
                       const grading = ans?.grading;
                       const img = ans?.imageUrl;
+                      const typedSolution = ans?.typedSolution;
 
                       return (
                         <div key={essay.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-4">
@@ -1355,6 +1356,25 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                               <span className="text-amber-800 italic truncate max-w-xs">
                                 "{override.teacherFeedback}"
                               </span>
+                            </div>
+                          )}
+
+                          {/* Student's typed MathType solution */}
+                          {typedSolution && (
+                            <div className="p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-200 space-y-2">
+                              <div className="flex items-center justify-between text-xs font-bold text-indigo-950">
+                                <span>✍️ Bài giải tự luận học sinh soạn qua MathType:</span>
+                                <span className="text-[10px] text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-100">
+                                  {typedSolution.length} ký tự
+                                </span>
+                              </div>
+                              <div className="p-3 rounded-lg bg-white border border-indigo-100 text-xs leading-relaxed text-slate-900 overflow-x-auto space-y-1">
+                                {typedSolution.split('\n').map((line: string, lIdx: number) => (
+                                  <div key={lIdx} className="min-h-[1.25rem]">
+                                    {line.trim() ? <MathRenderer content={line} /> : <div className="h-1.5" />}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
 

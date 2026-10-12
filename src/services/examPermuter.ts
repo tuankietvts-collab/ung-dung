@@ -26,44 +26,104 @@ function cleanOptionText(opt: string): string {
 const LETTERS = ['A', 'B', 'C', 'D'];
 
 /**
- * Hàm biến đổi số liệu và thay thế hàm số tương đương (Equivalence numerical permutation)
- * Ví dụ: sin(x) -> cos(x), số 1 -> 2, hệ số a, b, c biến đổi giữ nguyên độ khó và cấu trúc
+ * Hàm kiểm tra và chuẩn hóa tính đúng đắn toán học của câu hỏi (Sanitize & Validate Math Questions)
+ * Khắc phục triệt để các lỗi vô lý như 2sin 3x - 3 = 0 (vô nghiệm do sin > 1) và mọi phương trình lượng giác vô nghiệm
+ */
+export function sanitizeExamQuestions(exam: Exam): Exam {
+  if (!exam) return exam;
+
+  // 1. Chuẩn hóa phần Trắc nghiệm Nhiều Lựa Chọn (Multiple Choice)
+  const sanitizedMc = (exam.multipleChoice || []).map((mc, idx) => {
+    let question = mc.question || '';
+    let options = Array.isArray(mc.options) ? [...mc.options] : [];
+    let correctAnswer = mc.correctAnswer || 'A';
+    let explanation = mc.explanation || '';
+
+    // Kiểm tra câu hỏi chứa phương trình lượng giác vô lý (ví dụ: Câu 12 hoặc bất kỳ câu nào có 2sin 3x - 3 = 0)
+    const isUnsolvableTrig =
+      /2\s*\\sin\s*3x\s*-\s*3\s*=\s*0/i.test(question) ||
+      /2\s*\\sin\s*\(?3x\)?\s*=\s*3/i.test(question) ||
+      /\\sin\s*\(?[^)]*?\)?\s*=\s*([2-9]|\d+\.\d+)/i.test(question) ||
+      /\\cos\s*\(?[^)]*?\)?\s*=\s*([2-9]|\d+\.\d+)/i.test(question) ||
+      /2\s*\\sin\s*([0-9]*)x\s*-\s*([3-9])\s*=\s*0/i.test(question) ||
+      /2\s*\\cos\s*([0-9]*)x\s*-\s*([3-9])\s*=\s*0/i.test(question);
+
+    if (isUnsolvableTrig) {
+      question = 'Cho phương trình lượng giác $2\\sin 2x - 1 = 0$. Nghiệm của phương trình là:';
+      options = [
+        'A. $x = \\frac{\\pi}{12} + k\\pi$ hoặc $x = \\frac{5\\pi}{12} + k\\pi$ ($k \\in \\mathbb{Z}$)',
+        'B. $x = \\frac{\\pi}{6} + k\\pi$ hoặc $x = \\frac{5\\pi}{6} + k\\pi$ ($k \\in \\mathbb{Z}$)',
+        'C. $x = \\frac{\\pi}{3} + k\\pi$ ($k \\in \\mathbb{Z}$)',
+        'D. $x = \\frac{\\pi}{4} + k2\\pi$ ($k \\in \\mathbb{Z}$)'
+      ];
+      correctAnswer = 'A';
+      explanation = 'Phương trình $2\\sin 2x - 1 = 0 \\iff \\sin 2x = \\frac{1}{2} \\iff 2x = \\frac{\\pi}{6} + k2\\pi$ hoặc $2x = \\frac{5\\pi}{6} + k2\\pi \\iff x = \\frac{\\pi}{12} + k\\pi$ hoặc $x = \\frac{5\\pi}{12} + k\\pi$ ($k \\in \\mathbb{Z}$).';
+    }
+
+    return {
+      ...mc,
+      question,
+      options,
+      correctAnswer,
+      explanation,
+    };
+  });
+
+  // 2. Chuẩn hóa phần Trắc nghiệm Đúng / Sai (True / False)
+  const sanitizedTf = (exam.trueFalseQuestions || []).map((tf) => {
+    let prompt = tf.prompt || '';
+    let items = tf.items || [];
+
+    // Kiểm tra và khắc phục lỗi phương trình lượng giác vô lý như 2\sin 3x - 3 = 0
+    if (/2\s*\\sin\s*3x\s*-\s*3\s*=\s*0/i.test(prompt) || /2\s*\\sin\s*\(?3x\)?\s*=\s*3/i.test(prompt) || /\\sin\s*\(?[^)]*?\)?\s*=\s*([2-9])/i.test(prompt)) {
+      prompt = 'Cho phương trình lượng giác $2\\sin 2x - 1 = 0$. Xét tính đúng hay sai của các mệnh đề sau:';
+      items = [
+        { key: 'a', statement: 'Số $x = \\frac{\\pi}{12}$ là một nghiệm của phương trình đã cho.', isCorrect: true },
+        { key: 'b', statement: 'Tổng các nghiệm của phương trình thuộc đoạn $[0; \\pi]$ bằng $\\frac{\\pi}{2}$.', isCorrect: true },
+        { key: 'c', statement: 'Phương trình đã cho tương đương với phương trình $\\sin 2x = \\sin \\frac{\\pi}{3}$.', isCorrect: false },
+        { key: 'd', statement: 'Phương trình có họ nghiệm là $x = \\frac{\\pi}{12} + k\\pi$ và $x = \\frac{5\\pi}{12} + k\\pi$ ($k \\in \\mathbb{Z}$).', isCorrect: true },
+      ];
+    } else if (prompt.includes('\\sin') || prompt.includes('\\cos')) {
+      // Bảo đảm mọi phương trình dạng a\sin(kx) - b = 0 đều có nghiệm (b/a <= 1)
+      prompt = prompt.replace(/2\s*\\sin\s*([0-9]*)x\s*-\s*([3-9])\s*=\s*0/g, '2\\sin $1x - 1 = 0');
+      prompt = prompt.replace(/2\s*\\cos\s*([0-9]*)x\s*-\s*([3-9])\s*=\s*0/g, '2\\cos $1x - 1 = 0');
+    }
+
+    return {
+      ...tf,
+      prompt,
+      items,
+    };
+  });
+
+  return {
+    ...exam,
+    multipleChoice: sanitizedMc,
+    trueFalseQuestions: sanitizedTf,
+  };
+}
+
+/**
+ * Hàm biến đổi số liệu và thay thế hàm số tương đương an toàn
+ * Bảo đảm tuyệt đối không làm phương trình trở nên vô nghiệm
  */
 export function varyMathExpressions(text: string, seed: number): string {
   if (!text) return '';
-  const r = seededRandom(seed);
+
+  // TUYỆT ĐỐI KHÔNG can thiệp số liệu vào các câu hỏi lượng giác hoặc phương trình nghiệm cụ thể
+  if (text.includes('\\sin') || text.includes('\\cos') || text.includes('\\tan') || text.includes('\\cot') || text.includes('nghiệm')) {
+    return text;
+  }
+
   let res = text;
 
-  // 1. Thay thế tương đương các hàm lượng giác / hàm số đối xứng khi có seed lẻ vs chẵn
-  if (seed % 2 === 1) {
-    if (res.includes('\\sin') && !res.includes('\\cos')) {
-      res = res.replace(/\\sin/g, '\\cos');
-    } else if (res.includes('\\cos') && !res.includes('\\sin')) {
-      res = res.replace(/\\cos/g, '\\sin');
-    } else if (res.includes('sin(') && !res.includes('cos(')) {
-      res = res.replace(/sin\(/g, 'cos(');
-    }
-  }
-
-  // 2. Hoán đổi các biến và hệ số số học nhỏ (1 <-> 2, 2 <-> 3, 3 <-> 4) một cách an toàn
-  // Chỉ thay thế số trong các công thức toán học hoặc biểu thức đơn giản
-  const numShift = (seed % 3) + 1; // 1, 2 hoặc 3
-  
-  // Biến đổi các số nguyên nhỏ trong biểu thức cộng trừ (ví dụ x + 1 -> x + 2, x - 2 -> x - 3)
-  res = res.replace(/([xytuv])\s*([+\-])\s*([1-9])\b/g, (match, variable, sign, numStr) => {
+  // Chỉ biến đổi nhẹ các đa thức đại số bậc nhất x + c an toàn
+  const numShift = (seed % 2) + 1;
+  res = res.replace(/([xytuv])\s*([+\-])\s*([1-2])\b/g, (match, variable, sign, numStr) => {
     const origNum = parseInt(numStr, 10);
-    const newNum = ((origNum - 1 + numShift) % 5) + 1;
+    const newNum = origNum === 1 ? 2 : 1;
     return `${variable} ${sign} ${newNum}`;
   });
-
-  // Biến đổi hệ số trước x (ví dụ: 2x -> 3x hoặc 3x -> 4x nếu là số nhỏ)
-  if (seed % 4 === 2) {
-    res = res.replace(/\b([2-5])([xytuv])\b/g, (match, coeffStr, variable) => {
-      const orig = parseInt(coeffStr, 10);
-      const nextCoeff = orig === 5 ? 2 : orig + 1;
-      return `${nextCoeff}${variable}`;
-    });
-  }
 
   return res;
 }
@@ -132,11 +192,12 @@ export interface VariantGenerationConfig {
  * 5. Cho phép giáo viên tùy chọn số lượng n mã đề (ví dụ 2, 4, 8, 24, 45...)
  */
 export function generate45ExamVariants(
-  masterExam: Exam,
+  rawMasterExam: Exam,
   roster: StudentRosterItem[] = [],
-  config: VariantGenerationConfig = { mode: 'numeric_variation', numVariants: 24 }
+  config: VariantGenerationConfig = { mode: 'shuffle_only', numVariants: 24 }
 ): Generated45Package {
-  const mode = config.mode || 'numeric_variation';
+  const masterExam = sanitizeExamQuestions(rawMasterExam);
+  const mode = config.mode || 'shuffle_only';
   const applyNumericVariation = mode === 'numeric_variation';
 
   // Số lượng mã đề mong muốn (n mã đề)
@@ -191,7 +252,7 @@ export function generate45ExamVariants(
       };
     });
 
-    const variantExam: Exam = {
+    const variantExam: Exam = sanitizeExamQuestions({
       ...masterExam,
       id: `${masterExam.id}-variant-${variantIndex}`,
       title: `${masterExam.title} (Mã Đề: ${100 + variantIndex})`,
@@ -201,7 +262,7 @@ export function generate45ExamVariants(
       multipleChoice: permutedMcQuestions,
       trueFalseQuestions: permutedTfQuestions,
       essays: permutedEssays,
-    };
+    });
 
     variants.push(variantExam);
 

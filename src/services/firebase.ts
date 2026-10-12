@@ -25,6 +25,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile, AppUser, UserRole, GradingCalibrationFeedback, StudentAppeal } from '../types/exam';
 import { DEFAULT_SAMPLE_EXAMS } from '../data/defaultExam';
 import { isInvalidStudentName } from './studentRosterParser';
+import { sanitizeExamQuestions } from './examPermuter';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -202,7 +203,7 @@ export function getStoredExams(): Exam[] {
     const deleted = getDeletedExamIds();
     const raw = localStorage.getItem(EXAMS_STORAGE_KEY);
     const list: Exam[] = raw ? JSON.parse(raw) : DEFAULT_SAMPLE_EXAMS;
-    return list.filter((e) => !deleted.has(e.id));
+    return list.filter((e) => !deleted.has(e.id)).map(sanitizeExamQuestions);
   } catch {
     return [];
   }

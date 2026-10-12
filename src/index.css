@@ -43,3 +43,23 @@ body {
   -webkit-font-smoothing: antialiased;
   color: #0f172a;
 }
+
+/* MathLive Virtual Keyboard Mobile Optimizations */
+:root {
+  --keyboard-zindex: 999999;
+}
+
+.ML__keyboard,
+math-field + div[class*="ML__keyboard"],
+div[part="virtual-keyboard"] {
+  z-index: 999999 !important;
+}
+
+math-field {
+  display: block;
+}
+
+math-field::part(virtual-keyboard-toggle) {
+  display: none; /* We provide our own styled toggle button */
+}
+

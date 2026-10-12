@@ -1531,7 +1531,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                             <div className="p-3 bg-white rounded-xl border border-emerald-200 text-sm font-semibold flex items-center gap-2">
                               <span className="text-emerald-800 font-bold">Đáp số chính xác:</span>
                               <span className="font-mono text-emerald-700 font-black text-base px-2 py-0.5 bg-emerald-50 rounded border border-emerald-200">
-                                {essay.shortAnswerKey}
+                                <MathRenderer content={essay.shortAnswerKey.trim().startsWith('$') ? essay.shortAnswerKey : `$${essay.shortAnswerKey}$`} />
                               </span>
                             </div>
                           )}

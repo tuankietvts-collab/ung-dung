@@ -15,6 +15,9 @@ export type QuestionVisualType =
   | 'plot_cubic'
   | 'plot_quadratic'
   | 'plot_quartic'
+  | 'plot_trig'
+  | 'plot_trig_sin'
+  | 'plot_trig_cos'
   | 'plot_custom'
   | 'statistics_table'
   | 'geometry_pyramid'
@@ -56,6 +59,7 @@ export interface EssayQuestion {
   type?: 'short_answer' | 'essay';
   shortAnswerKey?: string;
   shortAnswerPlaceholder?: string;
+  sampleSolution?: string;
   visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
@@ -167,8 +171,10 @@ export interface StudentSubmission {
   tfAnswers: Record<string, Record<string, boolean | null>>;
   shortAnswers?: Record<string, string>;
   essayAnswers: Record<string, {
-    imageUrl: string;
+    imageUrl?: string;
     imageUrls?: string[];
+    typedSolution?: string;
+    submissionType?: 'image' | 'typed' | 'both';
     grading?: EssayGradingResult;
   }>;
   mcScore: number;

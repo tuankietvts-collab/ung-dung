@@ -15,13 +15,18 @@ import {
   BookOpen,
   Trash2,
   Plus,
-  Image as ImageIcon
+  Image as ImageIcon,
+  PenTool,
+  Edit3,
+  Layers,
+  Check
 } from 'lucide-react';
 import { EssayQuestion, EssayGradingResult } from '../types/exam';
 import { uploadToFirebaseStorage, gradeEssayApi } from '../services/api';
 import { createHandwrittenMathSvg } from '../data/defaultExam';
 import { MathRenderer } from './MathRenderer';
 import { QuestionVisual } from './QuestionVisual';
+import { MathFormulaEditor } from './MathFormulaEditor';
 
 export interface PageImageItem {
   id: string;
@@ -35,10 +40,12 @@ interface StudentEssayUploadProps {
   essay: EssayQuestion;
   studentName: string;
   studentClass: string;
-  onGraded?: (result: EssayGradingResult, imageUrl: string, imageUrls?: string[]) => void;
+  onGraded?: (result: EssayGradingResult, imageUrl: string, imageUrls?: string[], typedSolution?: string) => void;
   existingResult?: EssayGradingResult;
   existingImageUrl?: string;
   existingImageUrls?: string[];
+  existingTypedSolution?: string;
+  onSolutionChange?: (typedSolution: string, imageUrls?: string[]) => void;
   backendUrl?: string;
   disabled?: boolean;
   isStudentExamView?: boolean;
@@ -52,10 +59,22 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
   existingResult,
   existingImageUrl,
   existingImageUrls,
+  existingTypedSolution,
+  onSolutionChange,
   backendUrl = '',
   disabled = false,
   isStudentExamView = false,
 }) => {
+  // Parallel Submission Modes: 'typed' (MathType/LaTeX) | 'image' (Photo upload) | 'both' (Hybrid)
+  const [submissionMode, setSubmissionMode] = useState<'typed' | 'image' | 'both'>(() => {
+    if (existingTypedSolution?.trim() && ((existingImageUrls && existingImageUrls.length > 0) || existingImageUrl)) return 'both';
+    if (existingTypedSolution?.trim()) return 'typed';
+    if (existingImageUrl || (existingImageUrls && existingImageUrls.length > 0)) return 'image';
+    return 'typed';
+  });
+
+  const [typedSolution, setTypedSolution] = useState<string>(existingTypedSolution || '');
+
   // State: Multiple images for handwritten essay submission (Trang 1, Trang 2...)
   const [imageList, setImageList] = useState<PageImageItem[]>(() => {
     if (existingImageUrls && existingImageUrls.length > 0) {
@@ -91,6 +110,32 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Handle typed solution change
+  const handleTypedSolutionChange = (val: string) => {
+    setTypedSolution(val);
+    const allUrls = imageList.map(item => item.url);
+    if (onSolutionChange) {
+      onSolutionChange(val, allUrls);
+    }
+    if (onGraded) {
+      const primaryUrl = imageList[0]?.url || '';
+      onGraded(gradingResult as any, primaryUrl, allUrls, val);
+    }
+  };
+
+  // Helper to sync image list and notify parent
+  const syncImageListAndNotify = (updated: PageImageItem[]) => {
+    setImageList(updated);
+    const allUrls = updated.map(item => item.url);
+    if (onSolutionChange) {
+      onSolutionChange(typedSolution, allUrls);
+    }
+    if (onGraded) {
+      const primaryUrl = allUrls[0] || '';
+      onGraded(gradingResult as any, primaryUrl, allUrls, typedSolution);
+    }
+  };
+
   // 1. Handle Multiple File Upload from Library
   const handleFilesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -124,14 +169,8 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
         });
       }
 
-      setImageList((prev) => {
-        const updated = [...prev, ...newItems];
-        if (onGraded && updated.length > 0) {
-          const allUrls = updated.map(item => item.url);
-          onGraded(gradingResult as any, allUrls[0], allUrls);
-        }
-        return updated;
-      });
+      const updated = [...imageList, ...newItems];
+      syncImageListAndNotify(updated);
       setSelectedPreviewIndex(imageList.length);
     } catch (err: any) {
       console.error('Upload files failed:', err);
@@ -191,14 +230,8 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
               fileName: `Trang ${pageNumber}`
             };
 
-            setImageList((prev) => {
-              const updated = [...prev, newItem];
-              if (onGraded && updated.length > 0) {
-                const allUrls = updated.map(item => item.url);
-                onGraded(gradingResult as any, allUrls[0], allUrls);
-              }
-              return updated;
-            });
+            const updated = [...imageList, newItem];
+            syncImageListAndNotify(updated);
             setSelectedPreviewIndex(imageList.length);
           } catch (e: any) {
             setErrorMessage('Lỗi khi lưu ảnh chụp từ camera: ' + (e.message || String(e)));
@@ -222,17 +255,11 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
   // 3. Remove a Page (Nút xóa nếu chụp mờ)
   const handleRemovePage = (indexToRemove: number) => {
     if (disabled) return;
-    setImageList((prev) => {
-      const updated = prev.filter((_, idx) => idx !== indexToRemove);
-      if (selectedPreviewIndex >= updated.length) {
-        setSelectedPreviewIndex(Math.max(0, updated.length - 1));
-      }
-      if (onGraded && updated.length > 0) {
-        const allUrls = updated.map(item => item.url);
-        onGraded(gradingResult as any, allUrls[0], allUrls);
-      }
-      return updated;
-    });
+    const updated = imageList.filter((_, idx) => idx !== indexToRemove);
+    if (selectedPreviewIndex >= updated.length) {
+      setSelectedPreviewIndex(Math.max(0, updated.length - 1));
+    }
+    syncImageListAndNotify(updated);
   };
 
   // 4. Select Sample Handwritten Solution
@@ -245,26 +272,23 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
       base64: dataUrl,
       fileName: `Trang mẫu (${type === 'perfect' ? '10 điểm' : type === 'university_error' ? 'L Hôpital' : 'Sai dấu'})`
     };
-    setImageList([sampleItem]);
+    const updated = [sampleItem];
     setSelectedPreviewIndex(0);
     setGradingResult(null);
-
-    if (onGraded) {
-      onGraded(null as any, dataUrl, [dataUrl]);
-    }
+    syncImageListAndNotify(updated);
   };
 
-  // 5. Trigger AI Grading
+  // 5. Trigger AI Grading (Hỗ trợ chấm cả bài giải tự luận đã gõ hoặc ảnh viết tay)
   const handleGradeWithAI = async () => {
-    if (imageList.length === 0) {
-      setErrorMessage('Vui lòng tải lên ít nhất một trang ảnh bài làm viết tay.');
+    if (imageList.length === 0 && !typedSolution.trim()) {
+      setErrorMessage('Vui lòng soạn thảo bài giải toán hoặc tải lên ít nhất một trang ảnh bài làm để chấm điểm.');
       return;
     }
 
     try {
       setIsGrading(true);
       setErrorMessage(null);
-      setGradingStepText('Đang nạp ảnh bài làm vào hệ thống AI Gemini Vision...');
+      setGradingStepText('Đang nạp bài làm tự luận vào hệ thống AI Gemini...');
 
       const primaryImage = imageList[selectedPreviewIndex] || imageList[0];
 
@@ -276,8 +300,9 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            image_url: primaryImage.storageUrl || '',
-            image_base64: primaryImage.base64 || primaryImage.url,
+            image_url: primaryImage?.storageUrl || '',
+            image_base64: primaryImage?.base64 || primaryImage?.url,
+            typed_solution: typedSolution.trim() || '',
             question_text: essay.question,
             max_points: essay.maxPoints,
             rubric: essay.rubric,
@@ -310,10 +335,11 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
           finalTeacherNote: pyData.final_teacher_note
         };
       } else {
-        // Default: Use integrated Node/Express Gemini Vision
+        // Default: Use integrated Node/Express Gemini Vision & Text reasoning
         result = await gradeEssayApi({
-          imageUrl: primaryImage.storageUrl || undefined,
-          imageBase64: primaryImage.base64 || primaryImage.url,
+          imageUrl: primaryImage?.storageUrl || undefined,
+          imageBase64: primaryImage?.base64 || primaryImage?.url,
+          typedSolution: typedSolution.trim() || undefined,
           questionText: essay.question,
           maxPoints: essay.maxPoints,
           rubric: essay.rubric,
@@ -325,7 +351,7 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
       setGradingResult(result);
       if (onGraded) {
         const allUrls = imageList.map(item => item.url);
-        onGraded(result, primaryImage.url, allUrls);
+        onGraded(result, primaryImage?.url || '', allUrls, typedSolution);
       }
     } catch (err: any) {
       console.error('Grading error:', err);
@@ -387,7 +413,7 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
         </div>
       )}
 
-      {/* Thông tin thang điểm & Hướng dẫn làm bài (Tuyệt đối không hiển thị barem đáp án khi thí sinh đang làm bài) */}
+      {/* Thông tin thang điểm & Hướng dẫn làm bài: 2 lựa chọn song song */}
       {!disabled && !existingResult && (
         <div className="mb-5 p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-xs text-indigo-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
           <div className="flex items-center gap-2.5">
@@ -396,10 +422,10 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
             </div>
             <div>
               <div className="font-extrabold text-indigo-950 text-sm">
-                Câu hỏi tự luận & Nộp bài viết tay
+                2 Lựa Chọn Làm Bài Tự Luận Song Song:
               </div>
               <p className="text-slate-600 font-medium text-xs mt-0.5">
-                Thí sinh làm bài ra giấy thi, chụp ảnh bài làm hoặc chọn tải file ảnh bài làm lên bên dưới để nộp.
+                Em có thể <b>gõ bài giải trực tiếp bằng công cụ Toán học MathType</b> HOẶC <b>viết ra giấy rồi chụp ảnh lên</b> (hoặc kết hợp cả hai).
               </p>
             </div>
           </div>
@@ -411,153 +437,231 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
         </div>
       )}
 
-      {/* Barem đáp án & thang điểm từng bước (TUYỆT ĐỐI KHÔNG HIỂN THỊ TRONG ĐỀ THI CỦA HỌC SINH) */}
-      {!isStudentExamView && (disabled || existingResult) && essay.rubric && essay.rubric.length > 0 && (
-        <div className="mb-6 p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 text-xs">
-          <div className="font-bold text-emerald-900 flex items-center gap-1.5 mb-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Đáp án & Barem chấm điểm tham khảo (Thang điểm: {essay.maxPoints}đ):</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {essay.rubric.map((r, idx) => (
-              <div key={idx} className="bg-white p-2.5 rounded-lg border border-emerald-100 text-slate-700 font-medium">
-                <span className="font-extrabold text-emerald-800">{r.step}</span> ({r.points}đ):{' '}
-                <MathRenderer content={r.description} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Camera Live Stream */}
-      {isCameraActive && (
-        <div className="mb-6 p-4 rounded-2xl bg-slate-950 text-white shadow-xl border border-slate-800">
-          <div className="flex justify-between items-center mb-3">
-            <span className="text-sm font-bold flex items-center gap-2 text-emerald-400">
-              <Camera className="w-4 h-4" /> Camera Chụp Bài Làm (Trang {imageList.length + 1})
+      {/* PARALLEL SUBMISSION MODE SWITCHER */}
+      <div className="mb-5 p-1.5 rounded-2xl bg-slate-100 border border-slate-200 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setSubmissionMode('typed')}
+          className={`flex-1 min-w-[200px] py-2.5 px-3.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
+            submissionMode === 'typed'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'bg-transparent text-slate-700 hover:bg-white/80'
+          }`}
+        >
+          <PenTool className="w-4 h-4" />
+          <span>Cách 1: Gõ bài giải trực tiếp (MathType)</span>
+          {typedSolution.trim() && (
+            <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${submissionMode === 'typed' ? 'bg-indigo-800 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
+              ✓ Đã gõ
             </span>
-            <button
-              onClick={stopCamera}
-              className="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded-lg bg-slate-800 transition-colors cursor-pointer"
-            >
-              Đóng Camera
-            </button>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSubmissionMode('image')}
+          className={`flex-1 min-w-[200px] py-2.5 px-3.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
+            submissionMode === 'image'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'bg-transparent text-slate-700 hover:bg-white/80'
+          }`}
+        >
+          <Camera className="w-4 h-4" />
+          <span>Cách 2: Viết giấy & Chụp ảnh ({imageList.length} trang)</span>
+          {imageList.length > 0 && (
+            <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${submissionMode === 'image' ? 'bg-emerald-800 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
+              ✓ {imageList.length} ảnh
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSubmissionMode('both')}
+          className={`py-2.5 px-3.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            submissionMode === 'both'
+              ? 'bg-violet-600 text-white shadow-xs'
+              : 'bg-transparent text-slate-700 hover:bg-white/80'
+          }`}
+          title="Vừa nhập bài giải vừa đính kèm ảnh bài làm"
+        >
+          <Layers className="w-4 h-4" />
+          <span>Kết hợp cả 2</span>
+        </button>
+      </div>
+
+      {/* TAB 1: TYPED MATH SOLUTION VIA MATHTYPE */}
+      {(submissionMode === 'typed' || submissionMode === 'both') && (
+        <div className="mb-6 p-4 sm:p-5 rounded-2xl bg-indigo-50/30 border-2 border-indigo-200/80 shadow-2xs space-y-3">
+          <div className="flex items-center justify-between pb-2 border-b border-indigo-100">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
+                ✍️
+              </div>
+              <h4 className="font-black text-slate-900 text-sm sm:text-base">
+                Trình Soạn Thảo Lời Giải Toán Học Chuẩn MathType / SGK
+              </h4>
+            </div>
+            {typedSolution.trim() && (
+              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 flex items-center gap-1">
+                <Check className="w-3.5 h-3.5" /> Đã lưu bài giải ({typedSolution.length} ký tự)
+              </span>
+            )}
           </div>
-          <div className="relative rounded-xl overflow-hidden bg-black aspect-video max-h-80 flex items-center justify-center">
-            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-          </div>
-          <div className="mt-4 flex justify-center">
-            <button
-              onClick={capturePhoto}
-              className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 font-black text-white text-sm shadow-lg flex items-center gap-2 cursor-pointer transition-all"
-            >
-              <Camera className="w-4 h-4" /> Chụp Trang Này Ngay
-            </button>
-          </div>
+
+          <MathFormulaEditor
+            mode="full"
+            value={typedSolution}
+            onChange={handleTypedSolutionChange}
+            disabled={disabled}
+            placeholder="Soạn thảo lời giải chi tiết tại đây... (Ví dụ: 1) Điều kiện xác định: $x \ge 0$, 2) Ta có đạo hàm: $y' = 3x^2 - 6x$...)"
+            minHeight="160px"
+          />
         </div>
       )}
 
-      {/* MULTIPLE IMAGE UPLOAD ZONE */}
-      <div className="space-y-4">
-        {/* Upload Action Bar */}
-        <div className="p-4 sm:p-5 rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/20 hover:border-indigo-400 transition-colors">
-          {/* File picker input for image library & PDF */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={handleFilesChange}
-          />
-          {/* Camera direct input for mobile devices */}
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleFilesChange}
-          />
-
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3 text-left w-full sm:w-auto">
-              <div className="w-12 h-12 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
-                <Upload className="w-6 h-6" />
+      {/* TAB 2: HANDWRITTEN PHOTO CAPTURE & UPLOAD */}
+      {(submissionMode === 'image' || submissionMode === 'both') && (
+        <div className="space-y-4">
+          {submissionMode === 'both' && (
+            <div className="flex items-center gap-2 pt-2">
+              <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                📷
               </div>
-              <div>
-                <h4 className="font-black text-slate-900 text-sm sm:text-base">
-                  Khu Vực Tải Ảnh Bài Làm Viết Tay
-                </h4>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Cho phép nộp <b>nhiều ảnh</b> (Trang 1, Trang 2...). Hỗ trợ chọn từ thư viện hoặc chụp camera trực tiếp.
-                </p>
+              <h4 className="font-black text-slate-900 text-sm">
+                Đính Kèm Ảnh Bài Làm Viết Tay ({imageList.length} trang)
+              </h4>
+            </div>
+          )}
+
+          {/* Camera Live Stream */}
+          {isCameraActive && (
+            <div className="mb-6 p-4 rounded-2xl bg-slate-950 text-white shadow-xl border border-slate-800">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-sm font-bold flex items-center gap-2 text-emerald-400">
+                  <Camera className="w-4 h-4" /> Camera Chụp Bài Làm (Trang {imageList.length + 1})
+                </span>
+                <button
+                  onClick={stopCamera}
+                  className="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded-lg bg-slate-800 transition-colors cursor-pointer"
+                >
+                  Đóng Camera
+                </button>
               </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-start sm:justify-end">
-              {/* Nút 1: Chọn ảnh từ thư viện */}
-              <button
-                type="button"
-                onClick={() => !disabled && fileInputRef.current?.click()}
-                disabled={disabled || isUploading || isGrading}
-                className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed"
-              >
-                <Upload className="w-4 h-4" /> Chọn ảnh từ thư viện
-              </button>
-
-              {/* Nút 2: Chụp ảnh bài làm (Chỉ mở camera khi học sinh bấm vào) */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (disabled || isUploading || isGrading) return;
-                  // On mobile touch devices, trigger native camera file input for instant full-resolution capture
-                  if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && cameraInputRef.current) {
-                    cameraInputRef.current.click();
-                  } else {
-                    startCamera();
-                  }
-                }}
-                disabled={disabled || isUploading || isGrading}
-                className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed"
-              >
-                <Camera className="w-4 h-4" /> Chụp ảnh bài làm
-              </button>
-            </div>
-          </div>
-
-          {/* Quick sample buttons for test/demo (Chỉ hiển thị khi giáo viên thử nghiệm, không hiển thị trong đề thi học sinh) */}
-          {!isStudentExamView && (disabled || existingResult) && (
-            <div className="mt-4 pt-3 border-t border-indigo-100/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span className="text-slate-500 font-semibold">Thử nghiệm các trường hợp chấm điểm AI:</span>
-              <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="relative rounded-xl overflow-hidden bg-black aspect-video max-h-80 flex items-center justify-center">
+                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+              </div>
+              <div className="mt-4 flex justify-center">
                 <button
-                  type="button"
-                  onClick={() => handleSelectSample('perfect')}
-                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-emerald-500 text-emerald-700 font-bold text-xs cursor-pointer shadow-2xs"
+                  onClick={capturePhoto}
+                  className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 font-black text-white text-sm shadow-lg flex items-center gap-2 cursor-pointer transition-all"
                 >
-                  Bài mẫu 10đ
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectSample('university_error')}
-                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-rose-500 text-rose-700 font-bold text-xs cursor-pointer shadow-2xs"
-                >
-                  Vi phạm L'Hôpital
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectSample('calculation_error')}
-                  className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-amber-500 text-amber-700 font-bold text-xs cursor-pointer shadow-2xs"
-                >
-                  Sai tính toán
+                  <Camera className="w-4 h-4" /> Chụp Trang Này Ngay
                 </button>
               </div>
             </div>
           )}
-        </div>
 
-        {/* Uploading progress bar */}
+          {/* MULTIPLE IMAGE UPLOAD ZONE */}
+          <div className="space-y-4">
+            {/* Upload Action Bar */}
+            <div className="p-4 sm:p-5 rounded-2xl border-2 border-dashed border-emerald-200 bg-emerald-50/20 hover:border-emerald-400 transition-colors">
+              {/* File picker input for image library & PDF */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={handleFilesChange}
+              />
+              {/* Camera direct input for mobile devices */}
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleFilesChange}
+              />
+
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-3 text-left w-full sm:w-auto">
+                  <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-slate-900 text-sm sm:text-base">
+                      Khu Vực Tải Ảnh Bài Làm Viết Tay
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Cho phép nộp <b>nhiều ảnh</b> (Trang 1, Trang 2...). Hỗ trợ chọn từ thư viện hoặc chụp camera trực tiếp.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-start sm:justify-end">
+                  {/* Nút 1: Chọn ảnh từ thư viện */}
+                  <button
+                    type="button"
+                    onClick={() => !disabled && fileInputRef.current?.click()}
+                    disabled={disabled || isUploading || isGrading}
+                    className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed"
+                  >
+                    <Upload className="w-4 h-4" /> Chọn ảnh từ thư viện
+                  </button>
+
+                  {/* Nút 2: Chụp ảnh bài làm */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (disabled || isUploading || isGrading) return;
+                      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && cameraInputRef.current) {
+                        cameraInputRef.current.click();
+                      } else {
+                        startCamera();
+                      }
+                    }}
+                    disabled={disabled || isUploading || isGrading}
+                    className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:bg-slate-300 disabled:cursor-not-allowed"
+                  >
+                    <Camera className="w-4 h-4" /> Chụp ảnh bài làm
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick sample buttons for test/demo */}
+              {!isStudentExamView && (disabled || existingResult) && (
+                <div className="mt-4 pt-3 border-t border-emerald-100/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-500 font-semibold">Thử nghiệm các trường hợp chấm điểm AI:</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSample('perfect')}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-emerald-500 text-emerald-700 font-bold text-xs cursor-pointer shadow-2xs"
+                    >
+                      Bài mẫu 10đ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSample('university_error')}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-rose-500 text-rose-700 font-bold text-xs cursor-pointer shadow-2xs"
+                    >
+                      Vi phạm L'Hôpital
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectSample('calculation_error')}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:border-amber-500 text-amber-700 font-bold text-xs cursor-pointer shadow-2xs"
+                    >
+                      Sai tính toán
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Uploading progress bar */}
         {isUploading && (
           <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-xs space-y-1">
             <div className="flex justify-between font-bold text-indigo-700">
@@ -719,7 +823,9 @@ export const StudentEssayUpload: React.FC<StudentEssayUploadProps> = ({
             </p>
           </div>
         )}
-      </div>
+          </div>
+        </div>
+      )}
 
       {/* Error Message */}
       {errorMessage && (

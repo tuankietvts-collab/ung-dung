@@ -115,6 +115,7 @@ export async function digitizeDocumentApi(payload: {
 export interface GradeEssayPayload {
   imageUrl?: string;
   imageBase64?: string;
+  typedSolution?: string;
   mimeType?: string;
   questionText: string;
   maxPoints: number;

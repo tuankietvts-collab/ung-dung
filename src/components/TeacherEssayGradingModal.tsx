@@ -26,7 +26,8 @@ import {
   Clock,
   Layers,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  PenTool
 } from 'lucide-react';
 import {
   Exam,
@@ -183,22 +184,23 @@ export const TeacherEssayGradingModal: React.FC<TeacherEssayGradingModalProps> =
     imageGalleryUrls.push(activeEssayAnswer.imageUrl);
   }
 
-  // 1. Grade single essay using AI Gemini Vision
+  // 1. Grade single essay using AI Gemini Vision & Text reasoning
   const handleGradeWithAI = async () => {
     if (!activeSubmission || !activeEssay) return;
-    if (imageGalleryUrls.length === 0) {
-      if (showToast) showToast('Học sinh chưa tải ảnh bài làm tự luận lên.', 'error');
+    if (imageGalleryUrls.length === 0 && !activeEssayAnswer?.typedSolution?.trim()) {
+      if (showToast) showToast('Học sinh chưa có bài làm tự luận (chưa gõ bài giải và chưa tải ảnh).', 'error');
       return;
     }
 
     try {
       setIsGradingSingle(true);
-      const primaryImage = imageGalleryUrls[activeImageIndex] || imageGalleryUrls[0];
+      const primaryImage = imageGalleryUrls[activeImageIndex] || imageGalleryUrls[0] || '';
 
       // Pass stored calibrations for few-shot prompt tuning
       const result: EssayGradingResult = await gradeEssayApi({
-        imageUrl: primaryImage.startsWith('data:') ? undefined : primaryImage,
-        imageBase64: primaryImage.startsWith('data:') ? primaryImage : undefined,
+        imageUrl: primaryImage && !primaryImage.startsWith('data:') ? primaryImage : undefined,
+        imageBase64: primaryImage && primaryImage.startsWith('data:') ? primaryImage : undefined,
+        typedSolution: activeEssayAnswer?.typedSolution?.trim() || undefined,
         questionText: activeEssay.question,
         maxPoints: activeEssay.maxPoints,
         rubric: activeEssay.rubric,
@@ -214,6 +216,7 @@ export const TeacherEssayGradingModal: React.FC<TeacherEssayGradingModalProps> =
           ...(activeEssayAnswer || {}),
           imageUrl: primaryImage,
           imageUrls: imageGalleryUrls,
+          typedSolution: activeEssayAnswer?.typedSolution,
           grading: result,
         },
       };
@@ -680,6 +683,28 @@ export const TeacherEssayGradingModal: React.FC<TeacherEssayGradingModalProps> =
                     </div>
                   </div>
 
+                  {/* Student's Directly Typed Math Solution (MathType / LaTeX) */}
+                  {activeEssayAnswer?.typedSolution && (
+                    <div className="p-4 rounded-2xl bg-indigo-50/70 border-2 border-indigo-200/80 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-indigo-950">
+                        <span className="flex items-center gap-1.5">
+                          <PenTool className="w-4 h-4 text-indigo-600" />
+                          <span>Bài giải tự luận học sinh soạn qua MathType ({activeEssayAnswer.typedSolution.length} ký tự):</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-100">
+                          Chuẩn SGK GDPT 2018
+                        </span>
+                      </div>
+                      <div className="p-4 rounded-xl bg-white border border-indigo-100 text-sm leading-relaxed text-slate-900 overflow-x-auto shadow-2xs space-y-1">
+                        {activeEssayAnswer.typedSolution.split('\n').map((line, lIdx) => (
+                          <div key={lIdx} className="min-h-[1.5rem] py-0.5">
+                            {line.trim() ? <MathRenderer content={line} /> : <div className="h-2" />}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Student's Uploaded Handwritten Work Gallery */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -693,8 +718,14 @@ export const TeacherEssayGradingModal: React.FC<TeacherEssayGradingModalProps> =
                     </div>
 
                     {imageGalleryUrls.length === 0 ? (
-                      <div className="p-6 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 text-center text-slate-400 text-xs">
-                        Học sinh chưa tải ảnh bài làm lên cho câu hỏi này.
+                      <div className="p-5 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 text-center text-slate-500 text-xs">
+                        {activeEssayAnswer?.typedSolution?.trim() ? (
+                          <span className="text-indigo-700 font-medium">
+                            ✍️ Thí sinh đã nộp bài giải trực tiếp bằng công cụ MathType ở khung trên (không đính kèm thêm ảnh viết tay).
+                          </span>
+                        ) : (
+                          'Học sinh chưa tải ảnh bài làm lên cho câu hỏi này.'
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-3">

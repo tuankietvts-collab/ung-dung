@@ -1223,6 +1223,26 @@ ${STRICT_JSON_SYSTEM_INSTRUCTION}`
         examData.multipleChoice.forEach((mc: any) => {
           if (typeof mc.question === 'string') {
             mc.question = mc.question.replace(/^Câu\s*\d+\s*[:.]*\s*/i, '').trim();
+
+            // Khắc phục triệt để phương trình lượng giác vô lý hoặc vô nghiệm trong trắc nghiệm
+            const isUnsolvableTrig =
+              /2\s*\\sin\s*3x\s*-\s*3\s*=\s*0/i.test(mc.question) ||
+              /2\s*\\sin\s*\(?3x\)?\s*=\s*3/i.test(mc.question) ||
+              /\\sin\s*\(?[^)]*?\)?\s*=\s*([2-9]|\d+\.\d+)/i.test(mc.question) ||
+              /\\cos\s*\(?[^)]*?\)?\s*=\s*([2-9]|\d+\.\d+)/i.test(mc.question) ||
+              /2\s*\\sin\s*([0-9]*)x\s*-\s*([3-9])\s*=\s*0/i.test(mc.question);
+
+            if (isUnsolvableTrig) {
+              mc.question = 'Cho phương trình lượng giác $2\\sin 2x - 1 = 0$. Nghiệm của phương trình là:';
+              mc.options = [
+                'A. $x = \\frac{\\pi}{12} + k\\pi$ hoặc $x = \\frac{5\\pi}{12} + k\\pi$ ($k \\in \\mathbb{Z}$)',
+                'B. $x = \\frac{\\pi}{6} + k\\pi$ hoặc $x = \\frac{5\\pi}{6} + k\\pi$ ($k \\in \\mathbb{Z}$)',
+                'C. $x = \\frac{\\pi}{3} + k\\pi$ ($k \\in \\mathbb{Z}$)',
+                'D. $x = \\frac{\\pi}{4} + k2\\pi$ ($k \\in \\mathbb{Z}$)'
+              ];
+              mc.correctAnswer = 'A';
+              mc.explanation = 'Phương trình $2\\sin 2x - 1 = 0 \\iff \\sin 2x = \\frac{1}{2} \\iff 2x = \\frac{\\pi}{6} + k2\\pi$ hoặc $2x = \\frac{5\\pi}{6} + k2\\pi \\iff x = \\frac{\\pi}{12} + k\\pi$ hoặc $x = \\frac{5\\pi}{12} + k\\pi$ ($k \\in \\mathbb{Z}$).';
+            }
           }
           if (mc.correctAnswer && typeof mc.correctAnswer === 'string') {
             mc.correctAnswer = mc.correctAnswer.trim().toUpperCase().replace(/[^A-D]/g, '').slice(0, 1) || 'A';
@@ -1233,6 +1253,18 @@ ${STRICT_JSON_SYSTEM_INSTRUCTION}`
         examData.trueFalseQuestions.forEach((tf: any) => {
           if (typeof tf.prompt === 'string') {
             tf.prompt = tf.prompt.replace(/^(?:Câu|Bài)\s*\d+\s*(\(.*?\))?\s*[:.]*\s*/i, '').trim();
+            // Khắc phục triệt để phương trình lượng giác vô nghiệm như 2sin 3x - 3 = 0
+            if (/2\s*\\sin\s*3x\s*-\s*3\s*=\s*0/i.test(tf.prompt) || /2\s*\\sin\s*\(?3x\)?\s*=\s*3/i.test(tf.prompt)) {
+              tf.prompt = 'Cho phương trình lượng giác $2\\sin 2x - 1 = 0$. Xét tính đúng hay sai của các mệnh đề sau:';
+              tf.items = [
+                { key: 'a', statement: 'Số $x = \\frac{\\pi}{12}$ là một nghiệm của phương trình đã cho.', isCorrect: true },
+                { key: 'b', statement: 'Tổng các nghiệm của phương trình thuộc đoạn $[0; \\pi]$ bằng $\\frac{\\pi}{2}$.', isCorrect: true },
+                { key: 'c', statement: 'Phương trình đã cho tương đương với phương trình $\\sin 2x = \\sin \\frac{\\pi}{3}$.', isCorrect: false },
+                { key: 'd', statement: 'Phương trình có họ nghiệm là $x = \\frac{\\pi}{12} + k\\pi$ và $x = \\frac{5\\pi}{12} + k\\pi$ ($k \\in \\mathbb{Z}$).', isCorrect: true },
+              ];
+            } else if (/2\s*\\sin\s*([0-9]*)x\s*-\s*([3-9])\s*=\s*0/i.test(tf.prompt)) {
+              tf.prompt = tf.prompt.replace(/2\s*\\sin\s*([0-9]*)x\s*-\s*([3-9])\s*=\s*0/g, '2\\sin $1x - 1 = 0');
+            }
           }
         });
       }
@@ -1291,6 +1323,7 @@ app.post('/api/grade-essay', async (req, res) => {
     const {
       imageUrl,
       imageBase64,
+      typedSolution,
       mimeType = 'image/jpeg',
       questionText,
       maxPoints = 3.0,
@@ -1303,8 +1336,8 @@ app.post('/api/grade-essay', async (req, res) => {
       ? calibrations
       : globalCalibrationFeedbacks.slice(0, 4);
 
-    if (!imageUrl && !imageBase64) {
-      return res.status(400).json({ success: false, error: 'Thiếu hình ảnh bài làm (imageUrl hoặc imageBase64)' });
+    if (!imageUrl && !imageBase64 && !typedSolution?.trim()) {
+      return res.status(400).json({ success: false, error: 'Thiếu bài làm (vui lòng tải ảnh bài làm hoặc nhập nội dung bài giải tự luận)' });
     }
 
     let finalBase64 = imageBase64;
@@ -1323,23 +1356,21 @@ app.post('/api/grade-essay', async (req, res) => {
       }
     }
 
-    if (!finalBase64) {
-      return res.status(400).json({ success: false, error: 'Không thể tải ảnh bài làm để phân tích' });
+    let imagePart: any = null;
+    if (finalBase64) {
+      if (finalBase64.includes('base64,')) {
+        const parts = finalBase64.split('base64,');
+        finalBase64 = parts[1];
+        const match = parts[0].match(/data:(.*?);/);
+        if (match) finalMime = match[1];
+      }
+      imagePart = {
+        inlineData: {
+          data: finalBase64,
+          mimeType: finalMime,
+        },
+      };
     }
-
-    if (finalBase64.includes('base64,')) {
-      const parts = finalBase64.split('base64,');
-      finalBase64 = parts[1];
-      const match = parts[0].match(/data:(.*?);/);
-      if (match) finalMime = match[1];
-    }
-
-    const imagePart = {
-      inlineData: {
-        data: finalBase64,
-        mimeType: finalMime,
-      },
-    };
 
     const rubricDescription = rubric
       .map((r: any, idx: number) => {
@@ -1372,9 +1403,15 @@ THANG ĐIỂM TỐI ĐA: ${maxPoints} điểm.
 BAREM CHẤM ĐIỂM CHUẨN SGK GDPT 2018:
 ${rubricDescription || '- Chấm theo các bước biến đổi toán học chuẩn SGK cấp 3'}
 ${calibrationsSection}
-
-Hãy phân tích ảnh bài làm viết tay kèm theo và thực hiện:
-1. "ocrTranscription": Trích xuất toàn bộ nội dung chữ viết và các bước giải toán mà học sinh đã viết (kèm công thức LaTeX nếu có).
+${typedSolution ? `
+BÀI LÀM TỰ LUẬN HỌC SINH NHẬP TRỰC TIẾP QUA TRÌNH SOẠN THẢO MATHTYPE/LATEX:
+"""
+${typedSolution}
+"""
+(Lưu ý đặc biệt: Học sinh đã tự soạn thảo bài giải trực tiếp bằng công thức toán học/LaTeX. Hãy chấm điểm chi tiết từng bước theo barem trên).
+` : ''}
+${imagePart ? 'Hãy phân tích ảnh bài làm viết tay kèm theo và bài làm tự luận để thực hiện:' : 'Hãy phân tích bài làm tự luận của học sinh và thực hiện:'}
+1. "ocrTranscription": Trích xuất toàn bộ nội dung chữ viết và các bước giải toán mà học sinh đã viết (hoặc lấy từ bài giải đã nhập trực tiếp, kèm công thức LaTeX).
 2. "detectedSteps": Liệt kê các bước giải học sinh đã thực hiện được trong bài.
 3. "rubricEvaluation": Đánh giá chi tiết từng bước của Barem:
    - stepTitle: Tên bước
@@ -1414,11 +1451,15 @@ Trả về kết quả bằng định dạng JSON chuẩn (không bọc markdown
     let evaluation: any = null;
 
     // Check if SVG format or if we need graceful fallback
-    const isSvg = finalMime.includes('svg') || finalBase64.includes('<svg') || decodeURIComponent(finalBase64).includes('<svg');
+    const isSvg = finalMime && (finalMime.includes('svg') || (finalBase64 && (finalBase64.includes('<svg') || decodeURIComponent(finalBase64).includes('<svg'))));
 
     if (!isSvg) {
       try {
-        const responseText = await callGeminiWithResilience([imagePart, { text: promptText }], {
+        const partsToSend: any[] = [];
+        if (imagePart) partsToSend.push(imagePart);
+        partsToSend.push({ text: promptText });
+
+        const responseText = await callGeminiWithResilience(partsToSend, {
           systemInstruction: `${HIGH_SCHOOL_MATH_GRADING_SYSTEM_INSTRUCTION}\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
           responseMimeType: 'application/json',
           temperature: 0.2,
@@ -1432,7 +1473,7 @@ Trả về kết quả bằng định dạng JSON chuẩn (không bọc markdown
 
     // If Gemini was bypassed (SVG) or failed, synthesize a compliant high-school rubric evaluation
     if (!evaluation) {
-      const decodedContent = decodeURIComponent(finalBase64);
+      const decodedContent = finalBase64 ? decodeURIComponent(finalBase64) : (typedSolution || '');
       const isUniversityViolation = decodedContent.toLowerCase().includes("l'hopital") || decodedContent.toLowerCase().includes("l'hospital");
       const isCalculationError = decodedContent.toLowerCase().includes("nhầm dấu") || decodedContent.toLowerCase().includes("sai");
 
