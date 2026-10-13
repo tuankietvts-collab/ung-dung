@@ -26,14 +26,16 @@ import {
   Play,
   Filter,
   Trash2,
-  Sliders
+  Sliders,
+  ArrowLeft
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Exam, StudentSubmission, EssayGradingResult, ClassGroup } from '../types/exam';
+import { Exam, StudentSubmission, EssayGradingResult, ClassGroup, StudentRosterItem } from '../types/exam';
 import { exportGradebookToExcel, gradeEssayApi } from '../services/api';
 import { AnswerMatrixRow, generateFullClassSubmissions, generate45ExamVariants } from '../services/examPermuter';
 import { createHandwrittenMathSvg } from '../data/defaultExam';
 import { saveSubmissionToFirestore } from '../services/firebase';
+import { isInvalidStudentName } from '../services/studentRosterParser';
 import { MathRenderer } from './MathRenderer';
 import { ExamVariantManagerModal } from './ExamVariantManagerModal';
 import { TeacherEssayGradingModal } from './TeacherEssayGradingModal';
@@ -44,6 +46,11 @@ interface GradebookReportProps {
   submissions: StudentSubmission[];
   className?: string;
   classes?: ClassGroup[];
+  roster?: StudentRosterItem[];
+  initialExamFilter?: string;
+  initialClassFilter?: string;
+  onBackToExams?: () => void;
+  onBackToClasses?: () => void;
   variants?: Exam[];
   answerMatrix?: AnswerMatrixRow[];
   onDeleteSubmission?: (submissionId: string) => void;
@@ -57,6 +64,11 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   submissions,
   className = 'Toán 12',
   classes = [],
+  roster = [],
+  initialExamFilter,
+  initialClassFilter,
+  onBackToExams,
+  onBackToClasses,
   variants = [],
   answerMatrix = [],
   onDeleteSubmission,
@@ -71,11 +83,13 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   
   // 1. CHỌN BÀI KIỂM TRA CỤ THỂ
   const [selectedExamFilter, setSelectedExamFilter] = useState<string>(() => {
-    return exam?.id || (exams.length > 0 ? exams[0].id : 'all');
+    return initialExamFilter || exam?.id || (exams.length > 0 ? exams[0].id : 'all');
   });
 
   // 2. CHỌN LỚP CỤ THỂ
-  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>(() => {
+    return initialClassFilter || 'all';
+  });
   
   const [sortOption, setSortOption] = useState<'abc' | 'stt' | 'score_desc'>('abc');
   const [submissionToDelete, setSubmissionToDelete] = useState<StudentSubmission | null>(null);
@@ -135,87 +149,160 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
     );
   }, [submissions, selectedExamFilter]);
 
-  // Available classes in this exam's submissions + teacher's classes
+  // Helper to normalize class names for comparison
+  const normalizeCls = (c?: string) => (c || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+
+  // Available classes in this exam's submissions + teacher's classes + roster
   const classesList = useMemo(() => {
     const fromSubs = examSubmissions.map((s) => s.studentClass?.trim()).filter(Boolean);
     const fromTeacher = classes.map((c) => c.name?.trim()).filter(Boolean);
-    return Array.from(new Set([...fromTeacher, ...fromSubs])).sort();
-  }, [examSubmissions, classes]);
+    const fromRoster = roster ? roster.map((r) => r.className?.trim()).filter(Boolean) : [];
+    return Array.from(new Set([...fromTeacher, ...fromSubs, ...fromRoster])).sort();
+  }, [examSubmissions, classes, roster]);
+
+  // 1. Target Submissions for current class filter within this exam (merged with student roster)
+  const currentClassSubmissions = useMemo(() => {
+    const baseSubs =
+      selectedClassFilter === 'all'
+        ? examSubmissions
+        : examSubmissions.filter((s) => normalizeCls(s.studentClass) === normalizeCls(selectedClassFilter));
+
+    if (selectedClassFilter === 'all' || !roster || roster.length === 0) {
+      return baseSubs;
+    }
+
+    // When a specific class is selected, merge roster students who haven't taken the test yet
+    const classRoster = roster.filter(
+      (r) => normalizeCls(r.className) === normalizeCls(selectedClassFilter) && !isInvalidStudentName(r.fullName)
+    );
+
+    if (classRoster.length === 0) {
+      return baseSubs;
+    }
+
+    const merged: StudentSubmission[] = [];
+    const usedSubIds = new Set<string>();
+
+    // For each student in roster, find their submission if available
+    classRoster.forEach((r, idx) => {
+      const match = baseSubs.find((s) => {
+        if (s.studentId && r.sbd && s.studentId.trim().toLowerCase() === r.sbd.trim().toLowerCase()) {
+          return true;
+        }
+        return s.studentName.trim().toLowerCase() === r.fullName.trim().toLowerCase();
+      });
+
+      if (match) {
+        merged.push(match);
+        usedSubIds.add(match.id);
+      } else {
+        // Pending student in class roster who hasn't submitted yet
+        merged.push({
+          id: `roster_${r.id || idx}`,
+          studentName: r.fullName,
+          studentClass: r.className || selectedClassFilter,
+          studentId: r.sbd || `${selectedClassFilter}-${String(r.stt || idx + 1).padStart(2, '0')}`,
+          examCode: activeSelectedExam?.examCode || 'TOAN12',
+          examId: activeSelectedExam?.id,
+          attemptNumber: 0,
+          submittedAt: 'Chưa thi',
+          tabViolations: 0,
+          mcAnswers: {},
+          tfAnswers: {},
+          essayAnswers: {},
+          mcScore: 0,
+          essayScore: 0,
+          totalScore: 0,
+          status: 'pending',
+          isPendingSubmission: true,
+        });
+      }
+    });
+
+    // Also include any submissions that were not matched to roster
+    baseSubs.forEach((s) => {
+      if (!usedSubIds.has(s.id)) {
+        merged.push(s);
+      }
+    });
+
+    return merged;
+  }, [examSubmissions, selectedClassFilter, roster, activeSelectedExam]);
 
   // Filtered submissions
-  const filtered = examSubmissions.filter((s) => {
-    const matchesSearch =
-      s.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.studentId.toLowerCase().includes(searchTerm.toLowerCase());
+  const filtered = useMemo(() => {
+    const list = currentClassSubmissions.filter((s) => {
+      const matchesSearch =
+        s.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        s.studentId.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesClass =
-      selectedClassFilter === 'all' || s.studentClass === selectedClassFilter;
+      if (!matchesSearch) return false;
 
-    if (!matchesSearch || !matchesClass) return false;
+      if (filterCategory === 'gioi') return !s.isPendingSubmission && s.totalScore >= 8.0;
+      if (filterCategory === 'kha') return !s.isPendingSubmission && s.totalScore >= 6.5 && s.totalScore < 8.0;
+      if (filterCategory === 'violation')
+        return (
+          !s.isPendingSubmission &&
+          (((s.tabViolations && s.tabViolations > 0) ||
+            !!s.essayAnswers?.essay1?.grading?.universityMethodDetected))
+        );
+      if (filterCategory === 'appeals')
+        return !s.isPendingSubmission && s.appeals && s.appeals.length > 0;
+      return true;
+    });
 
-    if (filterCategory === 'gioi') return s.totalScore >= 8.0;
-    if (filterCategory === 'kha') return s.totalScore >= 6.5 && s.totalScore < 8.0;
-    if (filterCategory === 'violation')
-      return (
-        (s.tabViolations && s.tabViolations > 0) ||
-        !!s.essayAnswers?.essay1?.grading?.universityMethodDetected
-      );
-    if (filterCategory === 'appeals')
-      return s.appeals && s.appeals.length > 0;
-    return true;
-  });
+    // Sort filtered submissions
+    list.sort((a, b) => {
+      if (sortOption === 'abc') {
+        const getLastName = (name: string) => {
+          const parts = name.trim().split(' ');
+          return parts[parts.length - 1] || '';
+        };
+        return getLastName(a.studentName).localeCompare(getLastName(b.studentName), 'vi');
+      }
+      if (sortOption === 'score_desc') {
+        const scoreA = a.isPendingSubmission ? -1 : a.totalScore;
+        const scoreB = b.isPendingSubmission ? -1 : b.totalScore;
+        return scoreB - scoreA;
+      }
+      return a.studentId.localeCompare(b.studentId, 'vi');
+    });
 
-  // Sort filtered submissions
-  filtered.sort((a, b) => {
-    if (sortOption === 'abc') {
-      const getLastName = (name: string) => {
-        const parts = name.trim().split(' ');
-        return parts[parts.length - 1] || '';
-      };
-      return getLastName(a.studentName).localeCompare(getLastName(b.studentName), 'vi');
-    }
-    if (sortOption === 'score_desc') {
-      return b.totalScore - a.totalScore;
-    }
-    return a.studentId.localeCompare(b.studentId, 'vi');
-  });
-
-  // 1. Target Submissions for current class filter within this exam
-  const currentClassSubmissions =
-    selectedClassFilter === 'all'
-      ? examSubmissions
-      : examSubmissions.filter((s) => s.studentClass === selectedClassFilter);
+    return list;
+  }, [currentClassSubmissions, searchTerm, filterCategory, sortOption]);
 
   // 2. Comprehensive Statistics for current selected exam and class
+  const gradedSubs = currentClassSubmissions.filter((s) => !s.isPendingSubmission);
   const totalCount = currentClassSubmissions.length;
+  const gradedCount = gradedSubs.length;
   const avgScore =
-    totalCount > 0
+    gradedCount > 0
       ? (
-          currentClassSubmissions.reduce((acc, cur) => acc + cur.totalScore, 0) /
-          totalCount
+          gradedSubs.reduce((acc, cur) => acc + cur.totalScore, 0) /
+          gradedCount
         ).toFixed(2)
       : '0.00';
   const highestScore =
-    totalCount > 0
-      ? Math.max(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2)
+    gradedCount > 0
+      ? Math.max(...gradedSubs.map((s) => s.totalScore)).toFixed(2)
       : '0.00';
   const lowestScore =
-    totalCount > 0
-      ? Math.min(...currentClassSubmissions.map((s) => s.totalScore)).toFixed(2)
+    gradedCount > 0
+      ? Math.min(...gradedSubs.map((s) => s.totalScore)).toFixed(2)
       : '0.00';
 
-  const countGioi = currentClassSubmissions.filter((s) => s.totalScore >= 8.0).length;
-  const countKha = currentClassSubmissions.filter(
+  const countGioi = gradedSubs.filter((s) => s.totalScore >= 8.0).length;
+  const countKha = gradedSubs.filter(
     (s) => s.totalScore >= 6.5 && s.totalScore < 8.0
   ).length;
-  const countTB = currentClassSubmissions.filter(
+  const countTB = gradedSubs.filter(
     (s) => s.totalScore >= 5.0 && s.totalScore < 6.5
   ).length;
-  const countYeu = currentClassSubmissions.filter((s) => s.totalScore < 5.0).length;
-  const countAppeals = currentClassSubmissions.filter(
+  const countYeu = gradedSubs.filter((s) => s.totalScore < 5.0).length;
+  const countAppeals = gradedSubs.filter(
     (s) => s.appeals && s.appeals.length > 0
   ).length;
-  const universityViolations = currentClassSubmissions.filter(
+  const universityViolations = gradedSubs.filter(
     (s) =>
       (s.tabViolations && s.tabViolations > 0) ||
       s.essayAnswers?.essay1?.grading?.universityMethodDetected
@@ -509,6 +596,31 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {(onBackToExams || onBackToClasses) && (
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          {onBackToExams && (
+            <button
+              type="button"
+              onClick={onBackToExams}
+              className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer border border-slate-300 shadow-2xs transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4 text-indigo-600" />
+              <span>Quay lại danh sách bài kiểm tra lớp {className}</span>
+            </button>
+          )}
+          {onBackToClasses && (
+            <button
+              type="button"
+              onClick={onBackToClasses}
+              className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1.5 cursor-pointer border border-slate-300 shadow-2xs transition-colors"
+            >
+              <Users className="w-4 h-4 text-emerald-600" />
+              <span>Về danh sách tất cả các lớp</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -1119,26 +1231,42 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
 
                     {/* [Mã đề] */}
                     <td className="p-3 text-center border-r border-slate-300 bg-indigo-50/30">
-                      <span className="inline-block px-2 py-0.5 rounded font-mono font-black text-[11px] bg-indigo-100 text-indigo-800 border border-indigo-200">
-                        {sub.examCode || exam?.examCode || 'TOAN12'}
-                      </span>
+                      {sub.isPendingSubmission ? (
+                        <span className="text-slate-400 font-mono">—</span>
+                      ) : (
+                        <span className="inline-block px-2 py-0.5 rounded font-mono font-black text-[11px] bg-indigo-100 text-indigo-800 border border-indigo-200">
+                          {sub.examCode || exam?.examCode || 'TOAN12'}
+                        </span>
+                      )}
                     </td>
 
                     {/* [Lần thi] */}
                     <td className="p-3 text-center border-r border-slate-300 font-bold text-xs">
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
-                        Lần {sub.attemptNumber || 1}
-                      </span>
+                      {sub.isPendingSubmission ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                          Lần {sub.attemptNumber || 1}
+                        </span>
+                      )}
                     </td>
 
                     {/* [Thời gian nộp] */}
                     <td className="p-3 text-center font-mono text-slate-600 border-r border-slate-300 text-[11px]">
-                      {sub.submittedAt}
+                      {sub.isPendingSubmission ? (
+                        <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                          Chưa nộp bài
+                        </span>
+                      ) : (
+                        sub.submittedAt
+                      )}
                     </td>
 
                     {/* [Vi phạm] */}
                     <td className="p-3 text-center font-bold border-r border-slate-300">
-                      {sub.tabViolations && sub.tabViolations > 0 ? (
+                      {sub.isPendingSubmission ? (
+                        <span className="text-slate-400 text-xs">—</span>
+                      ) : sub.tabViolations && sub.tabViolations > 0 ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-200">
                           <ShieldAlert className="w-3 h-3 text-rose-600" />
                           {sub.tabViolations} lần
@@ -1150,32 +1278,50 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
 
                     {/* [Điểm TN] */}
                     <td className="p-3 text-center font-mono font-bold text-slate-800 border-r border-slate-300">
-                      {mcTotal.toFixed(2)}đ
+                      {sub.isPendingSubmission ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        `${mcTotal.toFixed(2)}đ`
+                      )}
                     </td>
 
                     {/* [Điểm TL] */}
                     <td className="p-3 text-center font-mono font-black text-indigo-900 border-r border-slate-300 bg-indigo-50/30">
-                      {essayTotal.toFixed(2)}đ
+                      {sub.isPendingSubmission ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        `${essayTotal.toFixed(2)}đ`
+                      )}
                     </td>
 
                     {/* [Tổng điểm] */}
                     <td className="p-3 text-center border-r-2 border-slate-800 bg-amber-50/60 font-mono">
-                      <span
-                        className={`inline-block px-3 py-1 rounded-lg font-black text-sm border-2 ${
-                          sub.totalScore >= 8.0
-                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
-                            : sub.totalScore >= 6.5
-                            ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
-                            : 'bg-amber-500 text-slate-950 border-amber-600'
-                        }`}
-                      >
-                        {sub.totalScore.toFixed(2)}
-                      </span>
+                      {sub.isPendingSubmission ? (
+                        <span className="inline-block px-2.5 py-1 rounded-lg font-bold text-xs bg-slate-100 text-slate-400 border border-slate-300">
+                          Chưa thi
+                        </span>
+                      ) : (
+                        <span
+                          className={`inline-block px-3 py-1 rounded-lg font-black text-sm border-2 ${
+                            sub.totalScore >= 8.0
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
+                              : sub.totalScore >= 6.5
+                              ? 'bg-blue-600 text-white border-blue-700 shadow-xs'
+                              : 'bg-amber-500 text-slate-950 border-amber-600'
+                          }`}
+                        >
+                          {sub.totalScore.toFixed(2)}
+                        </span>
+                      )}
                     </td>
 
                     {/* [Xếp loại] */}
                     <td className="p-3 text-center font-extrabold border-r border-slate-300">
-                      {sub.totalScore >= 8.5 ? (
+                      {sub.isPendingSubmission ? (
+                        <span className="text-slate-400 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 text-[11px] font-bold">
+                          Chưa thi
+                        </span>
+                      ) : sub.totalScore >= 8.5 ? (
                         <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300">
                           GIỎI
                         </span>
@@ -1196,28 +1342,32 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
 
                     {/* [Thao tác] */}
                     <td className="p-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedSubmission(sub);
-                            setModalTab('mc');
-                          }}
-                          className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs border border-indigo-200 transition-colors cursor-pointer"
-                        >
-                          Chi Tiết
-                        </button>
-                        {onDeleteSubmission && (
+                      {sub.isPendingSubmission ? (
+                        <span className="text-[11px] text-slate-400 font-semibold italic">Chờ nộp</span>
+                      ) : (
+                        <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"
-                            onClick={() => setSubmissionToDelete(sub)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                            title="Xóa bài thi này"
+                            onClick={() => {
+                              setSelectedSubmission(sub);
+                              setModalTab('mc');
+                            }}
+                            className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs border border-indigo-200 transition-colors cursor-pointer"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            Chi Tiết
                           </button>
-                        )}
-                      </div>
+                          {onDeleteSubmission && (
+                            <button
+                              type="button"
+                              onClick={() => setSubmissionToDelete(sub)}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Xóa bài thi này"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

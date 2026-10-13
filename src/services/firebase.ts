@@ -564,9 +564,7 @@ export function subscribeStudentRosterFromFirestore(
       const list: StudentRosterItem[] = [];
       snapshot.forEach((docSnap) => {
         const item = docSnap.data() as StudentRosterItem;
-        // Purge invalid non-student items (summary rows, title rows)
         if (isInvalidStudentName(item.fullName)) {
-          deleteDoc(docSnap.ref).catch(() => {});
           return;
         }
         list.push(item);

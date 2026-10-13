@@ -183,19 +183,24 @@ export function isInvalidStudentName(name: string): boolean {
   if (!name || name.trim().length < 2) return true;
   const clean = cleanText(name).toLowerCase();
 
-  // Legitimate Vietnamese student names NEVER contain digits (e.g. "Khối 11", "11A1", "2024-2025")
-  if (/\d/.test(clean)) return true;
+  // Reject if starts with generic title prefixes (e.g. "Khối 11", "Lớp 12A1")
+  if (
+    clean.startsWith('khối ') ||
+    clean.startsWith('khoi ') ||
+    clean.startsWith('lớp ') ||
+    clean.startsWith('lop ') ||
+    clean.startsWith('danh sách')
+  ) {
+    return true;
+  }
 
   // Legitimate Vietnamese names ALWAYS have at least 2 words (Họ + Tên, e.g. "Lê An", "Trần Bình")
-  // Single words like "Khối", "Lớp", "Thống", "Tổng", "Nam", "Nữ" are NOT student names
   const words = clean.split(/\s+/).filter(Boolean);
   if (words.length < 2) return true;
 
   // Blacklist of summary / footer / title / statistic keywords
   const badKeywords = [
     'thống kê', 'thong ke',
-    'khối', 'khoi',
-    'lớp', 'lop',
     'học kỳ', 'hoc ky',
     'học sinh đạt', 'hoc sinh dat',
     'số lượng', 'so luong',
@@ -221,16 +226,10 @@ export function isInvalidStudentName(name: string): boolean {
     'phòng giáo dục', 'phong giao duc',
     'trường thpt', 'truong thpt',
     'trường thcs', 'truong thcs',
-    'danh sách', 'danh sach',
     'môn toán', 'mon toan'
   ];
 
   if (badKeywords.some((kw) => clean.includes(kw))) {
-    return true;
-  }
-
-  // Reject if starts with generic title prefixes
-  if (clean.startsWith('khối') || clean.startsWith('khoi') || clean.startsWith('lớp') || clean.startsWith('lop')) {
     return true;
   }
 

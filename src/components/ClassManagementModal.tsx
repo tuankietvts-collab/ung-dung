@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Plus,
@@ -44,6 +44,8 @@ interface ClassManagementModalProps {
   roster: StudentRosterItem[];
   currentExam?: Exam | null;
   savedExams?: Exam[];
+  initialClassId?: string;
+  initialTab?: 'classes' | 'students' | 'quick_paste' | 'accounts' | 'assign_exam';
   onSaveClass: (cls: ClassGroup) => Promise<void>;
   onDeleteClass: (classId: string) => Promise<void>;
   onSaveRoster: (students: StudentRosterItem[]) => Promise<void>;
@@ -58,6 +60,8 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
   roster,
   currentExam,
   savedExams = [],
+  initialClassId,
+  initialTab,
   onSaveClass,
   onDeleteClass,
   onSaveRoster,
@@ -74,8 +78,17 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
 
   // Selected class for student management
   const [selectedClassId, setSelectedClassId] = useState<string>(
-    classes.length > 0 ? classes[0].name : '12A1'
+    initialClassId || (classes.length > 0 ? classes[0].name : '12A1')
   );
+
+  useEffect(() => {
+    if (initialClassId) {
+      setSelectedClassId(initialClassId);
+    }
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialClassId, initialTab, isOpen]);
 
   // Student accounts generation state
   const [defaultPassword, setDefaultPassword] = useState<string>('123456');
@@ -163,9 +176,10 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
   };
 
   // Get students of the selected class (Strictly filters out summary / footer rows like Khối 11, Thống kê)
+  const normalizeCls = (c?: string) => (c || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
   const currentClassStudents = roster
     .filter((s) => !isInvalidStudentName(s.fullName))
-    .filter((s) => s.className?.toUpperCase() === selectedClassId.toUpperCase());
+    .filter((s) => normalizeCls(s.className) === normalizeCls(selectedClassId));
 
   const filteredStudents = currentClassStudents.filter(
     (s) =>

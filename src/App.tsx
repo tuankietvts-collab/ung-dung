@@ -33,7 +33,19 @@ import {
   FolderOpen,
   Settings,
   SlidersHorizontal,
-  PenTool
+  PenTool,
+  ArrowLeft,
+  Calendar,
+  Upload,
+  Play,
+  Download,
+  Clock,
+  Trash2,
+  Award,
+  Trophy,
+  Filter,
+  Search,
+  Copy
 } from 'lucide-react';
 import { AppUser, Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile } from './types/exam';
 import {
@@ -113,7 +125,7 @@ export default function App() {
 
   // Sub-tab selectors for grouped categories
   const [subExamTab, setSubExamTab] = useState<'bank' | 'create_ai' | 'create_file' | 'variants'>('bank');
-  const [subGradingTab, setSubGradingTab] = useState<'gradebook' | 'classes' | 'essay_grading'>('gradebook');
+  const [subGradingTab, setSubGradingTab] = useState<'gradebook' | 'classes' | 'essay_grading'>('classes');
   const [subToolsTab, setSubToolsTab] = useState<'python_code' | 'admin_approval' | 'guide'>('python_code');
 
   // Mobile drawer toggle
@@ -137,6 +149,12 @@ export default function App() {
   const [isClassModalOpen, setIsClassModalOpen] = useState<boolean>(false);
   const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
   const [pendingTeacherCount, setPendingTeacherCount] = useState<number>(0);
+
+  // Drill-down navigation for classes & grading (User Request 3: Lớp học -> Bài kiểm tra -> Bảng điểm)
+  const [selectedClassForGrading, setSelectedClassForGrading] = useState<string | null>(null);
+  const [selectedExamForGrading, setSelectedExamForGrading] = useState<Exam | null>(null);
+  const [classModalSelectedClass, setClassModalSelectedClass] = useState<string>('12A1');
+  const [classModalActiveTab, setClassModalActiveTab] = useState<'classes' | 'students' | 'quick_paste' | 'accounts' | 'assign_exam'>('classes');
 
   const [isCloudSaving, setIsCloudSaving] = useState<boolean>(false);
   const [backendUrl, setBackendUrl] = useState<string>('');
@@ -314,10 +332,15 @@ export default function App() {
     showToast('Đã xóa lớp học thành công.');
   };
 
-  const handleSaveRoster = async (roster: StudentRosterItem[]) => {
-    await saveStudentRosterToFirestore(roster);
-    setStudentRoster(roster);
-    showToast(`Đã đồng bộ ${roster.length} học sinh lên cơ sở dữ liệu!`);
+  const handleSaveRoster = async (incomingStudents: StudentRosterItem[]) => {
+    await saveStudentRosterToFirestore(incomingStudents);
+    setStudentRoster((prev) => {
+      const map = new Map<string, StudentRosterItem>();
+      prev.forEach((s) => map.set(s.id, s));
+      incomingStudents.forEach((s) => map.set(s.id, s));
+      return Array.from(map.values());
+    });
+    showToast(`Đã cập nhật danh sách ${incomingStudents.length} học sinh thành công!`);
   };
 
   const handleDeleteStudent = async (studentId: string) => {
@@ -885,12 +908,29 @@ export default function App() {
             />
           )}
 
-          {/* TAB 4: LỚP HỌC & CHẤM ĐIỂM (DỒN TẤT CẢ CÁC MỤC LỚP, HỌC SINH & CHẤM ĐIỂM) */}
+          {/* TAB 4: LỚP HỌC & CHẤM ĐIỂM (ĐIỀU HƯỚNG 3 CẤP: LỚP HỌC -> BÀI KIỂM TRA -> BẢNG ĐIỂM) */}
           {currentNav === 'classes_grading' && (
             <div className="space-y-6 animate-in fade-in duration-300">
-              {/* SUB-NAVIGATION PILLS: Hiển thị các mục liên quan đến Lớp & Chấm thi */}
+              {/* SUB-NAVIGATION PILLS: Lớp học & Khảo thí, Bảng điểm tổng hợp, Chấm tự luận AI */}
               <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSubGradingTab('classes');
+                      setSelectedClassForGrading(null);
+                      setSelectedExamForGrading(null);
+                    }}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                      subGradingTab === 'classes'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <Building2 className="w-4 h-4" />
+                    <span>Lớp Học & Khảo Thí ({classes.length} lớp)</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setSubGradingTab('gradebook')}
@@ -901,23 +941,7 @@ export default function App() {
                     }`}
                   >
                     <FileSpreadsheet className="w-4 h-4" />
-                    <span>Bảng Điểm & Thống Kê ({submissions.length})</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSubGradingTab('classes');
-                      setIsClassModalOpen(true);
-                    }}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
-                      subGradingTab === 'classes'
-                        ? 'bg-indigo-600 text-white shadow-xs'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    <Users className="w-4 h-4" />
-                    <span>Quản Lý Lớp Học & Học Sinh ({classes.length} lớp)</span>
+                    <span>Bảng Điểm Tổng Hợp ({submissions.length} bài)</span>
                   </button>
 
                   <button
@@ -940,16 +964,610 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsClassModalOpen(true)}
-                    className="px-3 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    onClick={() => {
+                      setClassModalActiveTab('classes');
+                      setIsClassModalOpen(true);
+                    }}
+                    className="px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-2xs"
                   >
-                    <PlusCircle className="w-3.5 h-3.5" />
+                    <PlusCircle className="w-4 h-4" />
                     <span>Thêm Lớp Mới</span>
                   </button>
                 </div>
               </div>
 
-              {/* RENDER NỘI DUNG CỦA BẢNG ĐIỂM HOẶC LỚP */}
+              {/* ========================================================================= */}
+              {/* CHẾ ĐỘ 1: QUẢN LÝ THEO TỪNG LỚP HỌC (ĐIỀU HƯỚNG 3 CẤP KHOA HỌC)          */}
+              {/* CẤP 1: DANH SÁCH LỚP -> CẤP 2: BÀI KIỂM TRA LỚP -> CẤP 3: BẢNG ĐIỂM     */}
+              {/* ========================================================================= */}
+              {subGradingTab === 'classes' && (
+                <div className="space-y-6">
+                  {/* CẤP 1: DANH SÁCH CÁC LỚP HỌC MÀ GIÁO VIÊN ĐÃ TẠO */}
+                  {!selectedClassForGrading && (
+                    <div className="space-y-6">
+                      <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              Phân Hệ Quản Lý Lớp Học & Khảo Thí
+                            </span>
+                            <span className="text-xs text-slate-500 font-mono font-bold">
+                              {classes.length} Lớp • {studentRoster.filter((s) => !isInvalidStudentName(s.fullName)).length} Học Sinh
+                            </span>
+                          </div>
+                          <h2 className="text-xl font-black text-slate-900 mt-1">
+                            Danh Sách Các Lớp Học Của Thầy/Cô
+                          </h2>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Bấm vào lớp học để xem các bài kiểm tra học sinh đã làm và bảng điểm chi tiết, hoặc bấm &quot;Cập nhật danh sách học sinh&quot; để tải file Excel vnEdu / dán danh sách.
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setClassModalActiveTab('classes');
+                              setIsClassModalOpen(true);
+                            }}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-2 cursor-pointer"
+                          >
+                            <PlusCircle className="w-4 h-4" />
+                            <span>Tạo Lớp Mới</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* LƯỚI THẺ CÁC LỚP HỌC (HIỂN THỊ CHUẨN SĨ SỐ THỰC TẾ, KHÔNG CÒN 0 HỌC SINH) */}
+                      {classes.length === 0 ? (
+                        <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3">
+                          <Building2 className="w-12 h-12 text-slate-300 mx-auto" />
+                          <h4 className="font-black text-base text-slate-700">Chưa có lớp học nào</h4>
+                          <p className="text-xs text-slate-500 max-w-md mx-auto">
+                            Thầy/Cô hãy bấm &quot;Tạo Lớp Mới&quot; để thêm các lớp bộ môn (Ví dụ: 10A1, 11A2, 12A8) và nạp danh sách học sinh.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setClassModalActiveTab('classes');
+                              setIsClassModalOpen(true);
+                            }}
+                            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs cursor-pointer inline-flex items-center gap-2"
+                          >
+                            <PlusCircle className="w-4 h-4" />
+                            <span>Tạo Lớp Đầu Tiên Ngay</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                          {classes.map((cl) => {
+                            const normCls = cl.name.trim().toUpperCase().replace(/^LỚP\s+/i, '');
+                            // Đếm số lượng học sinh thực tế từ studentRoster chuẩn xác
+                            const classStudents = studentRoster.filter(
+                              (s) =>
+                                (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls &&
+                                !isInvalidStudentName(s.fullName)
+                            );
+                            const realCount = classStudents.length;
+
+                            // Đếm các bài nộp thuộc về lớp này
+                            const classSubs = submissions.filter(
+                              (s) =>
+                                (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls
+                            );
+
+                            // Đếm số lượng bài kiểm tra khác nhau mà học sinh lớp này đã làm
+                            const examKeySet = new Set(
+                              classSubs.map((s) => s.examId || s.examCode).filter(Boolean)
+                            );
+
+                            // Điểm trung bình của lớp
+                            const avgScore =
+                              classSubs.length > 0
+                                ? (
+                                    classSubs.reduce((acc, cur) => acc + cur.totalScore, 0) /
+                                    classSubs.length
+                                  ).toFixed(2)
+                                : null;
+
+                            return (
+                              <div
+                                key={cl.id}
+                                className="bg-white rounded-3xl border-2 border-slate-200/90 hover:border-indigo-500 hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col group"
+                              >
+                                {/* Card Header */}
+                                <div className="p-5 bg-gradient-to-br from-slate-50 via-indigo-50/30 to-white border-b border-slate-100 flex items-start justify-between gap-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black text-base shadow-md shadow-indigo-600/20 shrink-0">
+                                      {cl.name.substring(0, 3)}
+                                    </div>
+                                    <div>
+                                      <h3 className="text-lg font-black text-slate-900 group-hover:text-indigo-700 transition-colors">
+                                        Lớp {cl.name}
+                                      </h3>
+                                      <div className="text-xs text-slate-500 font-semibold mt-0.5">
+                                        Khối {cl.grade} • Năm học {cl.schoolYear || '2024 - 2025'}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Sĩ số Badge */}
+                                  <div>
+                                    {realCount > 0 ? (
+                                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                        <span>{realCount} học sinh</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-800 border border-amber-300">
+                                        <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                                        <span>0 học sinh</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Card Body: Thống kê khảo thí */}
+                                <div className="p-5 flex-1 space-y-3.5">
+                                  <div className="grid grid-cols-2 gap-3 bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/70 text-xs">
+                                    <div>
+                                      <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                                        Bài kiểm tra đã làm
+                                      </div>
+                                      <div className="text-base font-black text-indigo-700 mt-0.5">
+                                        {examKeySet.size} bài thi
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 mt-0.5">
+                                        {classSubs.length} lượt nộp bài
+                                      </div>
+                                    </div>
+
+                                    <div>
+                                      <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                                        Điểm trung bình lớp
+                                      </div>
+                                      <div className="text-base font-black text-slate-900 mt-0.5">
+                                        {avgScore ? `${avgScore} đ` : 'Chưa có điểm'}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 mt-0.5">
+                                        {classSubs.length > 0 ? 'Thang điểm 10.0' : 'Chưa làm bài'}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Lối tắt cập nhật danh sách học sinh (Giải quyết triệt để yêu cầu 1) */}
+                                  <div className="flex items-center justify-between text-xs pt-1">
+                                    <span className="text-slate-500 font-medium">Danh sách lớp:</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setClassModalSelectedClass(cl.name);
+                                        setClassModalActiveTab('students');
+                                        setIsClassModalOpen(true);
+                                      }}
+                                      className="font-black text-indigo-700 hover:text-indigo-900 hover:underline flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Upload className="w-3.5 h-3.5" />
+                                      <span>Cập nhật danh sách học sinh →</span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Card Actions */}
+                                <div className="p-4 bg-slate-50 border-t border-slate-200/80 flex flex-col gap-2">
+                                  {/* NÚT CHÍNH: Xem bài kiểm tra và bảng điểm (Yêu cầu 3) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedClassForGrading(cl.name);
+                                      setSelectedExamForGrading(null);
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                                  >
+                                    <BookOpen className="w-4 h-4" />
+                                    <span>Xem Các Bài Kiểm Tra & Bảng Điểm →</span>
+                                  </button>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setClassModalSelectedClass(cl.name);
+                                        setClassModalActiveTab('students');
+                                        setIsClassModalOpen(true);
+                                      }}
+                                      className="py-2 px-3 rounded-xl bg-white hover:bg-slate-100 text-slate-800 font-bold text-xs border border-slate-300 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                      title="Tải lên file Excel vnEdu hoặc dán danh sách học sinh"
+                                    >
+                                      <Users className="w-3.5 h-3.5 text-indigo-600" />
+                                      <span>Nạp DS Học Sinh</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                                        const path = typeof window !== 'undefined' ? window.location.pathname : '';
+                                        const code = currentExam?.examCode || 'TOAN12-GDPT';
+                                        const id = currentExam?.id || '';
+                                        const link = `${origin}${path}?exam=${encodeURIComponent(code)}&examId=${encodeURIComponent(id)}&class=${encodeURIComponent(cl.name)}`;
+                                        navigator.clipboard.writeText(link);
+                                        showToast(`Đã sao chép link phòng thi gắn lớp ${cl.name}!`);
+                                      }}
+                                      className="py-2 px-3 rounded-xl bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-300 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                      title="Sao chép link làm bài thi gắn riêng với lớp này"
+                                    >
+                                      <Share2 className="w-3.5 h-3.5 text-slate-600" />
+                                      <span>Link Thi Lớp</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* CẤP 2: HIỂN THỊ CÁC BÀI HỌC SINH LÀM KIỂM TRA CỦA LỚP ĐÃ CHỌN (YÊU CẦU 3) */}
+                  {selectedClassForGrading && !selectedExamForGrading && (() => {
+                    const normCls = selectedClassForGrading.trim().toUpperCase().replace(/^LỚP\s+/i, '');
+                    const classStudents = studentRoster.filter(
+                      (s) =>
+                        (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls &&
+                        !isInvalidStudentName(s.fullName)
+                    );
+                    const classSubs = submissions.filter(
+                      (s) => (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls
+                    );
+
+                    // Thu thập danh sách các bài kiểm tra của lớp
+                    const examMap = new Map<
+                      string,
+                      {
+                        id: string;
+                        examCode: string;
+                        title: string;
+                        durationMinutes: number;
+                        subs: StudentSubmission[];
+                        examObj?: Exam;
+                      }
+                    >();
+
+                    classSubs.forEach((sub) => {
+                      const key = sub.examId || sub.examCode;
+                      if (key) {
+                        if (!examMap.has(key)) {
+                          const found =
+                            savedExams.find((e) => e.id === sub.examId || e.examCode === sub.examCode) ||
+                            (currentExam && (currentExam.id === sub.examId || currentExam.examCode === sub.examCode)
+                              ? currentExam
+                              : undefined);
+                          examMap.set(key, {
+                            id: sub.examId || (found ? found.id : key),
+                            examCode: sub.examCode || (found ? found.examCode : key),
+                            title: found?.title || sub.examSnapshot?.title || `Bài kiểm tra ${sub.examCode}`,
+                            durationMinutes: found?.durationMinutes || sub.examSnapshot?.durationMinutes || 45,
+                            subs: [],
+                            examObj: found,
+                          });
+                        }
+                        examMap.get(key)!.subs.push(sub);
+                      }
+                    });
+
+                    // Bổ sung đề thi đang kích hoạt hoặc đề đã giao nếu lớp chưa có bài nộp
+                    if (currentExam && !examMap.has(currentExam.id) && !examMap.has(currentExam.examCode)) {
+                      examMap.set(currentExam.id, {
+                        id: currentExam.id,
+                        examCode: currentExam.examCode,
+                        title: currentExam.title,
+                        durationMinutes: currentExam.durationMinutes || 45,
+                        subs: [],
+                        examObj: currentExam,
+                      });
+                    }
+
+                    // Nếu vẫn ít đề, hiển thị thêm các đề từ ngân hàng đề thi
+                    savedExams.forEach((e) => {
+                      if (!examMap.has(e.id) && !examMap.has(e.examCode)) {
+                        examMap.set(e.id, {
+                          id: e.id,
+                          examCode: e.examCode,
+                          title: e.title,
+                          durationMinutes: e.durationMinutes || 45,
+                          subs: [],
+                          examObj: e,
+                        });
+                      }
+                    });
+
+                    const examList = Array.from(examMap.values());
+
+                    return (
+                      <div className="space-y-6 animate-in fade-in duration-200">
+                        {/* Thanh Điều Hướng Cấp 2 */}
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedClassForGrading(null)}
+                            className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 font-bold text-xs border border-slate-300 shadow-2xs flex items-center gap-2 cursor-pointer transition-colors"
+                          >
+                            <ArrowLeft className="w-4 h-4 text-indigo-600" />
+                            <span>← Quay lại Danh Sách Lớp</span>
+                          </button>
+
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500 font-semibold">Đang xem lớp:</span>
+                            <span className="px-3 py-1 rounded-xl bg-indigo-600 text-white font-black text-xs shadow-2xs">
+                              🏫 Lớp {selectedClassForGrading}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Banner thông tin lớp và nút Cập nhật danh sách học sinh */}
+                        <div className="bg-white p-5 rounded-3xl border-2 border-indigo-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="flex items-center gap-4">
+                            <div className="w-14 h-14 rounded-2xl bg-indigo-600 text-white flex items-center justify-center font-black text-xl shadow-md shadow-indigo-600/30 shrink-0">
+                              {selectedClassForGrading.substring(0, 3)}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  Lớp {selectedClassForGrading}
+                                </span>
+                                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                                  {classStudents.length} Học Sinh Trong Danh Sách
+                                </span>
+                              </div>
+                              <h2 className="text-xl font-black text-slate-900 mt-1">
+                                Các Bài Học Sinh Làm Kiểm Tra (Lớp {selectedClassForGrading})
+                              </h2>
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                Thầy/Cô bấm vào một bài kiểm tra bên dưới để xem bảng điểm chi tiết của toàn bộ học sinh lớp {selectedClassForGrading}.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            {/* NÚT CẬP NHẬT DANH SÁCH HỌC SINH NẰM NGAY ĐÂY (YÊU CẦU 1) */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setClassModalSelectedClass(selectedClassForGrading);
+                                setClassModalActiveTab('students');
+                                setIsClassModalOpen(true);
+                              }}
+                              className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all"
+                            >
+                              <Upload className="w-4 h-4 text-emerald-200" />
+                              <span>Cập Nhật Danh Sách Học Sinh Lớp {selectedClassForGrading}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setClassModalSelectedClass(selectedClassForGrading);
+                                setClassModalActiveTab('accounts');
+                                setIsClassModalOpen(true);
+                              }}
+                              className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Users className="w-4 h-4 text-indigo-600" />
+                              <span>Tài Khoản & Zalo</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* DANH SÁCH CÁC BÀI KIỂM TRA HỌC SINH ĐÃ LÀM HOẶC ĐƯỢC GIAO */}
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                              <BookOpen className="w-5 h-5 text-indigo-600" />
+                              <span>Danh Sách Các Bài Kiểm Tra Của Lớp ({examList.length} đề thi):</span>
+                            </h3>
+                            <span className="text-xs text-slate-500 font-semibold">
+                              Bấm vào bài kiểm tra để xem bảng điểm toàn bộ học sinh
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {examList.map((exItem) => {
+                              const submittedCount = exItem.subs.length;
+                              const rosterCount = Math.max(1, classStudents.length);
+                              const completionPercent = Math.min(100, Math.round((submittedCount / rosterCount) * 100));
+
+                              const scores = exItem.subs.map((s) => s.totalScore);
+                              const avg =
+                                scores.length > 0
+                                  ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)
+                                  : '—';
+                              const max = scores.length > 0 ? Math.max(...scores).toFixed(2) : '—';
+                              const min = scores.length > 0 ? Math.min(...scores).toFixed(2) : '—';
+                              const passRate =
+                                scores.length > 0
+                                  ? Math.round(
+                                      (scores.filter((sc) => sc >= 5.0).length / scores.length) * 100
+                                    )
+                                  : 0;
+
+                              return (
+                                <div
+                                  key={exItem.id}
+                                  className="bg-white rounded-3xl border-2 border-slate-200 hover:border-indigo-500 hover:shadow-md transition-all p-5 flex flex-col justify-between space-y-4 group"
+                                >
+                                  <div>
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="px-2.5 py-0.5 rounded-lg font-mono text-[11px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                        MÃ ĐỀ: {exItem.examCode}
+                                      </span>
+                                      <span className="text-xs text-slate-500 font-semibold flex items-center gap-1">
+                                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                        <span>{exItem.durationMinutes} phút</span>
+                                      </span>
+                                    </div>
+
+                                    <h4 className="text-base font-black text-slate-900 group-hover:text-indigo-700 transition-colors mt-2">
+                                      {exItem.title}
+                                    </h4>
+
+                                    {/* Tiến độ nộp bài của lớp */}
+                                    <div className="mt-3 space-y-1.5">
+                                      <div className="flex items-center justify-between text-xs font-bold">
+                                        <span className="text-slate-600">
+                                          Đã nộp bài: <b className="text-indigo-700">{submittedCount}</b> / {classStudents.length} học sinh
+                                        </span>
+                                        <span className="text-indigo-600 font-mono font-black">
+                                          {completionPercent}%
+                                        </span>
+                                      </div>
+                                      <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+                                        <div
+                                          className="bg-gradient-to-r from-indigo-500 to-emerald-500 h-full rounded-full transition-all duration-300"
+                                          style={{ width: `${Math.max(4, completionPercent)}%` }}
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {/* Tóm tắt điểm số */}
+                                    <div className="grid grid-cols-4 gap-2 mt-4 text-center bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80 text-xs">
+                                      <div>
+                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Điểm TB</div>
+                                        <div className="font-black text-indigo-700 text-sm mt-0.5">{avg}</div>
+                                      </div>
+                                      <div>
+                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Cao Nhất</div>
+                                        <div className="font-extrabold text-emerald-700 text-sm mt-0.5">{max}</div>
+                                      </div>
+                                      <div>
+                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Thấp Nhất</div>
+                                        <div className="font-extrabold text-rose-700 text-sm mt-0.5">{min}</div>
+                                      </div>
+                                      <div>
+                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Đạt (≥5đ)</div>
+                                        <div className="font-black text-slate-800 text-sm mt-0.5">{passRate}%</div>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* NÚT BẤM VÀO BÀI KIỂM TRA SẼ HIỂN THỊ BẢNG ĐIỂM (YÊU CẦU 3) */}
+                                  <div className="pt-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const targetExam =
+                                          exItem.examObj ||
+                                          savedExams.find((e) => e.id === exItem.id || e.examCode === exItem.examCode) ||
+                                          currentExam;
+                                        if (targetExam) {
+                                          setSelectedExamForGrading(targetExam);
+                                        } else {
+                                          // Tạo Exam giả định nếu chỉ có mã đề trong bài nộp
+                                          const synthExam: Exam = {
+                                            id: exItem.id,
+                                            examCode: exItem.examCode,
+                                            title: exItem.title,
+                                            grade: '12',
+                                            durationMinutes: exItem.durationMinutes,
+                                            totalPoints: 10,
+                                            multipleChoice: [],
+                                            trueFalseQuestions: [],
+                                            essays: [],
+                                            createdAt: new Date().toISOString(),
+                                          };
+                                          setSelectedExamForGrading(synthExam);
+                                        }
+                                      }}
+                                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-black text-xs shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all"
+                                    >
+                                      <FileSpreadsheet className="w-4 h-4 text-amber-300" />
+                                      <span>Bấm Vào Xem Bảng Điểm Toàn Bộ Học Sinh →</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* CẤP 3: HIỂN THỊ BẢNG ĐIỂM CỦA TOÀN BỘ HỌC SINH LÀM BÀI KIỂM TRA ĐÓ (YÊU CẦU 3) */}
+                  {selectedClassForGrading && selectedExamForGrading && (
+                    <div className="space-y-6 animate-in fade-in duration-200">
+                      {/* BREADCRUMB ĐIỀU HƯỚNG CẤP 3 */}
+                      <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedClassForGrading(null)}
+                            className="font-bold text-slate-500 hover:text-indigo-600 cursor-pointer"
+                          >
+                            Tất cả lớp
+                          </button>
+                          <span className="text-slate-400">/</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedExamForGrading(null)}
+                            className="font-bold text-slate-700 hover:text-indigo-600 cursor-pointer flex items-center gap-1"
+                          >
+                            <span>Lớp {selectedClassForGrading}</span>
+                          </button>
+                          <span className="text-slate-400">/</span>
+                          <span className="font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
+                            Đề thi: [{selectedExamForGrading.examCode}] {selectedExamForGrading.title}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedExamForGrading(null)}
+                            className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                          >
+                            <ArrowLeft className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Quay lại danh sách đề thi lớp {selectedClassForGrading}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* RENDER BẢNG ĐIỂM CHI TIẾT TỰ ĐỘNG LỌC ĐÚNG LỚP & ĐÚNG ĐỀ NÀY */}
+                      <GradebookReport
+                        exam={selectedExamForGrading}
+                        exams={savedExams}
+                        submissions={submissions}
+                        className={selectedClassForGrading}
+                        classes={classes}
+                        roster={studentRoster}
+                        initialClassFilter={selectedClassForGrading}
+                        initialExamFilter={selectedExamForGrading.id || selectedExamForGrading.examCode}
+                        onBackToExams={() => setSelectedExamForGrading(null)}
+                        onBackToClasses={() => {
+                          setSelectedClassForGrading(null);
+                          setSelectedExamForGrading(null);
+                        }}
+                        variants={variantPackage?.variants || []}
+                        answerMatrix={variantPackage?.answerMatrix || []}
+                        onSelectExam={(ex) => setSelectedExamForGrading(ex)}
+                        onUpdateSubmission={async (updated) => {
+                          setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+                          await saveSubmissionToFirestore(updated);
+                          showToast('Đã lưu kết quả phúc khảo bài thi thành công!');
+                        }}
+                        onDeleteSubmission={async (subId) => {
+                          await deleteSubmissionFromFirestore(subId);
+                          setSubmissions((prev) => prev.filter((s) => s.id !== subId));
+                          showToast('Đã xóa bài thi thành công.');
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* CHẾ ĐỘ 2: BẢNG ĐIỂM TỔNG HỢP TOÀN KHỐI (TẤT CẢ CÁC LỚP) */}
               {subGradingTab === 'gradebook' && (
                 <GradebookReport
                   exam={currentExam}
@@ -957,6 +1575,7 @@ export default function App() {
                   submissions={submissions}
                   className={currentExam?.className || submissions[0]?.studentClass || (studentRoster[0]?.className) || 'Toàn Khối'}
                   classes={classes}
+                  roster={studentRoster}
                   variants={variantPackage?.variants || []}
                   answerMatrix={variantPackage?.answerMatrix || []}
                   onSelectExam={(ex) => setCurrentExam(ex)}
@@ -973,44 +1592,7 @@ export default function App() {
                 />
               )}
 
-              {subGradingTab === 'classes' && (
-                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-base font-black text-slate-900">Quản lý Lớp học & Danh sách Học sinh</h3>
-                      <p className="text-xs text-slate-500">Đã lưu trữ {classes.length} lớp học và {studentRoster.length} học sinh trong cơ sở dữ liệu.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsClassModalOpen(true)}
-                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center gap-2 shadow-xs cursor-pointer"
-                    >
-                      <Users className="w-4 h-4" />
-                      <span>Mở Trình Quản Lý Chi Tiết Lớp & Học Sinh</span>
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {classes.map((cl) => (
-                      <div key={cl.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50 hover:bg-white hover:border-indigo-300 transition-all">
-                        <div className="font-bold text-sm text-slate-900">{cl.name}</div>
-                        <div className="text-xs text-slate-500 mt-1">Khối {cl.grade} • {cl.studentCount || 0} học sinh</div>
-                        <div className="mt-3 flex items-center justify-between text-xs text-indigo-600 font-bold">
-                          <span>Giáo viên: {cl.teacherName || 'Bộ môn'}</span>
-                          <button
-                            type="button"
-                            onClick={() => setIsClassModalOpen(true)}
-                            className="text-xs text-indigo-700 hover:underline cursor-pointer"
-                          >
-                            Xem DS →
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
+              {/* CHẾ ĐỘ 3: CHẤM BÀI TỰ LUẬN AI */}
               {subGradingTab === 'essay_grading' && (
                 <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6">
                   <div className="flex items-center justify-between">
@@ -1035,7 +1617,7 @@ export default function App() {
                     </div>
                     <ul className="list-disc list-inside space-y-1 text-amber-800">
                       <li>Bám sát từng bước nhỏ (0.25đ - 0.5đ) của barem SGK bộ môn Toán.</li>
-                      <li>Tuyệt đối không sử dụng các phương pháp ngoài SGK như quy tắc L'Hospital hoặc vi phân cấp cao.</li>
+                      <li>Tuyệt đối không sử dụng các phương pháp ngoài SGK như quy tắc L&apos;Hospital hoặc vi phân cấp cao.</li>
                       <li>Nhận diện nét viết tay, số mũ, căn thức và cho lời phê cụ thể cho học sinh.</li>
                     </ul>
                   </div>
@@ -1150,6 +1732,8 @@ export default function App() {
         roster={studentRoster}
         currentExam={currentExam}
         savedExams={savedExams}
+        initialClassId={classModalSelectedClass}
+        initialTab={classModalActiveTab}
         onSaveClass={handleSaveClass}
         onDeleteClass={handleDeleteClass}
         onSaveRoster={handleSaveRoster}

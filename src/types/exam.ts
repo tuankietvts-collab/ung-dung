@@ -191,6 +191,7 @@ export interface StudentSubmission {
   isTeacherReviewed?: boolean;
   reviewedAt?: string;
   appeals?: StudentAppeal[];
+  isPendingSubmission?: boolean;
 }
 
 export interface ClassGroup {
