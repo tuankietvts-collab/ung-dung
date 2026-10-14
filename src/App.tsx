@@ -45,7 +45,9 @@ import {
   Trophy,
   Filter,
   Search,
-  Copy
+  Copy,
+  AlertTriangle,
+  Loader2
 } from 'lucide-react';
 import { AppUser, Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile } from './types/exam';
 import {
@@ -73,9 +75,12 @@ import {
   logoutAppUser,
   getStoredExams,
   getStoredClasses,
+  getDeletedExamIds,
+  markExamAsDeletedLocally,
   subscribeTeachersFromFirestore
 } from './services/firebase';
 import { isInvalidStudentName } from './services/studentRosterParser';
+import { ExamSession, groupExamsIntoSessions } from './services/examSessionService';
 
 // Dedicated views
 import { OverviewDashboard } from './components/OverviewDashboard';
@@ -150,11 +155,25 @@ export default function App() {
   const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
   const [pendingTeacherCount, setPendingTeacherCount] = useState<number>(0);
 
-  // Drill-down navigation for classes & grading (User Request 3: Lớp học -> Bài kiểm tra -> Bảng điểm)
+  // Drill-down navigation for classes & grading (User Request 3: Lớp học -> Bài kiểm tra thường xuyên -> Bảng điểm & Thống kê)
   const [selectedClassForGrading, setSelectedClassForGrading] = useState<string | null>(null);
+  const [selectedSessionForGrading, setSelectedSessionForGrading] = useState<ExamSession | null>(null);
   const [selectedExamForGrading, setSelectedExamForGrading] = useState<Exam | null>(null);
   const [classModalSelectedClass, setClassModalSelectedClass] = useState<string>('12A1');
   const [classModalActiveTab, setClassModalActiveTab] = useState<'classes' | 'students' | 'quick_paste' | 'accounts' | 'assign_exam'>('classes');
+
+  // Modal / Confirm state for deleting exam (User Request: Xóa bài kiểm tra)
+  const [examToDelete, setExamToDelete] = useState<{
+    id: string;
+    examCode: string;
+    title: string;
+    subsCount: number;
+    subs: StudentSubmission[];
+    variantIds?: string[];
+    variantCodes?: string[];
+  } | null>(null);
+  const [deleteSubmissionsWithExam, setDeleteSubmissionsWithExam] = useState<boolean>(true);
+  const [isDeletingExam, setIsDeletingExam] = useState<boolean>(false);
 
   const [isCloudSaving, setIsCloudSaving] = useState<boolean>(false);
   const [backendUrl, setBackendUrl] = useState<string>('');
@@ -280,17 +299,70 @@ export default function App() {
   };
 
   // Delete Exam from Cloud
-  const handleDeleteExamFromCloud = async (examId: string) => {
+  const handleDeleteExamFromCloud = async (examId: string, examCode?: string) => {
     try {
-      await deleteExamFromFirestore(examId);
-      setSavedExams((prev) => prev.filter((e) => e.id !== examId));
-      if (currentExam?.id === examId) {
-        const remaining = savedExams.filter((e) => e.id !== examId);
+      await deleteExamFromFirestore(examId, examCode);
+      setSavedExams((prev) => prev.filter((e) => e.id !== examId && (!examCode || e.examCode !== examCode)));
+      if (currentExam?.id === examId || (examCode && currentExam?.examCode === examCode)) {
+        const remaining = savedExams.filter((e) => e.id !== examId && (!examCode || e.examCode !== examCode));
         setCurrentExam(remaining.length > 0 ? remaining[0] : null);
       }
       showToast('Đã xóa đề thi khỏi ngân hàng thành công.');
     } catch (e: any) {
       showToast(e.message || 'Lỗi xóa đề thi', 'error');
+    }
+  };
+
+  // Confirm delete exam with optional cleanup of submissions
+  const handleConfirmDeleteExam = async () => {
+    if (!examToDelete) return;
+    setIsDeletingExam(true);
+    try {
+      const { id, examCode, subs, variantIds = [], variantCodes = [] } = examToDelete;
+      const allIds = Array.from(new Set([id, ...variantIds])).filter(Boolean);
+      const allCodes = Array.from(new Set([examCode, ...variantCodes])).filter(Boolean);
+
+      // 1. Delete all variant documents from Firestore & mark locally
+      await Promise.allSettled(
+        allIds.map((vId, idx) => deleteExamFromFirestore(vId, allCodes[idx] || allCodes[0]))
+      );
+      allCodes.forEach((c) => {
+        markExamAsDeletedLocally(c, c);
+      });
+
+      // 2. Remove from savedExams state
+      const idSet = new Set(allIds);
+      const codeSet = new Set(allCodes);
+      setSavedExams((prev) => prev.filter((e) => !idSet.has(e.id) && !codeSet.has(e.examCode)));
+
+      // 3. Reset currentExam if it was this exam
+      if (currentExam && (idSet.has(currentExam.id) || codeSet.has(currentExam.examCode))) {
+        const remaining = savedExams.filter((e) => !idSet.has(e.id) && !codeSet.has(e.examCode));
+        setCurrentExam(remaining.length > 0 ? remaining[0] : null);
+      }
+
+      // 4. Reset selectedExamForGrading / selectedSessionForGrading if viewing this exam
+      if (
+        (selectedExamForGrading && (idSet.has(selectedExamForGrading.id) || codeSet.has(selectedExamForGrading.examCode))) ||
+        (selectedSessionForGrading && (idSet.has(selectedSessionForGrading.id) || codeSet.has(selectedSessionForGrading.sessionKey)))
+      ) {
+        setSelectedExamForGrading(null);
+        setSelectedSessionForGrading(null);
+      }
+
+      // 5. Clean up submissions if requested or present
+      if (deleteSubmissionsWithExam && subs && subs.length > 0) {
+        const subIdsToDelete = new Set(subs.map((s) => s.id));
+        await Promise.allSettled(subs.map((s) => deleteSubmissionFromFirestore(s.id)));
+        setSubmissions((prev) => prev.filter((s) => !subIdsToDelete.has(s.id)));
+      }
+
+      showToast(`Đã xóa bài kiểm tra "${examToDelete.title}" và các mã đề liên quan thành công!`);
+      setExamToDelete(null);
+    } catch (err: any) {
+      showToast(err.message || 'Lỗi khi xóa bài kiểm tra', 'error');
+    } finally {
+      setIsDeletingExam(false);
     }
   };
 
@@ -1210,80 +1282,23 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* CẤP 2: HIỂN THỊ CÁC BÀI HỌC SINH LÀM KIỂM TRA CỦA LỚP ĐÃ CHỌN (YÊU CẦU 3) */}
-                  {selectedClassForGrading && !selectedExamForGrading && (() => {
+                  {/* CẤP 2: HIỂN THỊ CÁC BÀI KIỂM TRA THƯỜNG XUYÊN CỦA LỚP ĐÃ CHỌN (GOM TẤT CẢ MÃ ĐỀ THÀNH ĐỢT KIỂM TRA) */}
+                  {selectedClassForGrading && !selectedSessionForGrading && !selectedExamForGrading && (() => {
                     const normCls = selectedClassForGrading.trim().toUpperCase().replace(/^LỚP\s+/i, '');
                     const classStudents = studentRoster.filter(
                       (s) =>
                         (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls &&
                         !isInvalidStudentName(s.fullName)
                     );
-                    const classSubs = submissions.filter(
-                      (s) => (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls
+
+                    // Gom các đề và bài nộp theo từng Đợt Kiểm Tra Thường Xuyên (Exam Sessions)
+                    const examSessions = groupExamsIntoSessions(
+                      savedExams,
+                      submissions,
+                      selectedClassForGrading,
+                      studentRoster,
+                      currentExam
                     );
-
-                    // Thu thập danh sách các bài kiểm tra của lớp
-                    const examMap = new Map<
-                      string,
-                      {
-                        id: string;
-                        examCode: string;
-                        title: string;
-                        durationMinutes: number;
-                        subs: StudentSubmission[];
-                        examObj?: Exam;
-                      }
-                    >();
-
-                    classSubs.forEach((sub) => {
-                      const key = sub.examId || sub.examCode;
-                      if (key) {
-                        if (!examMap.has(key)) {
-                          const found =
-                            savedExams.find((e) => e.id === sub.examId || e.examCode === sub.examCode) ||
-                            (currentExam && (currentExam.id === sub.examId || currentExam.examCode === sub.examCode)
-                              ? currentExam
-                              : undefined);
-                          examMap.set(key, {
-                            id: sub.examId || (found ? found.id : key),
-                            examCode: sub.examCode || (found ? found.examCode : key),
-                            title: found?.title || sub.examSnapshot?.title || `Bài kiểm tra ${sub.examCode}`,
-                            durationMinutes: found?.durationMinutes || sub.examSnapshot?.durationMinutes || 45,
-                            subs: [],
-                            examObj: found,
-                          });
-                        }
-                        examMap.get(key)!.subs.push(sub);
-                      }
-                    });
-
-                    // Bổ sung đề thi đang kích hoạt hoặc đề đã giao nếu lớp chưa có bài nộp
-                    if (currentExam && !examMap.has(currentExam.id) && !examMap.has(currentExam.examCode)) {
-                      examMap.set(currentExam.id, {
-                        id: currentExam.id,
-                        examCode: currentExam.examCode,
-                        title: currentExam.title,
-                        durationMinutes: currentExam.durationMinutes || 45,
-                        subs: [],
-                        examObj: currentExam,
-                      });
-                    }
-
-                    // Nếu vẫn ít đề, hiển thị thêm các đề từ ngân hàng đề thi
-                    savedExams.forEach((e) => {
-                      if (!examMap.has(e.id) && !examMap.has(e.examCode)) {
-                        examMap.set(e.id, {
-                          id: e.id,
-                          examCode: e.examCode,
-                          title: e.title,
-                          durationMinutes: e.durationMinutes || 45,
-                          subs: [],
-                          examObj: e,
-                        });
-                      }
-                    });
-
-                    const examList = Array.from(examMap.values());
 
                     return (
                       <div className="space-y-6 animate-in fade-in duration-200">
@@ -1291,7 +1306,11 @@ export default function App() {
                         <div className="flex items-center justify-between gap-3 flex-wrap">
                           <button
                             type="button"
-                            onClick={() => setSelectedClassForGrading(null)}
+                            onClick={() => {
+                              setSelectedClassForGrading(null);
+                              setSelectedSessionForGrading(null);
+                              setSelectedExamForGrading(null);
+                            }}
                             className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 font-bold text-xs border border-slate-300 shadow-2xs flex items-center gap-2 cursor-pointer transition-colors"
                           >
                             <ArrowLeft className="w-4 h-4 text-indigo-600" />
@@ -1322,16 +1341,15 @@ export default function App() {
                                 </span>
                               </div>
                               <h2 className="text-xl font-black text-slate-900 mt-1">
-                                Các Bài Học Sinh Làm Kiểm Tra (Lớp {selectedClassForGrading})
+                                Các Bài Kiểm Tra Thường Xuyên (Lớp {selectedClassForGrading})
                               </h2>
                               <p className="text-xs text-slate-500 mt-0.5">
-                                Thầy/Cô bấm vào một bài kiểm tra bên dưới để xem bảng điểm chi tiết của toàn bộ học sinh lớp {selectedClassForGrading}.
+                                Các mã đề trong cùng 1 đợt kiểm tra được tự động gom nhóm. Thầy/Cô bấm vào bài kiểm tra để xem bảng điểm, bài làm của từng em và thống kê câu đúng/sai.
                               </p>
                             </div>
                           </div>
 
                           <div className="flex items-center gap-2.5 flex-wrap">
-                            {/* NÚT CẬP NHẬT DANH SÁCH HỌC SINH NẰM NGAY ĐÂY (YÊU CẦU 1) */}
                             <button
                               type="button"
                               onClick={() => {
@@ -1360,149 +1378,189 @@ export default function App() {
                           </div>
                         </div>
 
-                        {/* DANH SÁCH CÁC BÀI KIỂM TRA HỌC SINH ĐÃ LÀM HOẶC ĐƯỢC GIAO */}
+                        {/* DANH SÁCH CÁC BÀI KIỂM TRA THƯỜNG XUYÊN CỦA LỚP */}
                         <div className="space-y-4">
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
                             <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
                               <BookOpen className="w-5 h-5 text-indigo-600" />
-                              <span>Danh Sách Các Bài Kiểm Tra Của Lớp ({examList.length} đề thi):</span>
+                              <span>Danh Sách Các Bài Kiểm Tra Thường Xuyên ({examSessions.length} đợt kiểm tra):</span>
                             </h3>
                             <span className="text-xs text-slate-500 font-semibold">
-                              Bấm vào bài kiểm tra để xem bảng điểm toàn bộ học sinh
+                              Bấm vào bài kiểm tra để xem bảng điểm & phân tích câu đúng/sai • Bấm icon thùng rác để xóa đợt thi
                             </span>
                           </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {examList.map((exItem) => {
-                              const submittedCount = exItem.subs.length;
-                              const rosterCount = Math.max(1, classStudents.length);
-                              const completionPercent = Math.min(100, Math.round((submittedCount / rosterCount) * 100));
+                          {examSessions.length === 0 ? (
+                            <div className="bg-white p-8 rounded-3xl border-2 border-dashed border-slate-300 text-center space-y-3">
+                              <BookOpen className="w-10 h-10 text-slate-400 mx-auto" />
+                              <h4 className="font-black text-slate-800 text-base">Chưa có bài kiểm tra thường xuyên nào cho lớp này</h4>
+                              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                                Thầy/Cô có thể tạo đề thi từ Ngân Hàng Đề Thi và giao cho học sinh làm bài trực tuyến.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {examSessions.map((session) => {
+                                const submittedCount = session.submittedCount;
+                                const rosterCount = Math.max(1, classStudents.length);
+                                const completionPercent = session.completionPercent;
 
-                              const scores = exItem.subs.map((s) => s.totalScore);
-                              const avg =
-                                scores.length > 0
-                                  ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)
-                                  : '—';
-                              const max = scores.length > 0 ? Math.max(...scores).toFixed(2) : '—';
-                              const min = scores.length > 0 ? Math.min(...scores).toFixed(2) : '—';
-                              const passRate =
-                                scores.length > 0
-                                  ? Math.round(
-                                      (scores.filter((sc) => sc >= 5.0).length / scores.length) * 100
-                                    )
-                                  : 0;
+                                return (
+                                  <div
+                                    key={session.id}
+                                    className="bg-white rounded-3xl border-2 border-slate-200 hover:border-indigo-500 hover:shadow-md transition-all p-5 flex flex-col justify-between space-y-4 group relative"
+                                  >
+                                    <div>
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-black bg-indigo-600 text-white shadow-2xs">
+                                            {session.sessionLabel}
+                                          </span>
+                                          {session.variantCodes.length > 1 ? (
+                                            <span
+                                              className="px-2.5 py-0.5 rounded-lg font-mono text-[11px] font-black bg-purple-100 text-purple-900 border border-purple-200"
+                                              title={`Gồm các mã đề: ${session.variantCodes.join(', ')}`}
+                                            >
+                                              Gồm {session.variantCodes.length} Mã Đề ({session.variantCodes[0]} - {session.variantCodes[session.variantCodes.length - 1]})
+                                            </span>
+                                          ) : (
+                                            <span className="px-2.5 py-0.5 rounded-lg font-mono text-[11px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                              MÃ ĐỀ: {session.variantCodes[0] || session.masterExam.examCode}
+                                            </span>
+                                          )}
+                                          <span className="text-xs text-slate-500 font-semibold flex items-center gap-1">
+                                            <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                            <span>{session.durationMinutes} phút</span>
+                                          </span>
+                                        </div>
 
-                              return (
-                                <div
-                                  key={exItem.id}
-                                  className="bg-white rounded-3xl border-2 border-slate-200 hover:border-indigo-500 hover:shadow-md transition-all p-5 flex flex-col justify-between space-y-4 group"
-                                >
-                                  <div>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="px-2.5 py-0.5 rounded-lg font-mono text-[11px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
-                                        MÃ ĐỀ: {exItem.examCode}
-                                      </span>
-                                      <span className="text-xs text-slate-500 font-semibold flex items-center gap-1">
-                                        <Clock className="w-3.5 h-3.5 text-slate-400" />
-                                        <span>{exItem.durationMinutes} phút</span>
-                                      </span>
+                                        {/* Nút Xóa bài kiểm tra nhanh góc trên */}
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setExamToDelete({
+                                              id: session.id,
+                                              examCode: session.variantCodes[0] || session.masterExam.examCode,
+                                              title: session.title,
+                                              subsCount: session.submissions.length,
+                                              subs: session.submissions,
+                                              variantIds: session.variantIds,
+                                              variantCodes: session.variantCodes,
+                                            })
+                                          }
+                                          className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
+                                          title="Xóa bài kiểm tra này nếu giáo viên thấy không còn cần thiết"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+
+                                      <h4 className="text-base font-black text-slate-900 group-hover:text-indigo-700 transition-colors mt-2.5">
+                                        {session.baseTitle}
+                                      </h4>
+
+                                      {session.topic && (
+                                        <p className="text-xs text-slate-500 mt-1 line-clamp-1">
+                                          Chủ đề: {session.topic}
+                                        </p>
+                                      )}
+
+                                      {/* Tiến độ nộp bài của lớp */}
+                                      <div className="mt-3 space-y-1.5">
+                                        <div className="flex items-center justify-between text-xs font-bold">
+                                          <span className="text-slate-600">
+                                            Đã nộp bài: <b className="text-indigo-700">{submittedCount}</b> / {classStudents.length} học sinh
+                                          </span>
+                                          <span className="text-indigo-600 font-mono font-black">
+                                            {completionPercent}%
+                                          </span>
+                                        </div>
+                                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+                                          <div
+                                            className="bg-gradient-to-r from-indigo-500 to-emerald-500 h-full rounded-full transition-all duration-300"
+                                            style={{ width: `${Math.max(4, completionPercent)}%` }}
+                                          />
+                                        </div>
+                                      </div>
+
+                                      {/* Tóm tắt điểm số */}
+                                      <div className="grid grid-cols-4 gap-2 mt-4 text-center bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80 text-xs">
+                                        <div>
+                                          <div className="text-[10px] text-slate-500 font-bold uppercase">Điểm TB</div>
+                                          <div className="font-black text-indigo-700 text-sm mt-0.5">{session.avgScore}</div>
+                                        </div>
+                                        <div>
+                                          <div className="text-[10px] text-slate-500 font-bold uppercase">Cao Nhất</div>
+                                          <div className="font-extrabold text-emerald-700 text-sm mt-0.5">{session.highestScore}</div>
+                                        </div>
+                                        <div>
+                                          <div className="text-[10px] text-slate-500 font-bold uppercase">Thấp Nhất</div>
+                                          <div className="font-extrabold text-rose-700 text-sm mt-0.5">{session.lowestScore}</div>
+                                        </div>
+                                        <div>
+                                          <div className="text-[10px] text-slate-500 font-bold uppercase">Đạt (≥5đ)</div>
+                                          <div className="font-black text-slate-800 text-sm mt-0.5">{session.passRate}%</div>
+                                        </div>
+                                      </div>
                                     </div>
 
-                                    <h4 className="text-base font-black text-slate-900 group-hover:text-indigo-700 transition-colors mt-2">
-                                      {exItem.title}
-                                    </h4>
+                                    {/* NÚT BẤM VÀO BÀI KIỂM TRA SẼ HIỂN THỊ BẢNG ĐIỂM + NÚT XÓA BÀI KIỂM TRA */}
+                                    <div className="pt-2 flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedSessionForGrading(session);
+                                          setSelectedExamForGrading(session.masterExam);
+                                        }}
+                                        className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-black text-xs shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all"
+                                      >
+                                        <FileSpreadsheet className="w-4 h-4 text-amber-300" />
+                                        <span>Bấm Vào Xem Bảng Điểm & Thống Kê →</span>
+                                      </button>
 
-                                    {/* Tiến độ nộp bài của lớp */}
-                                    <div className="mt-3 space-y-1.5">
-                                      <div className="flex items-center justify-between text-xs font-bold">
-                                        <span className="text-slate-600">
-                                          Đã nộp bài: <b className="text-indigo-700">{submittedCount}</b> / {classStudents.length} học sinh
-                                        </span>
-                                        <span className="text-indigo-600 font-mono font-black">
-                                          {completionPercent}%
-                                        </span>
-                                      </div>
-                                      <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
-                                        <div
-                                          className="bg-gradient-to-r from-indigo-500 to-emerald-500 h-full rounded-full transition-all duration-300"
-                                          style={{ width: `${Math.max(4, completionPercent)}%` }}
-                                        />
-                                      </div>
-                                    </div>
-
-                                    {/* Tóm tắt điểm số */}
-                                    <div className="grid grid-cols-4 gap-2 mt-4 text-center bg-slate-50 p-2.5 rounded-2xl border border-slate-200/80 text-xs">
-                                      <div>
-                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Điểm TB</div>
-                                        <div className="font-black text-indigo-700 text-sm mt-0.5">{avg}</div>
-                                      </div>
-                                      <div>
-                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Cao Nhất</div>
-                                        <div className="font-extrabold text-emerald-700 text-sm mt-0.5">{max}</div>
-                                      </div>
-                                      <div>
-                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Thấp Nhất</div>
-                                        <div className="font-extrabold text-rose-700 text-sm mt-0.5">{min}</div>
-                                      </div>
-                                      <div>
-                                        <div className="text-[10px] text-slate-500 font-bold uppercase">Đạt (≥5đ)</div>
-                                        <div className="font-black text-slate-800 text-sm mt-0.5">{passRate}%</div>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  {/* NÚT BẤM VÀO BÀI KIỂM TRA SẼ HIỂN THỊ BẢNG ĐIỂM (YÊU CẦU 3) */}
-                                  <div className="pt-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const targetExam =
-                                          exItem.examObj ||
-                                          savedExams.find((e) => e.id === exItem.id || e.examCode === exItem.examCode) ||
-                                          currentExam;
-                                        if (targetExam) {
-                                          setSelectedExamForGrading(targetExam);
-                                        } else {
-                                          // Tạo Exam giả định nếu chỉ có mã đề trong bài nộp
-                                          const synthExam: Exam = {
-                                            id: exItem.id,
-                                            examCode: exItem.examCode,
-                                            title: exItem.title,
-                                            grade: '12',
-                                            durationMinutes: exItem.durationMinutes,
-                                            totalPoints: 10,
-                                            multipleChoice: [],
-                                            trueFalseQuestions: [],
-                                            essays: [],
-                                            createdAt: new Date().toISOString(),
-                                          };
-                                          setSelectedExamForGrading(synthExam);
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setExamToDelete({
+                                            id: session.id,
+                                            examCode: session.variantCodes[0] || session.masterExam.examCode,
+                                            title: session.title,
+                                            subsCount: session.submissions.length,
+                                            subs: session.submissions,
+                                            variantIds: session.variantIds,
+                                            variantCodes: session.variantCodes,
+                                          })
                                         }
-                                      }}
-                                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-black text-xs shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all"
-                                    >
-                                      <FileSpreadsheet className="w-4 h-4 text-amber-300" />
-                                      <span>Bấm Vào Xem Bảng Điểm Toàn Bộ Học Sinh →</span>
-                                    </button>
+                                        className="py-2.5 px-3 rounded-xl bg-slate-50 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 hover:border-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs shrink-0"
+                                        title="Xóa bài kiểm tra này nếu giáo viên thấy không còn cần thiết"
+                                      >
+                                        <Trash2 className="w-4 h-4 text-rose-500" />
+                                        <span className="hidden sm:inline">Xóa Đợt Thi</span>
+                                      </button>
+                                    </div>
                                   </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
                   })()}
 
                   {/* CẤP 3: HIỂN THỊ BẢNG ĐIỂM CỦA TOÀN BỘ HỌC SINH LÀM BÀI KIỂM TRA ĐÓ (YÊU CẦU 3) */}
-                  {selectedClassForGrading && selectedExamForGrading && (
+                  {selectedClassForGrading && (selectedSessionForGrading || selectedExamForGrading) && (
                     <div className="space-y-6 animate-in fade-in duration-200">
                       {/* BREADCRUMB ĐIỀU HƯỚNG CẤP 3 */}
                       <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-2 flex-wrap text-xs">
                           <button
                             type="button"
-                            onClick={() => setSelectedClassForGrading(null)}
+                            onClick={() => {
+                              setSelectedClassForGrading(null);
+                              setSelectedSessionForGrading(null);
+                              setSelectedExamForGrading(null);
+                            }}
                             className="font-bold text-slate-500 hover:text-indigo-600 cursor-pointer"
                           >
                             Tất cả lớp
@@ -1510,47 +1568,122 @@ export default function App() {
                           <span className="text-slate-400">/</span>
                           <button
                             type="button"
-                            onClick={() => setSelectedExamForGrading(null)}
+                            onClick={() => {
+                              setSelectedSessionForGrading(null);
+                              setSelectedExamForGrading(null);
+                            }}
                             className="font-bold text-slate-700 hover:text-indigo-600 cursor-pointer flex items-center gap-1"
                           >
                             <span>Lớp {selectedClassForGrading}</span>
                           </button>
                           <span className="text-slate-400">/</span>
                           <span className="font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
-                            Đề thi: [{selectedExamForGrading.examCode}] {selectedExamForGrading.title}
+                            {selectedSessionForGrading ? selectedSessionForGrading.title : `Đề thi: [${selectedExamForGrading?.examCode}] ${selectedExamForGrading?.title}`}
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {/* NÚT XÓA BÀI KIỂM TRA TỪ TRANG BẢNG ĐIỂM */}
                           <button
                             type="button"
-                            onClick={() => setSelectedExamForGrading(null)}
+                            onClick={() => {
+                              if (selectedSessionForGrading) {
+                                setExamToDelete({
+                                  id: selectedSessionForGrading.id,
+                                  examCode: selectedSessionForGrading.variantCodes[0] || selectedSessionForGrading.masterExam.examCode,
+                                  title: selectedSessionForGrading.title,
+                                  subsCount: selectedSessionForGrading.submissions.length,
+                                  subs: selectedSessionForGrading.submissions,
+                                  variantIds: selectedSessionForGrading.variantIds,
+                                  variantCodes: selectedSessionForGrading.variantCodes,
+                                });
+                              } else if (selectedExamForGrading) {
+                                const normCls = selectedClassForGrading.trim().toUpperCase().replace(/^LỚP\s+/i, '');
+                                const relatedSubs = submissions.filter(
+                                  (s) =>
+                                    (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls &&
+                                    (s.examId === selectedExamForGrading.id || s.examCode === selectedExamForGrading.examCode)
+                                );
+                                setExamToDelete({
+                                  id: selectedExamForGrading.id,
+                                  examCode: selectedExamForGrading.examCode,
+                                  title: selectedExamForGrading.title,
+                                  subsCount: relatedSubs.length,
+                                  subs: relatedSubs,
+                                });
+                              }
+                            }}
+                            className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-700 font-bold text-xs flex items-center gap-1.5 cursor-pointer border border-slate-300 hover:border-rose-300 shadow-2xs transition-colors"
+                            title="Xóa bài kiểm tra này nếu giáo viên thấy không còn cần thiết"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                            <span>Xóa Đợt Kiểm Tra Này</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSessionForGrading(null);
+                              setSelectedExamForGrading(null);
+                            }}
                             className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
                           >
                             <ArrowLeft className="w-3.5 h-3.5 text-indigo-600" />
-                            <span>Quay lại danh sách đề thi lớp {selectedClassForGrading}</span>
+                            <span>Quay lại danh sách bài kiểm tra lớp {selectedClassForGrading}</span>
                           </button>
                         </div>
                       </div>
 
-                      {/* RENDER BẢNG ĐIỂM CHI TIẾT TỰ ĐỘNG LỌC ĐÚNG LỚP & ĐÚNG ĐỀ NÀY */}
+                      {/* RENDER BẢNG ĐIỂM CHI TIẾT TỰ ĐỘNG LỌC ĐÚNG LỚP & ĐÚNG ĐỢT NÀY */}
                       <GradebookReport
-                        exam={selectedExamForGrading}
+                        session={selectedSessionForGrading}
+                        exam={selectedExamForGrading || selectedSessionForGrading?.masterExam}
                         exams={savedExams}
                         submissions={submissions}
                         className={selectedClassForGrading}
                         classes={classes}
                         roster={studentRoster}
                         initialClassFilter={selectedClassForGrading}
-                        initialExamFilter={selectedExamForGrading.id || selectedExamForGrading.examCode}
-                        onBackToExams={() => setSelectedExamForGrading(null)}
+                        initialExamFilter={selectedSessionForGrading?.id || selectedExamForGrading?.id || selectedExamForGrading?.examCode}
+                        onBackToExams={() => {
+                          setSelectedSessionForGrading(null);
+                          setSelectedExamForGrading(null);
+                        }}
                         onBackToClasses={() => {
                           setSelectedClassForGrading(null);
+                          setSelectedSessionForGrading(null);
                           setSelectedExamForGrading(null);
                         }}
                         variants={variantPackage?.variants || []}
                         answerMatrix={variantPackage?.answerMatrix || []}
                         onSelectExam={(ex) => setSelectedExamForGrading(ex)}
+                        onDeleteExam={(examId, examCode) => {
+                          if (selectedSessionForGrading) {
+                            setExamToDelete({
+                              id: selectedSessionForGrading.id,
+                              examCode: selectedSessionForGrading.variantCodes[0] || selectedSessionForGrading.masterExam.examCode,
+                              title: selectedSessionForGrading.title,
+                              subsCount: selectedSessionForGrading.submissions.length,
+                              subs: selectedSessionForGrading.submissions,
+                              variantIds: selectedSessionForGrading.variantIds,
+                              variantCodes: selectedSessionForGrading.variantCodes,
+                            });
+                          } else if (selectedExamForGrading) {
+                            const normCls = (selectedClassForGrading || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+                            const relatedSubs = submissions.filter(
+                              (s) =>
+                                (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls &&
+                                (s.examId === examId || s.examCode === examCode)
+                            );
+                            setExamToDelete({
+                              id: examId,
+                              examCode: examCode || selectedExamForGrading.examCode,
+                              title: selectedExamForGrading.title,
+                              subsCount: relatedSubs.length,
+                              subs: relatedSubs,
+                            });
+                          }
+                        }}
                         onUpdateSubmission={async (updated) => {
                           setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
                           await saveSubmissionToFirestore(updated);
@@ -1579,6 +1712,19 @@ export default function App() {
                   variants={variantPackage?.variants || []}
                   answerMatrix={variantPackage?.answerMatrix || []}
                   onSelectExam={(ex) => setCurrentExam(ex)}
+                  onDeleteExam={(examId, examCode) => {
+                    const targetExam = savedExams.find((e) => e.id === examId || e.examCode === examCode) || currentExam;
+                    const relatedSubs = submissions.filter(
+                      (s) => s.examId === examId || s.examCode === examCode
+                    );
+                    setExamToDelete({
+                      id: examId,
+                      examCode: examCode || targetExam?.examCode || '',
+                      title: targetExam?.title || `Bài kiểm tra ${examCode}`,
+                      subsCount: relatedSubs.length,
+                      subs: relatedSubs,
+                    });
+                  }}
                   onUpdateSubmission={async (updated) => {
                     setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
                     await saveSubmissionToFirestore(updated);
@@ -1724,6 +1870,122 @@ export default function App() {
       {/* ========================================================================= */}
       {/* MODALS & WORKFLOW DRAWERS                                                 */}
       {/* ========================================================================= */}
+      {/* MODAL XÁC NHẬN XÓA BÀI KIỂM TRA (Yêu cầu giáo viên) */}
+      {examToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="p-5 bg-gradient-to-r from-rose-50 via-red-50 to-amber-50 border-b border-rose-100 flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-rose-600 text-white flex items-center justify-center shadow-md shadow-rose-600/30 shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Xác Nhận Xóa Bài Kiểm Tra</span>
+                </div>
+                <h3 className="text-lg font-black text-slate-900 mt-1">
+                  Xóa Bài Kiểm Tra Khỏi Hệ Thống?
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Thầy/Cô có thể gỡ bỏ bài kiểm tra này nếu thấy không còn cần thiết.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExamToDelete(null)}
+                disabled={isDeletingExam}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              {/* Exam Information Card */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/90 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-xs font-black bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-md border border-indigo-200">
+                    MÃ ĐỀ: {examToDelete.examCode}
+                  </span>
+                  {examToDelete.subsCount > 0 ? (
+                    <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-md border border-amber-200">
+                      Đã có {examToDelete.subsCount} bài nộp của học sinh
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-slate-600 bg-slate-200/70 px-2.5 py-0.5 rounded-md">
+                      Chưa có học sinh nộp bài
+                    </span>
+                  )}
+                </div>
+                <h4 className="font-black text-slate-900 text-sm">
+                  {examToDelete.title}
+                </h4>
+              </div>
+
+              {/* Warning & Option for submissions */}
+              {examToDelete.subsCount > 0 ? (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-2.5">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Lưu ý về dữ liệu bài làm của học sinh:</span>
+                  </div>
+                  <p className="text-amber-800 leading-relaxed">
+                    Bài kiểm tra này hiện có <b>{examToDelete.subsCount} lượt nộp bài</b> từ học sinh. Thầy/Cô có thể chọn đồng thời dọn dẹp các bài nộp này để không làm ảnh hưởng đến bảng điểm hoặc điểm trung bình của lớp.
+                  </p>
+                  <label className="flex items-start gap-2.5 pt-1 cursor-pointer font-bold text-slate-900 select-none bg-white/80 p-3 rounded-xl border border-amber-300/80">
+                    <input
+                      type="checkbox"
+                      checked={deleteSubmissionsWithExam}
+                      onChange={(e) => setDeleteSubmissionsWithExam(e.target.checked)}
+                      className="w-4 h-4 mt-0.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
+                    />
+                    <span className="text-xs text-slate-800">
+                      Đồng thời xóa toàn bộ {examToDelete.subsCount} bài nộp & điểm số của bài thi này khỏi Cloud Firestore
+                    </span>
+                  </label>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                  Bài kiểm tra sẽ được gỡ bỏ khỏi danh sách bài kiểm tra của lớp và ngân hàng đề thi. Học sinh sẽ không thể thấy hoặc làm bài kiểm tra này nữa.
+                </p>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setExamToDelete(null)}
+                disabled={isDeletingExam}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer transition-colors"
+              >
+                Giữ Lại / Không Xóa
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteExam}
+                disabled={isDeletingExam}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs flex items-center gap-2 shadow-md shadow-rose-600/20 cursor-pointer transition-all disabled:opacity-50"
+              >
+                {isDeletingExam ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Đang Xóa Bài Kiểm Tra...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Xác Nhận Xóa Bài Kiểm Tra</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Quản lý lớp học & Học sinh Modal */}
       <ClassManagementModal
         isOpen={isClassModalOpen}

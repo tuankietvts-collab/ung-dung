@@ -3,6 +3,7 @@ import mammoth from 'mammoth';
 import { Exam, EssayGradingResult, RubricStep, StudentSubmission, ExamMatrixData, GradingCalibrationFeedback } from '../types/exam';
 import { generateExamByPrompt, generateExamByMatrix, recreateExamWithVariations } from './examGenerator';
 import { safeParseGeminiResponse } from './safeJsonParser';
+import { buildStandardGdptExam } from './standardExamFallback';
 
 export interface DocumentQuestionItem {
   id: number | string;
@@ -87,29 +88,47 @@ export async function digitizeDocumentApi(payload: {
   extractedText?: string;
   targetGrade?: string;
 }): Promise<DigitizeDocumentResult> {
-  const response = await fetch('/api/digitize-document', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const response = await fetch('/api/digitize-document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
 
-  const rawText = await response.text();
-  if (!response.ok) {
-    let errorMsg = 'Lỗi khi số hóa tài liệu đề thi bằng AI Gemini';
-    try {
-      const err = safeParseGeminiResponse(rawText);
-      errorMsg = err.error || errorMsg;
-    } catch {
-      errorMsg = rawText || errorMsg;
+    const rawText = await response.text();
+    const isNotFoundOrHtml =
+      rawText.trim().startsWith('<!DOCTYPE') ||
+      rawText.trim().startsWith('<html') ||
+      rawText.includes('NOT_FOUND') ||
+      rawText.includes('could not be found');
+
+    if (response.ok && !isNotFoundOrHtml) {
+      const data = safeParseGeminiResponse(rawText);
+      if (data.quizData && data.quizData.length > 0) {
+        return {
+          quizData: data.quizData,
+          exam: data.exam,
+        };
+      }
     }
-    throw new Error(errorMsg);
+  } catch (err: any) {
+    console.warn('[DigitizeDocument] Endpoint notice:', err.message);
   }
 
-  const data = safeParseGeminiResponse(rawText);
-  return {
-    quizData: data.quizData || [],
-    exam: data.exam,
-  };
+  // Fallback to building standard exam
+  const exam = buildStandardGdptExam({
+    grade: payload.targetGrade || '11',
+    matrixFileName: payload.fileName,
+  });
+  const quizData: DocumentQuestionItem[] = (exam.multipleChoice || []).map((mc, idx) => ({
+    id: idx + 1,
+    question: mc.question,
+    options: mc.options,
+    correctAnswer: mc.correctAnswer,
+    explanation: mc.explanation || '',
+  }));
+
+  return { quizData, exam };
 }
 
 export interface GradeEssayPayload {

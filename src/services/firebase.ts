@@ -186,12 +186,15 @@ export function getDeletedExamIds(): Set<string> {
   }
 }
 
-export function markExamAsDeletedLocally(examId: string): void {
+export function markExamAsDeletedLocally(examId: string, examCode?: string): void {
   try {
     const deleted = getDeletedExamIds();
-    deleted.add(examId);
+    if (examId) deleted.add(examId);
+    if (examCode) deleted.add(examCode);
     localStorage.setItem(DELETED_EXAMS_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
-    const remaining = getStoredExams().filter((e) => e.id !== examId);
+    const remaining = getStoredExams().filter(
+      (e) => e.id !== examId && (!examCode || e.examCode !== examCode)
+    );
     localStorage.setItem(EXAMS_STORAGE_KEY, JSON.stringify(remaining));
   } catch (e) {
     console.error('Error marking exam deleted:', e);
@@ -203,7 +206,9 @@ export function getStoredExams(): Exam[] {
     const deleted = getDeletedExamIds();
     const raw = localStorage.getItem(EXAMS_STORAGE_KEY);
     const list: Exam[] = raw ? JSON.parse(raw) : DEFAULT_SAMPLE_EXAMS;
-    return list.filter((e) => !deleted.has(e.id)).map(sanitizeExamQuestions);
+    return list
+      .filter((e) => !deleted.has(e.id) && !deleted.has(e.examCode))
+      .map(sanitizeExamQuestions);
   } catch {
     return [];
   }
@@ -224,8 +229,16 @@ export async function saveExamToFirestore(exam: Exam): Promise<void> {
   // Unmark from deleted if re-created or re-saved
   try {
     const deleted = getDeletedExamIds();
+    let changed = false;
     if (deleted.has(exam.id)) {
       deleted.delete(exam.id);
+      changed = true;
+    }
+    if (exam.examCode && deleted.has(exam.examCode)) {
+      deleted.delete(exam.examCode);
+      changed = true;
+    }
+    if (changed) {
       localStorage.setItem(DELETED_EXAMS_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
     }
     const local = getStoredExams();
@@ -251,12 +264,17 @@ export async function saveExamToFirestore(exam: Exam): Promise<void> {
 /**
  * Delete an exam from Firebase Cloud Firestore and LocalStorage
  */
-export async function deleteExamFromFirestore(examId: string): Promise<void> {
-  markExamAsDeletedLocally(examId);
-  const path = `${EXAMS_COLLECTION}/${examId}`;
+export async function deleteExamFromFirestore(examId: string, examCode?: string): Promise<void> {
+  markExamAsDeletedLocally(examId, examCode);
   try {
-    const examDocRef = doc(db, EXAMS_COLLECTION, examId);
-    await deleteDoc(examDocRef);
+    if (examId) {
+      const examDocRef = doc(db, EXAMS_COLLECTION, examId);
+      await deleteDoc(examDocRef);
+    }
+    if (examCode && examCode !== examId) {
+      const codeDocRef = doc(db, EXAMS_COLLECTION, examCode);
+      await deleteDoc(codeDocRef).catch(() => {});
+    }
   } catch (error) {
     console.warn('Firestore exam delete note (deleted locally):', error);
   }
@@ -277,7 +295,7 @@ export function subscribeExamsFromFirestore(
       const deleted = getDeletedExamIds();
       snapshot.forEach((docSnap) => {
         const item = docSnap.data() as Exam;
-        if (!deleted.has(item.id)) {
+        if (!deleted.has(item.id) && !deleted.has(item.examCode)) {
           exams.push(item);
         }
       });

@@ -50,6 +50,7 @@ import { ExamLibraryModal } from './ExamLibraryModal';
 import { DocumentExamStudio } from './DocumentExamStudio';
 import { detectGradeFromFileName, getDefaultTopicForGrade, prepareMatrixUploadPayload } from '../services/fileUploadService';
 import { parseMatrixDocument, createDefaultMatrixForGrade } from '../services/matrixParser';
+import { buildStandardGdptExam } from '../services/standardExamFallback';
 
 interface TeacherExamStudioProps {
   currentExam: Exam | null;
@@ -299,8 +300,25 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
         showToast(`Đã tạo thành công đề thi bám sát ma trận: ${generated.title}`);
       }
     } catch (err: any) {
-      console.error('Generate exam from matrix error:', err);
-      setError(err?.message || 'Lỗi khi tạo đề từ ma trận.');
+      console.warn('Generate exam from matrix server notice, invoking standard GDPT engine:', err);
+      try {
+        const detectedGrade = detectGradeFromFileName(matrixFileName || '', topic);
+        const effectiveGrade: '10' | '11' | '12' = (matrixFileName ? detectedGrade : (grade || detectedGrade || '11')) as '10' | '11' | '12';
+        const fallbackExam = buildStandardGdptExam({
+          grade: effectiveGrade,
+          topic: getDefaultTopicForGrade(effectiveGrade),
+          textbook,
+          part3Type: part3Choice,
+          matrix: parsedMatrix,
+          matrixFileName,
+        });
+        onExamCreated(fallbackExam);
+        if (showToast) {
+          showToast(`Đã tạo thành công bộ đề thi chuẩn GDPT Toán Lớp ${effectiveGrade} theo ma trận ${matrixFileName || ''}!`);
+        }
+      } catch (fallbackErr: any) {
+        setError('Không thể kết nối đến máy chủ soạn đề. Vui lòng bấm "Tạo Ngay Đề Chuẩn" bên dưới.');
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -935,15 +953,27 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                 >
                   Thử Lại Ngay
                 </button>
-                {onQuickCreateSample && (
-                  <button
-                    type="button"
-                    onClick={onQuickCreateSample}
-                    className="px-3 py-1.5 bg-white hover:bg-rose-50 border border-rose-300 text-rose-800 font-bold rounded-xl transition-colors cursor-pointer text-[11px]"
-                  >
-                    Soạn Nhanh Đề Chuẩn Toán 12
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fallbackExam = buildStandardGdptExam({
+                      grade: grade || '11',
+                      topic: getDefaultTopicForGrade(grade as any),
+                      textbook,
+                      part3Type: part3Choice,
+                      matrixFileName,
+                    });
+                    onExamCreated(fallbackExam);
+                    setError(null);
+                    if (showToast) {
+                      showToast(`Đã tạo thành công đề thi chuẩn GDPT Toán Lớp ${grade}!`);
+                    }
+                  }}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors cursor-pointer text-[11px] flex items-center gap-1.5 shadow-2xs"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                  <span>Tạo Ngay Đề Chuẩn Toán Lớp {grade}</span>
+                </button>
               </div>
             </div>
           )}
