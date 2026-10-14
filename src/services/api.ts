@@ -5,6 +5,8 @@ import { generateExamByPrompt, generateExamByMatrix, recreateExamWithVariations 
 import { safeParseGeminiResponse } from './safeJsonParser';
 import { buildStandardGdptExam } from './standardExamFallback';
 
+import { parseExamFromDocumentText } from './examFileDigitizer';
+
 export interface DocumentQuestionItem {
   id: number | string;
   question: string;
@@ -40,7 +42,7 @@ export async function prepareDocumentPayload(file: File): Promise<{
   // 1. Image formats (.png, .jpg, .jpeg, etc.)
   if (file.type.startsWith('image/')) {
     const b64 = await fileToBase64(file);
-    return { isMultimodal: true, fileBase64: b64, mimeType: file.type, fileName: file.name };
+    return { isMultimodal: true, fileBase64: b64, mimeType: file.type || 'image/jpeg', fileName: file.name };
   }
 
   // 2. PDF (.pdf)
@@ -53,7 +55,23 @@ export async function prepareDocumentPayload(file: File): Promise<{
   if (fileName.endsWith('.docx')) {
     const arrayBuffer = await file.arrayBuffer();
     const res = await mammoth.extractRawText({ arrayBuffer });
-    return { isMultimodal: false, extractedText: res.value, fileName: file.name };
+    let firstImageB64: string | undefined;
+    try {
+      const htmlRes = await mammoth.convertToHtml({ arrayBuffer });
+      const imgMatch = htmlRes.value.match(/<img[^>]+src=["']data:(image\/[^;]+);base64,([^"']+)["']/i);
+      if (imgMatch) {
+        firstImageB64 = imgMatch[2];
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      isMultimodal: Boolean(firstImageB64),
+      extractedText: res.value,
+      fileName: file.name,
+      fileBase64: firstImageB64,
+      mimeType: firstImageB64 ? 'image/png' : undefined,
+    };
   }
 
   // 4. Excel spreadsheet (.xlsx, .xls)
@@ -80,7 +98,7 @@ export async function prepareDocumentPayload(file: File): Promise<{
   throw new Error(`Định dạng file ${file.name} chưa được hỗ trợ. Vui lòng tải .pdf, .docx, .xlsx, .xls, ảnh hoặc .txt.`);
 }
 
-// Digitize uploaded document via AI Gemini
+// Digitize uploaded document via AI Gemini or client-side parser
 export async function digitizeDocumentApi(payload: {
   fileName: string;
   fileBase64?: string;
@@ -88,6 +106,22 @@ export async function digitizeDocumentApi(payload: {
   extractedText?: string;
   targetGrade?: string;
 }): Promise<DigitizeDocumentResult> {
+  // 1. If text was extracted from document (.docx, .txt, .xlsx), parse the EXACT exam directly!
+  if (payload.extractedText && payload.extractedText.trim().length > 50) {
+    const parsedExam = parseExamFromDocumentText(payload.extractedText, payload.fileName, payload.targetGrade);
+    if (parsedExam && (parsedExam.multipleChoice.length > 0 || parsedExam.trueFalseQuestions.length > 0 || parsedExam.essays.length > 0)) {
+      const quizData: DocumentQuestionItem[] = parsedExam.multipleChoice.map((mc, idx) => ({
+        id: idx + 1,
+        question: mc.question,
+        options: mc.options,
+        correctAnswer: mc.correctAnswer,
+        explanation: mc.explanation || '',
+      }));
+      return { quizData, exam: parsedExam };
+    }
+  }
+
+  // 2. Try server endpoint /api/digitize-document
   try {
     const response = await fetch('/api/digitize-document', {
       method: 'POST',
@@ -104,9 +138,15 @@ export async function digitizeDocumentApi(payload: {
 
     if (response.ok && !isNotFoundOrHtml) {
       const data = safeParseGeminiResponse(rawText);
-      if (data.quizData && data.quizData.length > 0) {
+      if (data.exam && (data.exam.multipleChoice?.length > 0 || data.exam.trueFalseQuestions?.length > 0 || data.exam.essays?.length > 0)) {
         return {
-          quizData: data.quizData,
+          quizData: data.quizData || (data.exam.multipleChoice || []).map((mc: any, idx: number) => ({
+            id: idx + 1,
+            question: mc.question,
+            options: mc.options,
+            correctAnswer: mc.correctAnswer,
+            explanation: mc.explanation || '',
+          })),
           exam: data.exam,
         };
       }
@@ -115,7 +155,7 @@ export async function digitizeDocumentApi(payload: {
     console.warn('[DigitizeDocument] Endpoint notice:', err.message);
   }
 
-  // Fallback to building standard exam
+  // 3. Fallback: Parse whatever text exists or build standard exam with authentic topic
   const exam = buildStandardGdptExam({
     grade: payload.targetGrade || '11',
     matrixFileName: payload.fileName,

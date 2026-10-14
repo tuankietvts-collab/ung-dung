@@ -750,28 +750,56 @@ app.post('/api/digitize-document', async (req, res) => {
 
     const promptInstruction = `
 Bạn là chuyên gia số hóa đề thi môn Toán và khảo thí GDPT 2018.
-Nhiệm vụ: Đọc kỹ tài liệu đính kèm (từ file "${fileName}") và trích xuất/chuyển đổi toàn bộ thành các câu hỏi trắc nghiệm khách quan chuẩn khảo thí.
+Nhiệm vụ TỐI QUAN TRỌNG: Đọc kỹ tài liệu đính kèm (từ file "${fileName}") và trích xuất/chuyển đổi CHÍNH XÁC 100% CÁC CÂU HỎI TRONG ĐỀ GỐC NÀY.
+TUYỆT ĐỐI KHÔNG TỰ BỊA RA ĐỀ KHÁC, KHÔNG ĐỔI THÀNH ĐỀ MẶC ĐỊNH KHÔNG LIÊN QUAN. GIỮ ĐÚNG NỘI DUNG, CÔNG THỨC TOÁN HỌC VÀ ĐÁP ÁN CỦA ĐỀ GỐC.
 
 QUY TẮC CÔNG THỨC & NỘI DUNG BẮT BUỘC:
 1. Công thức Toán: Bọc TẤT CẢ công thức, ký hiệu toán học, biểu thức bằng cú pháp LaTeX chuẩn trong dấu đô-la đơn $...$ hoặc $$...$$ (Ví dụ: $f(x) = x^2 - 3x + 2$, $\\int_0^1 x\\,\\mathrm{d}x$, $(-\\infty; 2)$).
 2. Tiền tố câu hỏi: KHÔNG ghi "Câu 1:", "Câu 2:" ở đầu trường 'question' vì giao diện sẽ tự động đánh số.
-3. Đáp án: Đảm bảo có đầy đủ các lựa chọn A, B, C, D trong mảng options. Xác định chính xác phương án đúng (A, B, C, hoặc D) và viết lời giải thích chi tiết từng bước.
-4. Trích xuất đầy đủ tất cả các câu hỏi trong tài liệu. Nếu tài liệu là văn bản hoặc bảng câu hỏi, hãy số hóa đầy đủ toàn bộ các câu hỏi.
+3. Đáp án: Đảm bảo có đầy đủ các lựa chọn A, B, C, D trong mảng options của Phần I. Xác định chính xác phương án đúng (A, B, C, hoặc D) và viết lời giải thích chi tiết.
+4. Trích xuất đầy đủ cả 3 phần của đề thi GDPT 2018 (nếu tài liệu có):
+   - Phần I: Trắc nghiệm 4 lựa chọn (multipleChoice)
+   - Phần II: Trắc nghiệm Đúng/Sai (trueFalseQuestions) kèm 4 ý a, b, c, d
+   - Phần III: Câu trả lời ngắn hoặc Tự luận (essays)
 
 BẮT BUỘC trả về DUY NHẤT định dạng JSON thuần túy (không bọc markdown \`\`\`json ngoài JSON) với schema:
 {
-  "title": "ĐỀ THI SỐ HÓA TỪ ${fileName.replace(/\\.[^/.]+$/, '').toUpperCase()}",
+  "title": "ĐỀ THI TÁI TẠO TỪ ${fileName.replace(/\\.[^/.]+$/, '').toUpperCase()}",
   "examCode": "SH-${Math.floor(100 + Math.random() * 900)}",
   "grade": "${targetGrade}",
   "durationMinutes": 45,
   "totalPoints": 10,
-  "questions": [
+  "topic": "Số hóa từ file: ${fileName}",
+  "part3Type": "short_answer",
+  "multipleChoice": [
     {
-      "id": 1,
-      "question": "Nội dung câu hỏi kèm $f(x)$...",
+      "id": "mc_1",
+      "question": "Nội dung câu hỏi...",
       "options": ["A. Lựa chọn 1", "B. Lựa chọn 2", "C. Lựa chọn 3", "D. Lựa chọn 4"],
       "correctAnswer": "A",
+      "points": 0.25,
       "explanation": "Hướng dẫn giải chi tiết từng bước..."
+    }
+  ],
+  "trueFalseQuestions": [
+    {
+      "id": "tf_1",
+      "prompt": "Cho hàm số...",
+      "pointsPerSub": 0.25,
+      "items": [
+        { "key": "a", "statement": "Mệnh đề a", "isCorrect": true },
+        { "key": "b", "statement": "Mệnh đề b", "isCorrect": false },
+        { "key": "c", "statement": "Mệnh đề c", "isCorrect": true },
+        { "key": "d", "statement": "Mệnh đề d", "isCorrect": false }
+      ]
+    }
+  ],
+  "essays": [
+    {
+      "id": "essay_1",
+      "question": "Nội dung bài toán...",
+      "maxPoints": 0.5,
+      "shortAnswerKey": "10"
     }
   ]
 }
@@ -803,11 +831,13 @@ BẮT BUỘC trả về DUY NHẤT định dạng JSON thuần túy (không bọ
     const responseText = await callGeminiWithResilience(payload, {
       systemInstruction: `Bạn là chuyên gia số hóa đề thi môn Toán và khảo thí GDPT 2018.\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
       responseMimeType: 'application/json',
-      temperature: 0.2,
+      temperature: 0.1,
     });
 
     const parsed = safeParseGeminiResponse(responseText);
-    const questions = parsed.questions || [];
+    const rawMc = Array.isArray(parsed.multipleChoice) && parsed.multipleChoice.length > 0
+      ? parsed.multipleChoice
+      : Array.isArray(parsed.questions) ? parsed.questions : [];
 
     const formattedExam = {
       id: `exam-${Date.now()}`,
@@ -817,9 +847,10 @@ BẮT BUỘC trả về DUY NHẤT định dạng JSON thuần túy (không bọ
       durationMinutes: parsed.durationMinutes || 45,
       totalPoints: parsed.totalPoints || 10,
       textbook: 'Kết Nối Tri Thức Với Cuộc Sống',
-      topic: `Số hóa từ file: ${fileName}`,
+      topic: parsed.topic || `Số hóa từ file: ${fileName}`,
       createdAt: new Date().toISOString().split('T')[0],
-      multipleChoice: questions.map((q: any, idx: number) => {
+      part3Type: parsed.part3Type || 'short_answer',
+      multipleChoice: rawMc.map((q: any, idx: number) => {
         let correct = (q.correctAnswer || 'A').toString().trim().toUpperCase().slice(0, 1);
         if (!['A', 'B', 'C', 'D'].includes(correct)) correct = 'A';
         const cleanQ = (q.question || '').replace(/^Câu\s*\d+\s*[:.]*\s*/i, '').trim();
@@ -828,17 +859,33 @@ BẮT BUỘC trả về DUY NHẤT định dạng JSON thuần túy (không bọ
           question: cleanQ,
           options: Array.isArray(q.options) && q.options.length >= 2 ? q.options : ['A. Đúng', 'B. Sai', 'C. Không xác định', 'D. Khác'],
           correctAnswer: correct,
-          points: Number((10 / (questions.length || 1)).toFixed(2)),
+          points: Number((10 / (rawMc.length || 1)).toFixed(2)),
           explanation: q.explanation || '',
         };
       }),
-      trueFalseQuestions: [],
-      essays: [],
+      trueFalseQuestions: Array.isArray(parsed.trueFalseQuestions) ? parsed.trueFalseQuestions.map((tf: any, idx: number) => ({
+        id: `tf_${idx + 1}`,
+        prompt: (tf.prompt || '').replace(/^(?:Câu|Bài)\s*\d+\s*(\(.*?\))?\s*[:.]*\s*/i, '').trim(),
+        pointsPerSub: tf.pointsPerSub || 0.25,
+        items: Array.isArray(tf.items) ? tf.items : [
+          { key: 'a', statement: 'Mệnh đề a', isCorrect: true },
+          { key: 'b', statement: 'Mệnh đề b', isCorrect: false },
+          { key: 'c', statement: 'Mệnh đề c', isCorrect: true },
+          { key: 'd', statement: 'Mệnh đề d', isCorrect: false },
+        ],
+      })) : [],
+      essays: Array.isArray(parsed.essays) ? parsed.essays.map((es: any, idx: number) => ({
+        id: `essay_${idx + 1}`,
+        question: (es.question || '').replace(/^(?:Câu|Bài)\s*\d+\s*[:.]*\s*/i, '').trim(),
+        maxPoints: es.maxPoints || 0.5,
+        shortAnswerKey: es.shortAnswerKey || undefined,
+        rubric: Array.isArray(es.rubric) ? es.rubric : undefined,
+      })) : [],
     };
 
     return res.json({
       success: true,
-      quizData: questions,
+      quizData: rawMc,
       exam: formattedExam,
     });
   } catch (error: any) {
@@ -1052,20 +1099,31 @@ ${JSON.stringify({
 `;
       }
 
-      systemDirectives = `
+      if (examFileBase64 || matrixFileBase64 || req.body.extractedText) {
+        systemDirectives = `
+BẠN ĐANG THỰC HIỆN CƠ CHẾ: SỐ HÓA VÀ TÁI TẠO NGUYÊN BẢN ĐỀ THI TỪ FILE ĐÍNH KÈM "${examFileName || matrixFileName || 'Tài liệu đề thi'}".
+YÊU CẦU TỐI THƯỢNG CỦA GIÁO VIÊN:
+1. HÃY ĐỌC THẬT KỸ TOÀN BỘ FILE ĐÍNH KÈM VÀ TÁI TẠO ĐÚNG CHÍNH XÁC 100% CÁC CÂU HỎI TRONG ĐỀ GỐC ĐƯỢC TẢI LÊN.
+2. GIỮ NGUYÊN VẸN NỘI DUNG, SỐ LIỆU, CÔNG THỨC TOÁN HỌC, 4 PHƯƠNG ÁN A-B-C-D VÀ ĐÁP ÁN CỦA ĐỀ GỐC.
+3. TUYỆT ĐỐI KHÔNG BỊA ĐỀ MỚI, KHÔNG ĐỔI SỐ LIỆU, KHÔNG HIỂN THỊ ĐỀ MẶC ĐỊNH KHÔNG LIÊN QUAN!
+4. Trích xuất đầy đủ cả 3 phần:
+   - Phần I: Câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D)
+   - Phần II: Câu hỏi Đúng / Sai (kèm 4 ý a, b, c, d)
+   - Phần III: Câu hỏi trả lời ngắn hoặc Tự luận
+5. Với các câu hỏi có hình vẽ thực tế phức tạp (hình học không gian 3D, đồ thị thực tế), hãy trích xuất đầy đủ đề bài chữ và công thức để giáo viên có thể dùng tính năng cắt ảnh dán trực tiếp vào câu hỏi.
+`;
+      } else {
+        systemDirectives = `
 BẠN ĐANG THỰC HIỆN CƠ CHẾ: TÁI TẠO ĐỀ THI TOÁN TƯƠNG ĐƯƠNG (ISOMORPHIC / PARALLEL EXAM REGENERATION).
-QUY TẮC BẮT BUỘC ĐỂ TẠO RA ĐỀ MỚI HOÀN TOÀN TƯƠNG ĐƯƠNG:
-1. KHUNG CẤU TRÚC & ĐỘ KHÓ: Giữ nguyên 100% khung cấu trúc kiến thức, số lượng câu, dạng toán và độ khó của từng câu trong đề gốc.
-2. HOÁN ĐỔI SỐ LIỆU: Toàn bộ số liệu, hệ số đa thức, toạ độ điểm trong không gian Oxyz, số liệu xác suất thống kê PHẢI ĐƯỢC THAY THẾ bằng các giá trị số học mới đẹp và chuẩn SGK.
-3. ĐỔI NGỮ CẢNH: Các bài toán thực tế, xác suất, ứng dụng đạo hàm phải đổi ngữ cảnh tình huống tương đương.
-4. XÁO TRỘN VỊ TRÍ ĐÁP ÁN ĐÚNG:
-   - Tính toán lại đáp án mới theo số liệu mới.
-   - BẮT BUỘC xáo trộn vị trí đáp án đúng: nếu câu gốc là A, câu mới tính toán lại và đưa phương án đúng sang B, C hoặc D.
-5. PHẦN II (ĐÚNG/SAI): Giữ nguyên khung khảo sát nhưng tính toán lại tính Đúng / Sai theo hàm số hoặc giả thiết mới.
-6. PHẦN III (${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}):
+QUY TẮC BẮT BUỘC ĐỂ TẠO RA ĐỀ MỚI TƯƠNG ĐƯƠNG VỚI ĐỀ GỐC:
+1. KHUNG CẤU TRÚC & ĐỘ KHÓ: Bám sát khung cấu trúc kiến thức và độ khó của đề gốc.
+2. HOÁN ĐỔI SỐ LIỆU: Toàn bộ số liệu, hệ số đa thức, toạ độ điểm trong không gian Oxyz được thay bằng giá trị số học mới chuẩn SGK.
+3. PHẦN II (ĐÚNG/SAI): Giữ nguyên khung khảo sát nhưng tính toán lại tính Đúng / Sai theo giả thiết mới.
+4. PHẦN III (${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}):
    - Đổi số liệu và tính toán lại đáp số chính xác ${part3Type === 'short_answer' ? '(shortAnswerKey)' : 'kèm barem giải chi tiết mới'}.
 ${originalExamContext}
 `;
+      }
     }
 
     const prompt = `

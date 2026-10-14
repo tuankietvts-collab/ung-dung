@@ -2553,7 +2553,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                     });
                     setAppealSuccessMsg('Đã gửi đơn khiếu nại thành công đến Giáo viên!');
                   } catch (err: any) {
-                    alert('Lỗi gửi khiếu nại: ' + (err.message || 'Vui lòng thử lại'));
+                    setAppealSuccessMsg('Lỗi gửi khiếu nại: ' + (err.message || 'Vui lòng thử lại'));
                   } finally {
                     setIsSubmittingAppeal(false);
                   }
