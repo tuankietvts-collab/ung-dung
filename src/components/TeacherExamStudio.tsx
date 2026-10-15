@@ -148,6 +148,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
   };
 
   const [matrixBase64, setMatrixBase64] = useState<string>('');
+  const [matrixText, setMatrixText] = useState<string>('');
 
   const handleMatrixFileUpload = async (file: File) => {
     setMatrixFile(file);
@@ -171,6 +172,9 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
       const payload = await prepareMatrixUploadPayload(file);
       if (payload.fileBase64) {
         setMatrixBase64(payload.fileBase64);
+      }
+      if (payload.extractedText) {
+        setMatrixText(payload.extractedText);
       }
       if (payload.detectedGrade) {
         setGrade(payload.detectedGrade);
@@ -319,7 +323,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
     try {
       const detectedGrade = detectGradeFromFileName(matrixFileName || '', topic);
       const effectiveGrade: '10' | '11' | '12' = (matrixFileName ? detectedGrade : (grade || detectedGrade || '11')) as '10' | '11' | '12';
-      const effectiveTopic = getDefaultTopicForGrade(effectiveGrade);
+      const effectiveTopic = parsedMatrix?.topic || topic || getDefaultTopicForGrade(effectiveGrade);
 
       const generated = await generateExamByMatrix({
         grade: effectiveGrade,
@@ -328,6 +332,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
         matrixFileBase64: matrixBase64 || undefined,
         matrixFileName: matrixFileName || undefined,
         matrixMimeType: matrixFile?.type || (matrixFileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'),
+        extractedText: matrixText || undefined,
         matrix: {
           ...parsedMatrix,
           grade: effectiveGrade,
@@ -341,25 +346,8 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
         showToast(`Đã tạo thành công đề thi bám sát ma trận: ${generated.title}`);
       }
     } catch (err: any) {
-      console.warn('Generate exam from matrix server notice, invoking standard GDPT engine:', err);
-      try {
-        const detectedGrade = detectGradeFromFileName(matrixFileName || '', topic);
-        const effectiveGrade: '10' | '11' | '12' = (matrixFileName ? detectedGrade : (grade || detectedGrade || '11')) as '10' | '11' | '12';
-        const fallbackExam = buildStandardGdptExam({
-          grade: effectiveGrade,
-          topic: getDefaultTopicForGrade(effectiveGrade),
-          textbook,
-          part3Type: part3Choice,
-          matrix: parsedMatrix,
-          matrixFileName,
-        });
-        onExamCreated(fallbackExam);
-        if (showToast) {
-          showToast(`Đã tạo thành công bộ đề thi chuẩn GDPT Toán Lớp ${effectiveGrade} theo ma trận ${matrixFileName || ''}!`);
-        }
-      } catch (fallbackErr: any) {
-        setError('Không thể kết nối đến máy chủ soạn đề. Vui lòng bấm "Tạo Ngay Đề Chuẩn" bên dưới.');
-      }
+      console.error('Generate exam from matrix error:', err);
+      setError(err?.message || 'Không thể tạo đề từ ma trận. Vui lòng kiểm tra lại file ma trận hoặc kết nối mạng.');
     } finally {
       setIsGenerating(false);
     }
@@ -456,6 +444,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
         originalExam: (recreateSource === 'current_exam' && currentExam) ? currentExam : undefined,
         examFileBase64: recreateSource === 'file_upload' ? examFileBase64 : undefined,
         examFileName: recreateSource === 'file_upload' ? examFileName : undefined,
+        extractedText: examFileText || undefined,
         part3Type: part3Choice,
       });
 
@@ -465,19 +454,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
       }
     } catch (err: any) {
       console.error('Recreate exam error:', err);
-      // Resilient Fallback to standard exam
-      const targetG = (grade || detectGradeFromFileName(examFileName || '', examFileText) || '11') as '10' | '11' | '12';
-      const fallbackExam = buildStandardGdptExam({
-        grade: targetG,
-        topic: getDefaultTopicForGrade(targetG),
-        textbook,
-        part3Type: part3Choice,
-        matrixFileName: examFileName,
-      });
-      onExamCreated(fallbackExam);
-      if (showToast) {
-        showToast(`Đã tạo đề thi chuẩn GDPT Toán Lớp ${targetG} theo cấu trúc "${examFileName}"!`);
-      }
+      setError(err?.message || 'Không thể tái tạo đề thi từ file tải lên. Vui lòng thử lại với file .docx, .pdf hoặc ảnh rõ nét.');
     } finally {
       setIsGenerating(false);
     }

@@ -92,10 +92,12 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   const [isAnswerMatrixOpen, setIsAnswerMatrixOpen] = useState<boolean>(false);
   const [filterCategory, setFilterCategory] = useState<'all' | 'gioi' | 'kha' | 'violation' | 'appeals'>('all');
   
-  // 1. CHỌN BÀI KIỂM TRA CỤ THỂ
-  const [selectedExamFilter, setSelectedExamFilter] = useState<string>(() => {
-    return initialExamFilter || exam?.id || (exams.length > 0 ? exams[0].id : 'all');
+  // 1. CHỌN BÀI KIỂM TRA (ĐỢT KIỂM TRA) - gom nhiều mã đề thành 1 bài kiểm tra duy nhất
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string>(() => {
+    return initialExamFilter || exam?.id || 'all';
   });
+  const selectedExamFilter = selectedSessionKey;
+  const setSelectedExamFilter = setSelectedSessionKey;
 
   // 2. CHỌN LỚP CỤ THỂ
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>(() => {
@@ -164,59 +166,68 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
     };
   }, [session, exams, submissions, className, roster, exam]);
 
-  // Extract distinct exams from exams prop + submissions
-  const availableExams = useMemo(() => {
-    const map = new Map<string, { id: string; code: string; title: string; count: number }>();
-    if (exams && exams.length > 0) {
-      exams.forEach((e) => {
-        map.set(e.id, { id: e.id, code: e.examCode, title: e.title, count: 0 });
-      });
+  // Danh sách các đợt kiểm tra (Bài kiểm tra) - mỗi bài kiểm tra gom nhiều mã đề thành 1 bài duy nhất
+  const allSessions = useMemo<ExamSession[]>(() => {
+    return groupExamsIntoSessions(
+      exams || [],
+      submissions,
+      selectedClassFilter === 'all' ? '' : selectedClassFilter,
+      roster,
+      exam
+    );
+  }, [exams, submissions, selectedClassFilter, roster, exam]);
+
+  // Đợt kiểm tra đang chọn (Active session)
+  const activeSession = useMemo<ExamSession | null>(() => {
+    if (session) return session;
+    if (selectedSessionKey === 'all') {
+      return allSessions.length > 0 ? allSessions[0] : null;
     }
-    if (exam && !map.has(exam.id)) {
-      map.set(exam.id, { id: exam.id, code: exam.examCode, title: exam.title, count: 0 });
-    }
-    submissions.forEach((s) => {
-      const eId = s.examId || s.examCode;
-      if (eId) {
-        if (!map.has(eId)) {
-          map.set(eId, {
-            id: eId,
-            code: s.examCode,
-            title: s.examSnapshot?.title || `Đề ${s.examCode}`,
-            count: 0,
-          });
-        }
-        const item = map.get(eId)!;
-        item.count += 1;
-      }
-    });
-    return Array.from(map.values());
-  }, [exams, exam, submissions]);
+    return (
+      allSessions.find(
+        (s) =>
+          s.sessionKey === selectedSessionKey ||
+          s.id === selectedSessionKey ||
+          s.variantIds.includes(selectedSessionKey) ||
+          s.variantCodes.includes(selectedSessionKey)
+      ) || (allSessions.length > 0 ? allSessions[0] : null)
+    );
+  }, [session, selectedSessionKey, allSessions]);
 
   // Active exam object
   const activeSelectedExam = useMemo(() => {
     if (session) return session.masterExam;
-    if (selectedExamFilter === 'all') return exam || (exams && exams[0]) || null;
-    return (
-      exams.find((e) => e.id === selectedExamFilter || e.examCode === selectedExamFilter) ||
-      (exam?.id === selectedExamFilter ? exam : null)
-    );
-  }, [session, exams, exam, selectedExamFilter]);
+    if (activeSession) {
+      if (selectedVariantCodeFilter !== 'all') {
+        const found = activeSession.variantExams?.find((e) => e.examCode === selectedVariantCodeFilter);
+        if (found) return found;
+      }
+      return activeSession.masterExam;
+    }
+    return exam || (exams && exams[0]) || null;
+  }, [session, activeSession, selectedVariantCodeFilter, exam, exams]);
 
-  // First: filter submissions by selected exam or session
+  // First: filter submissions by selected exam session and specific variant code
   const examSubmissions = useMemo(() => {
     let baseList = submissions;
     if (session) {
       baseList = session.submissions;
+    } else if (selectedSessionKey !== 'all' && activeSession) {
+      const allowedIds = new Set(activeSession.variantIds);
+      const allowedCodes = new Set(activeSession.variantCodes);
+      baseList = baseList.filter(
+        (s) =>
+          (s.examId && allowedIds.has(s.examId)) ||
+          (s.examCode && allowedCodes.has(s.examCode))
+      );
     }
+
     if (selectedVariantCodeFilter !== 'all') {
-      return baseList.filter((s) => s.examCode === selectedVariantCodeFilter);
+      baseList = baseList.filter((s) => s.examCode === selectedVariantCodeFilter);
     }
-    if (selectedExamFilter === 'all') return baseList;
-    return baseList.filter(
-      (s) => s.examId === selectedExamFilter || s.examCode === selectedExamFilter
-    );
-  }, [session, selectedVariantCodeFilter, submissions, selectedExamFilter]);
+
+    return baseList;
+  }, [session, selectedSessionKey, activeSession, selectedVariantCodeFilter, submissions]);
 
   // Helper to normalize class names for comparison
   const normalizeCls = (c?: string) => (c || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
@@ -920,16 +931,16 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
 
           {/* THANH ĐIỀU HƯỚNG THỐNG KÊ KHOA HỌC: THEO BÀI KIỂM TRA & THEO LỚP CỤ THỂ */}
           <div className="bg-white p-4 sm:p-5 rounded-3xl border-2 border-indigo-200 shadow-xs space-y-4">
-            {/* TẦNG 1: CHỌN BÀI KIỂM TRA CỤ THỂ (Chỉ hiển thị khi không có session cụ thể) */}
+            {/* TẦNG 1: CHỌN BÀI KIỂM TRA (ĐỢT KIỂM TRA) - Gom nhiều mã đề thành 1 bài kiểm tra */}
             {!session && (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-1.5">
                     <BookOpen className="w-4 h-4 text-indigo-600" />
-                    <span>1. Chọn Bài Kiểm Tra Cụ Thể ({availableExams.length} đề thi):</span>
+                    <span>1. Chọn Bài Kiểm Tra ({allSessions.length} bài kiểm tra):</span>
                   </span>
                   <span className="text-[11px] text-slate-500 font-semibold">
-                    Đang chọn: <b className="text-indigo-700">{activeSelectedExam?.title || 'Tất cả bài kiểm tra'}</b>
+                    Đang chọn: <b className="text-indigo-700">{selectedSessionKey === 'all' ? 'Tất cả bài kiểm tra' : (activeSession?.baseTitle || activeSession?.title || 'Bài kiểm tra')}</b>
                   </span>
                 </div>
 
@@ -937,56 +948,125 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedExamFilter('all');
-                      setSelectedClassFilter('all');
+                      setSelectedSessionKey('all');
+                      setSelectedVariantCodeFilter('all');
                     }}
                     className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                      selectedExamFilter === 'all'
+                      selectedSessionKey === 'all'
                         ? 'bg-slate-900 text-white shadow-xs'
                         : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                     }`}
                   >
                     <span>Tất Cả Bài Kiểm Tra</span>
                     <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-mono">
-                      {submissions.length}
+                      {submissions.length} bài
                     </span>
                   </button>
 
-                  {availableExams.map((ex) => {
-                    const isSelected = selectedExamFilter === ex.id || selectedExamFilter === ex.code;
+                  {allSessions.map((sess) => {
+                    const isSelected = selectedSessionKey === sess.sessionKey || selectedSessionKey === sess.id;
+                    const sessionSubCount = sess.submissions.length;
                     return (
                       <button
-                        key={ex.id}
+                        key={sess.sessionKey || sess.id}
                         type="button"
                         onClick={() => {
-                          setSelectedExamFilter(ex.id);
-                          setSelectedClassFilter('all');
-                          if (onSelectExam) {
-                            const fullEx = exams.find((e) => e.id === ex.id);
-                            if (fullEx) onSelectExam(fullEx);
+                          setSelectedSessionKey(sess.sessionKey || sess.id);
+                          setSelectedVariantCodeFilter('all');
+                          if (onSelectExam && sess.masterExam) {
+                            onSelectExam(sess.masterExam);
                           }
                         }}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                        className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-2 ${
                           isSelected
                             ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-300'
-                            : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-900 border border-indigo-200'
+                            : 'bg-indigo-50/70 hover:bg-indigo-100 text-indigo-950 border border-indigo-200'
                         }`}
                       >
-                        <span className="font-mono text-[10px] px-1.5 py-0.5 bg-black/15 rounded">
-                          {ex.code}
-                        </span>
-                        <span className="truncate max-w-[200px]">{ex.title}</span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
-                            isSelected ? 'bg-white text-indigo-700' : 'bg-indigo-200/70 text-indigo-950'
-                          }`}
-                        >
-                          {ex.count} bài
-                        </span>
+                        <BookOpen className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                        <span className="font-extrabold truncate max-w-[260px]">{sess.baseTitle || sess.title}</span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                              isSelected ? 'bg-indigo-800 text-white' : 'bg-indigo-200/70 text-indigo-900'
+                            }`}
+                          >
+                            {sess.variantCodes.length} mã đề
+                          </span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                              isSelected ? 'bg-white text-indigo-700' : 'bg-slate-200/80 text-slate-800'
+                            }`}
+                          >
+                            {sessionSubCount} bài
+                          </span>
+                        </div>
                       </button>
                     );
                   })}
                 </div>
+
+                {/* DANH SÁCH CÁC MÃ ĐỀ TRONG BÀI KIỂM TRA NÀY */}
+                {activeSession && activeSession.variantCodes.length > 0 && (
+                  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-sky-50/70 to-slate-50 border border-indigo-200 shadow-2xs space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Shuffle className="w-4 h-4 text-indigo-600" />
+                        <span className="text-xs font-black text-indigo-950 uppercase tracking-wider">
+                          Danh Sách Các Mã Đề Trong Bài Kiểm Tra Này ({activeSession.variantCodes.length} mã đề):
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-bold text-indigo-700">
+                        {selectedVariantCodeFilter === 'all'
+                          ? `Đang xem tổng hợp cả ${activeSession.variantCodes.length} mã đề`
+                          : `Đang lọc riêng học sinh làm Mã đề: ${selectedVariantCodeFilter}`}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-nowrap sm:flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedVariantCodeFilter('all')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                          selectedVariantCodeFilter === 'all'
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
+                        }`}
+                      >
+                        <span>Tất Cả Mã Đề ({activeSession.variantCodes.length})</span>
+                        <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-mono">
+                          {activeSession.submissions.length} bài
+                        </span>
+                      </button>
+
+                      {activeSession.variantCodes.map((code) => {
+                        const codeSubs = activeSession.submissions.filter((s) => s.examCode === code);
+                        const isSelected = selectedVariantCodeFilter === code;
+                        return (
+                          <button
+                            key={code}
+                            type="button"
+                            onClick={() => setSelectedVariantCodeFilter(code)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                              isSelected
+                                ? 'bg-slate-900 text-white shadow-2xs ring-2 ring-indigo-400'
+                                : 'bg-white hover:bg-indigo-50 text-indigo-900 border border-indigo-200'
+                            }`}
+                          >
+                            <span className="font-mono text-[11px]">Mã {code}</span>
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                                isSelected ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-700'
+                              }`}
+                            >
+                              {codeSubs.length} HS
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

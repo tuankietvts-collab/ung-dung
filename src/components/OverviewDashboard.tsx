@@ -45,6 +45,10 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 }) => {
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
 
+  const masterExams = React.useMemo(() => {
+    return savedExams.filter((e) => !e.id.includes('-variant-') && (!e.masterExamCode || e.examCode === e.masterExamCode));
+  }, [savedExams]);
+
   const handleCopyLink = (exam: Exam) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const path = typeof window !== 'undefined' ? window.location.pathname : '';
@@ -110,7 +114,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               <BookOpen className="w-5 h-5" />
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-slate-900 mb-1">{savedExams.length}</div>
+          <div className="text-2xl sm:text-3xl font-black text-slate-900 mb-1">{masterExams.length}</div>
           <div className="text-xs text-slate-500 flex items-center gap-1">
             <span>Xem & kích hoạt bộ đề</span>
             <ArrowRight className="w-3 h-3 text-indigo-600 group-hover:translate-x-1 transition-transform" />
@@ -177,7 +181,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           <div>
             <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-indigo-600" />
-              <span>Đề Thi Đang Quản Lý ({savedExams.length})</span>
+              <span>Đề Thi Đang Quản Lý ({masterExams.length})</span>
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Chọn đề để kích hoạt cho học sinh vào thi hoặc giao cho lớp học cụ thể.
@@ -194,7 +198,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
 
         <div className="divide-y divide-slate-100">
-          {savedExams.slice(0, 5).map((exam) => {
+          {masterExams.slice(0, 5).map((exam) => {
             const isCurrent = currentExam?.id === exam.id;
             return (
               <div

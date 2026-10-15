@@ -1335,7 +1335,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
 
                   {/* Other saved exams */}
                   {savedExams
-                    .filter((e) => !currentExam || e.id !== currentExam.id)
+                    .filter((e) => (!currentExam || e.id !== currentExam.id) && !e.id.includes('-variant-') && (!e.masterExamCode || e.examCode === e.masterExamCode))
                     .map((ex) => (
                       <div
                         key={ex.id}

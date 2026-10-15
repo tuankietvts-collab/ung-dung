@@ -199,6 +199,7 @@ export interface GenerateExamParams {
   originalExam?: Exam;
   examFileBase64?: string;
   examFileName?: string;
+  extractedText?: string;
 }
 
 // 1. Generate Math Exam using Gemini (Supports Mode: prompt, matrix, recreate)

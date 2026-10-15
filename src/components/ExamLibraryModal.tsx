@@ -43,6 +43,9 @@ export const ExamLibraryModal: React.FC<ExamLibraryModalProps> = ({
   if (!isOpen) return null;
 
   const filteredExams = savedExams.filter((exam) => {
+    if (exam.id.includes('-variant-') && exam.masterExamCode && exam.examCode !== exam.masterExamCode) {
+      return false;
+    }
     const matchesSearch =
       exam.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       exam.examCode.toLowerCase().includes(searchQuery.toLowerCase()) ||

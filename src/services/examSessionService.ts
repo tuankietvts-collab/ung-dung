@@ -68,6 +68,8 @@ export function extractBaseExamTitle(rawTitle: string): string {
     .replace(/\s*\[(?:Mã\s*(?:Đề|đề)?|Mã\s*đề thi)[:\s]*[^\]]+\]/gi, '')
     .replace(/\s*-\s*Mã\s*(?:đề|Đề)\s*:\s*\S+/gi, '')
     .replace(/\s*-\s*MÃ-\d+/gi, '')
+    .replace(/\s*-\s*(?:TOAN|TAITAO)\d+-\d+/gi, '')
+    .replace(/\s*-\s*Mã\s*\d+/gi, '')
     .trim();
 }
 
@@ -117,14 +119,18 @@ export function groupExamsIntoSessions(
   const deletedExamIds = getDeletedExamIds();
   const normTargetClass = (targetClassName || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
 
-  // Lọc bài nộp của đúng lớp này và chưa bị xóa
+  // Lọc bài nộp của đúng lớp này (hoặc tất cả nếu không chỉ định lớp) và chưa bị xóa
   const classSubs = submissions.filter((s) => {
     const sCls = (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
     const isDeleted =
       deletedExamIds.has(s.id) ||
       deletedExamIds.has(s.examId || '') ||
       deletedExamIds.has(s.examCode || '');
-    return sCls === normTargetClass && !isDeleted;
+    if (isDeleted) return false;
+    if (!normTargetClass || normTargetClass === 'ALL' || normTargetClass === 'TẤT CẢ') {
+      return true;
+    }
+    return sCls === normTargetClass;
   });
 
   // Bản đồ lưu các nhóm session

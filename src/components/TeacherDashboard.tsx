@@ -394,6 +394,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
       ) : (
         <GradebookReport
           exam={currentExam}
+          exams={savedExams}
           submissions={submissions}
           className={selectedClassForLink}
           classes={classes}

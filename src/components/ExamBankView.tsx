@@ -43,6 +43,10 @@ export const ExamBankView: React.FC<ExamBankViewProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const filteredExams = savedExams.filter((exam) => {
+    // Hide internal variant children from top-level bank list to treat 1 exam session as 1 test
+    if (exam.id.includes('-variant-') && exam.masterExamCode && exam.examCode !== exam.masterExamCode) {
+      return false;
+    }
     const matchSearch =
       (exam.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (exam.examCode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||

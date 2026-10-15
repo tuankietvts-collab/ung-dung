@@ -21,6 +21,7 @@ export interface MatrixExamRequest {
   matrixFileBase64?: string;
   matrixFileName?: string;
   matrixMimeType?: string;
+  extractedText?: string;
 }
 
 export interface RecreateExamRequest {
@@ -31,6 +32,7 @@ export interface RecreateExamRequest {
   topic?: string;
   textbook?: string;
   part3Type?: 'short_answer' | 'essay';
+  extractedText?: string;
 }
 
 /**
@@ -174,6 +176,7 @@ export async function generateExamByMatrix(params: MatrixExamRequest): Promise<E
         matrixFileBase64: params.matrixFileBase64,
         matrixFileName: params.matrixFileName,
         matrixMimeType: params.matrixMimeType || 'application/pdf',
+        extractedText: params.extractedText,
       }),
     });
 
@@ -267,6 +270,7 @@ export async function recreateExamWithVariations(params: RecreateExamRequest): P
         topic: params.topic || (params.originalExam ? `Tái tạo tương đương từ ${params.originalExam.title}` : 'Tái tạo đề tương tự'),
         textbook: params.textbook || params.originalExam?.textbook || 'Kết Nối Tri Thức Với Cuộc Sống',
         part3Type: params.part3Type || params.originalExam?.part3Type || 'short_answer',
+        extractedText: params.extractedText,
       }),
     });
 

@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 import dotenv from 'dotenv';
 import * as XLSX from 'xlsx';
+import mammoth from 'mammoth';
 import { safeParseGeminiResponse } from './src/services/safeJsonParser';
 
 dotenv.config();
@@ -50,8 +51,8 @@ Nhiệm vụ của bạn là đọc ảnh bài làm viết tay của học sinh,
  * 429 (rate limit), with automatic retry and model fallback.
  */
 async function callGeminiWithResilience(contents: any, config: any = {}): Promise<string> {
-  // Use approved non-deprecated models: gemini-3.8-flash, gemini-3.1-pro-preview, gemini-flash-latest, gemini-3.1-flash-lite
-  const models = ['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  // Use approved non-deprecated models: gemini-3.8-flash, gemini-flash-latest, gemini-3.1-flash-lite
+  const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
   let lastError: any = null;
 
   // Strict structured JSON output configuration as required
@@ -922,16 +923,23 @@ app.post('/api/generate-exam', async (req, res) => {
     console.log(`[API /api/generate-exam] Requesting exam mode=${mode}, grade=${grade}, topic=${topic}`);
 
     let activeMatrix = matrix;
-    let extractedMatrixText = '';
+    let extractedMatrixText = req.body.extractedText || '';
 
     if (matrixFileBase64) {
       try {
+        const lowerMName = matrixFileName.toLowerCase();
         const isSpreadsheet =
-          matrixFileName.toLowerCase().endsWith('.xlsx') ||
-          matrixFileName.toLowerCase().endsWith('.xls') ||
-          matrixFileName.toLowerCase().endsWith('.csv') ||
+          lowerMName.endsWith('.xlsx') ||
+          lowerMName.endsWith('.xls') ||
+          lowerMName.endsWith('.csv') ||
           matrixMimeType.includes('spreadsheet') ||
           matrixMimeType.includes('excel');
+
+        const isDocx =
+          lowerMName.endsWith('.docx') ||
+          lowerMName.endsWith('.doc') ||
+          matrixMimeType.includes('word') ||
+          matrixMimeType.includes('officedocument');
 
         if (isSpreadsheet) {
           const buffer = Buffer.from(matrixFileBase64.replace(/^data:.*?;base64,/, ''), 'base64');
@@ -941,13 +949,42 @@ app.post('/api/generate-exam', async (req, res) => {
             const sheet = workbook.Sheets[name];
             sheetLines.push(`=== Sheet: ${name} ===\n${XLSX.utils.sheet_to_csv(sheet)}`);
           }
-          extractedMatrixText = sheetLines.join('\n\n');
+          const csvText = sheetLines.join('\n\n');
+          extractedMatrixText = (extractedMatrixText ? extractedMatrixText + '\n\n' : '') + csvText;
           if (!activeMatrix) {
             activeMatrix = extractMatrixFromSheetText(extractedMatrixText, matrixFileName);
+          }
+        } else if (isDocx) {
+          const buffer = Buffer.from(matrixFileBase64.replace(/^data:.*?;base64,/, ''), 'base64');
+          const docxRes = await mammoth.extractRawText({ buffer });
+          if (docxRes && docxRes.value) {
+            extractedMatrixText = (extractedMatrixText ? extractedMatrixText + '\n\n' : '') + docxRes.value;
+            console.log('[API /api/generate-exam] Extracted', docxRes.value.length, 'chars from Word matrix docx');
           }
         }
       } catch (err: any) {
         console.warn('On-the-fly matrix extraction note:', err.message);
+      }
+    }
+
+    let extractedExamText = req.body.extractedText || '';
+    if (examFileBase64) {
+      try {
+        const lowerEName = examFileName.toLowerCase();
+        const isDocx =
+          lowerEName.endsWith('.docx') ||
+          lowerEName.endsWith('.doc') ||
+          (req.body.examFileMimeType && req.body.examFileMimeType.includes('word'));
+        if (isDocx) {
+          const buffer = Buffer.from(examFileBase64.replace(/^data:.*?;base64,/, ''), 'base64');
+          const docxRes = await mammoth.extractRawText({ buffer });
+          if (docxRes && docxRes.value) {
+            extractedExamText = (extractedExamText ? extractedExamText + '\n\n' : '') + docxRes.value;
+            console.log('[API /api/generate-exam] Extracted', docxRes.value.length, 'chars from Word exam docx');
+          }
+        }
+      } catch (err: any) {
+        console.warn('Docx exam extraction note:', err.message);
       }
     }
 
@@ -1189,13 +1226,12 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
     let payload: any = prompt;
 
     if (extractedMatrixText && extractedMatrixText.trim().length > 10) {
-      payload = `${prompt}\n\n=== DỮ LIỆU BẢNG TÍNH MA TRẬN / ĐẶC TẢ TỪ FILE (${matrixFileName}) ===\n${extractedMatrixText}`;
-    } else if (matrixFileBase64) {
+      payload = `${prompt}\n\n=== NỘI DUNG VĂN BẢN MA TRẬN & BẢNG ĐẶC TẢ TỪ FILE (${matrixFileName || 'Ma trận'}) ===\n${extractedMatrixText}`;
+    } else if (extractedExamText && extractedExamText.trim().length > 10) {
+      payload = `${prompt}\n\n=== NỘI DUNG VĂN BẢN ĐỀ THI GỐC TRÍCH XUẤT TỪ FILE (${examFileName || 'Đề thi gốc'}) ===\n${extractedExamText}`;
+    } else if (matrixFileBase64 && (matrixFileName.toLowerCase().endsWith('.pdf') || matrixMimeType.includes('pdf') || matrixMimeType.includes('image'))) {
       let cleanBase64 = matrixFileBase64.replace(/^data:.*?;base64,/, '');
-      let effectiveMime = matrixMimeType;
-      if (!effectiveMime || effectiveMime === 'application/octet-stream') {
-        effectiveMime = matrixFileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
-      }
+      let effectiveMime = matrixFileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : (matrixMimeType || 'image/jpeg');
       payload = [
         {
           inlineData: {
@@ -1205,7 +1241,7 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
         },
         { text: prompt },
       ];
-    } else if (examFileBase64) {
+    } else if (examFileBase64 && (examFileName.toLowerCase().endsWith('.pdf') || examFileName.toLowerCase().endsWith('.png') || examFileName.toLowerCase().endsWith('.jpg') || examFileName.toLowerCase().endsWith('.jpeg') || (req.body.examFileMimeType && (req.body.examFileMimeType.includes('pdf') || req.body.examFileMimeType.includes('image'))))) {
       let cleanBase64 = examFileBase64.replace(/^data:.*?;base64,/, '');
       let effectiveMime = examFileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
       payload = [
