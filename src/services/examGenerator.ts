@@ -311,7 +311,30 @@ export async function recreateExamWithVariations(params: RecreateExamRequest): P
     console.warn('[ExamGenerator] Recreate API endpoint note:', err.message);
   }
 
-  // Resilient fallback
+  // Resilient generation: If originalExam is provided, generate genuine isomorphic variation directly!
+  if (params.originalExam && (params.originalExam.multipleChoice?.length || params.originalExam.trueFalseQuestions?.length)) {
+    try {
+      const { generate45ExamVariants } = await import('./examPermuter');
+      const randomCode = `TT${effectiveGrade}-${Math.floor(100 + Math.random() * 900)}`;
+      const pkg = generate45ExamVariants(params.originalExam, [], {
+        mode: 'numeric_variation',
+        numVariants: 1,
+      });
+      if (pkg && pkg.variants.length > 0) {
+        return {
+          ...pkg.variants[0],
+          id: `exam-recreated-${Date.now()}`,
+          examCode: randomCode,
+          title: `ĐỀ THI TÁI TẠO TƯƠNG ĐƯƠNG - ${params.originalExam.title.replace(/ĐỀ THI TÁI TẠO TƯƠNG ĐƯƠNG - /gi, '')}`,
+          createdAt: new Date().toISOString().split('T')[0],
+        };
+      }
+    } catch (permuteErr) {
+      console.warn('Exam permutation fallback note:', permuteErr);
+    }
+  }
+
+  // Resilient fallback with dynamic topic
   return buildStandardGdptExam({
     grade: effectiveGrade,
     topic: params.topic || (params.originalExam ? `Tái tạo tương đương từ ${params.originalExam.title}` : 'Tái tạo đề tương tự'),

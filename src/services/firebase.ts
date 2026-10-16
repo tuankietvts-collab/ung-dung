@@ -782,7 +782,7 @@ export async function deleteClassGroupFromFirestore(classId: string): Promise<vo
 const TEACHERS_COLLECTION = 'teachers';
 const USERS_COLLECTION = 'users';
 
-function getStoredRegisteredUsers(): Array<{
+export function getStoredRegisteredUsers(): Array<{
   username: string;
   pass: string;
   user: AppUser;
@@ -795,7 +795,7 @@ function getStoredRegisteredUsers(): Array<{
   }
 }
 
-function saveRegisteredUserLocally(username: string, pass: string, user: AppUser) {
+export function saveRegisteredUserLocally(username: string, pass: string, user: AppUser) {
   try {
     const users = getStoredRegisteredUsers().filter(u => u.username.toLowerCase() !== username.toLowerCase());
     users.push({ username, pass, user });

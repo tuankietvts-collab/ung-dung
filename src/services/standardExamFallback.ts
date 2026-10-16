@@ -28,13 +28,14 @@ export function buildStandardGdptExam(options: StandardExamBuildOptions): Exam {
   const isMidterm2 = /gk2|giua\s*ky\s*2/i.test(fileName);
 
   const randomSuffix = Math.floor(100 + Math.random() * 900);
+  const userTopic = options.topic || '';
 
   if (effectiveGrade === '11') {
-    return buildGrade11Exam(isMidterm1, isFinal1, isMidterm2, part3Type, textbook, randomSuffix, fileName);
+    return buildGrade11Exam(isMidterm1, isFinal1, isMidterm2, part3Type, textbook, randomSuffix, fileName, userTopic);
   } else if (effectiveGrade === '10') {
-    return buildGrade10Exam(part3Type, textbook, randomSuffix, fileName);
+    return buildGrade10Exam(part3Type, textbook, randomSuffix, fileName, userTopic);
   } else {
-    return buildGrade12Exam(part3Type, textbook, randomSuffix, fileName);
+    return buildGrade12Exam(part3Type, textbook, randomSuffix, fileName, userTopic);
   }
 }
 
@@ -45,10 +46,13 @@ function buildGrade11Exam(
   part3Type: 'short_answer' | 'essay',
   textbook: string,
   suffix: number,
-  fileName: string
+  fileName: string,
+  topic: string = ''
 ): Exam {
   const examCode = `TOAN11-${suffix}`;
-  const examTitle = isMidterm1
+  const examTitle = topic
+    ? `ĐỀ KIỂM TRA MÔN TOÁN LỚP 11 - ${topic.toUpperCase()}`
+    : isMidterm1
     ? `ĐỀ KIỂM TRA GIỮA KỲ 1 MÔN TOÁN LỚP 11 - (THEO MA TRẬN ${fileName || 'GDPT 2018'})`
     : `ĐỀ KIỂM TRA THƯỜNG XUYÊN MÔN TOÁN LỚP 11 - CHƯƠNG TRÌNH GDPT 2018`;
 
@@ -402,7 +406,7 @@ function buildGrade11Exam(
     durationMinutes: 45,
     totalPoints: 10,
     textbook,
-    topic: 'Hàm số lượng giác, Cấp số cộng/nhân, Giới hạn & Quan hệ song song',
+    topic: topic || 'Hàm số lượng giác, Cấp số cộng/nhân, Giới hạn & Quan hệ song song',
     createdAt: new Date().toISOString().split('T')[0],
     part3Type,
     multipleChoice,
@@ -411,9 +415,17 @@ function buildGrade11Exam(
   };
 }
 
-function buildGrade10Exam(part3Type: 'short_answer' | 'essay', textbook: string, suffix: number, fileName: string): Exam {
+function buildGrade10Exam(
+  part3Type: 'short_answer' | 'essay',
+  textbook: string,
+  suffix: number,
+  fileName: string,
+  topic: string = ''
+): Exam {
   const examCode = `TOAN10-${suffix}`;
-  const examTitle = `ĐỀ KIỂM TRA MÔN TOÁN LỚP 10 - (THEO MA TRẬN ${fileName || 'GDPT 2018'})`;
+  const examTitle = topic
+    ? `ĐỀ KIỂM TRA MÔN TOÁN LỚP 10 - ${topic.toUpperCase()}`
+    : `ĐỀ KIỂM TRA MÔN TOÁN LỚP 10 - (THEO MA TRẬN ${fileName || 'GDPT 2018'})`;
 
   const multipleChoice: MultipleChoiceQuestion[] = [
     {
@@ -653,9 +665,17 @@ function buildGrade10Exam(part3Type: 'short_answer' | 'essay', textbook: string,
   };
 }
 
-function buildGrade12Exam(part3Type: 'short_answer' | 'essay', textbook: string, suffix: number, fileName: string): Exam {
+function buildGrade12Exam(
+  part3Type: 'short_answer' | 'essay',
+  textbook: string,
+  suffix: number,
+  fileName: string,
+  topic: string = ''
+): Exam {
   const examCode = `TOAN12-${suffix}`;
-  const examTitle = `ĐỀ KIỂM TRA MÔN TOÁN LỚP 12 - (THEO MA TRẬN ${fileName || 'GDPT 2018'})`;
+  const examTitle = topic
+    ? `ĐỀ KIỂM TRA MÔN TOÁN LỚP 12 - ${topic.toUpperCase()}`
+    : `ĐỀ KIỂM TRA MÔN TOÁN LỚP 12 - (THEO MA TRẬN ${fileName || 'GDPT 2018'})`;
 
   const multipleChoice: MultipleChoiceQuestion[] = [
     {
@@ -896,7 +916,7 @@ function buildGrade12Exam(part3Type: 'short_answer' | 'essay', textbook: string,
     durationMinutes: 45,
     totalPoints: 10,
     textbook,
-    topic: 'Khảo sát hàm số, Nguyên hàm - Tích phân & Tọa độ Oxyz',
+    topic: topic || 'Khảo sát hàm số, Nguyên hàm - Tích phân & Tọa độ Oxyz',
     createdAt: new Date().toISOString().split('T')[0],
     part3Type,
     multipleChoice,

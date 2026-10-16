@@ -129,19 +129,37 @@ Cấu trúc: 12 câu trắc nghiệm 4 lựa chọn (Phần I), 4 câu Đúng/Sa
       }
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents,
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        temperature: 0.2,
-      },
-    });
+    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-4-argon'];
+    let lastGenError: any = null;
+    let parsed: any = null;
 
-    const text = response.text || '{}';
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
+    for (const model of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        });
+
+        const text = response.text || '{}';
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
+        if (parsed && (parsed.multipleChoice || parsed.trueFalseQuestions || parsed.essays)) {
+          break;
+        }
+      } catch (err: any) {
+        lastGenError = err;
+        console.warn(`[Vercel API /api/generate-exam] ${model} note:`, err.message);
+      }
+    }
+
+    if (!parsed) {
+      throw lastGenError || new Error('Không thể tạo đề từ AI Gemini');
+    }
 
     return res.status(200).json({ success: true, exam: parsed });
   } catch (error: any) {

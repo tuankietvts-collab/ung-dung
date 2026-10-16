@@ -97,6 +97,7 @@ import { AssignExamModal } from './components/AssignExamModal';
 import { AuthPortal } from './components/AuthPortal';
 import { AuthModal } from './components/AuthModal';
 import { AdminTeacherApprovalModal } from './components/AdminTeacherApprovalModal';
+import { AdminPortalView } from './components/AdminPortalView';
 
 // High-level vertical sidebar navigation tabs (Tham khảo Ezthi Style & khoa học dễ nhìn)
 export type MainNavSection =
@@ -154,6 +155,8 @@ export default function App() {
   const [isClassModalOpen, setIsClassModalOpen] = useState<boolean>(false);
   const [isEssayGradingModalOpen, setIsEssayGradingModalOpen] = useState<boolean>(false);
   const [pendingTeacherCount, setPendingTeacherCount] = useState<number>(0);
+  const [adminActiveMode, setAdminActiveMode] = useState<'admin_portal' | 'teacher_workspace' | 'student_workspace'>('admin_portal');
+  const [impersonatingTeacher, setImpersonatingTeacher] = useState<AppUser | null>(null);
 
   // Drill-down navigation for classes & grading (User Request 3: Lớp học -> Bài kiểm tra thường xuyên -> Bảng điểm & Thống kê)
   const [selectedClassForGrading, setSelectedClassForGrading] = useState<string | null>(null);
@@ -258,6 +261,9 @@ export default function App() {
     showToast(`Chào mừng ${user.fullName} (${user.role === 'teacher' ? 'Giáo viên' : user.role === 'admin' ? 'Quản trị viên' : 'Học sinh'}) đã đăng nhập thành công!`);
     if (user.role === 'student') {
       setCurrentNav('student_room');
+    } else if (user.role === 'admin') {
+      setAdminActiveMode('admin_portal');
+      setImpersonatingTeacher(null);
     }
   };
 
@@ -611,8 +617,80 @@ export default function App() {
     );
   }
 
+  // If user is Admin and in admin_portal mode, render dedicated Admin Portal View
+  if (currentUser?.role === 'admin' && adminActiveMode === 'admin_portal') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+        <AdminPortalView
+          currentUser={currentUser}
+          savedExams={savedExams}
+          submissions={submissions}
+          studentRoster={studentRoster}
+          classes={classes}
+          onImpersonateTeacher={(teacher) => {
+            setImpersonatingTeacher(teacher);
+            setAdminActiveMode('teacher_workspace');
+            setCurrentNav('exams');
+            showToast(`Đang can thiệp tài khoản giáo viên "${teacher.fullName}".`, 'info');
+          }}
+          onSwitchToTeacherView={() => {
+            setImpersonatingTeacher(null);
+            setAdminActiveMode('teacher_workspace');
+            setCurrentNav('exams');
+          }}
+          onSwitchToStudentView={() => {
+            setAdminActiveMode('student_workspace');
+            setCurrentNav('student_room');
+          }}
+          onDeleteExam={(examId) => handleDeleteExamFromCloud(examId)}
+          onLogout={handleUserLogout}
+          showToast={showToast}
+        />
+        {toast && (
+          <div
+            className={`fixed bottom-6 right-6 z-50 px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-2.5 text-xs font-black transition-all animate-in fade-in slide-in-from-bottom-5 ${
+              toast.type === 'error'
+                ? 'bg-rose-600 text-white shadow-rose-900/40'
+                : toast.type === 'info'
+                ? 'bg-sky-600 text-white shadow-sky-900/40'
+                : 'bg-emerald-600 text-white shadow-emerald-900/40'
+            }`}
+          >
+            {toast.type === 'error' ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+            <span>{toast.message}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col lg:flex-row text-slate-900">
+    <div className="min-h-screen bg-slate-100 flex flex-col text-slate-900">
+      {/* Admin Intervention Top Bar when previewing Teacher or Student interface */}
+      {isAdmin && adminActiveMode !== 'admin_portal' && (
+        <div className="bg-rose-950 text-white px-4 py-2.5 flex items-center justify-between text-xs font-bold border-b border-rose-800 sticky top-0 z-50 shadow-md">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-rose-400 animate-pulse shrink-0" />
+            <span>
+              {impersonatingTeacher
+                ? `ADMIN ĐANG CAN THIỆP TÀI KHOẢN GIÁO VIÊN: ${impersonatingTeacher.fullName.toUpperCase()} (@${impersonatingTeacher.username})`
+                : 'ADMIN ĐANG XEM TRƯỚC GIAO DIỆN HỆ THỐNG'}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setAdminActiveMode('admin_portal');
+              setImpersonatingTeacher(null);
+            }}
+            className="px-3 py-1 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Quay Lại Giao Diện Quản Trị Admin</span>
+          </button>
+        </div>
+      )}
+      <div className="flex-1 flex flex-col lg:flex-row">
       {/* Toast Notification Container */}
       {toast && (
         <div
@@ -673,6 +751,27 @@ export default function App() {
 
         {/* Vertical Menu Navigation Items */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-800">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => {
+                setAdminActiveMode('admin_portal');
+                setImpersonatingTeacher(null);
+                setIsMobileMenuOpen(false);
+              }}
+              className="w-full mb-3 p-2.5 rounded-xl bg-gradient-to-r from-rose-950 to-red-950 border border-rose-600/70 text-white flex items-center justify-between cursor-pointer hover:border-rose-400 transition-all shadow-md group"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <ShieldCheck className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
+                <div className="text-left min-w-0">
+                  <div className="text-xs font-black text-rose-200 truncate">Về Trang Quản Trị Admin</div>
+                  <div className="text-[10px] text-slate-400 truncate">Quản lý & can thiệp tài khoản GV</div>
+                </div>
+              </div>
+              <ChevronRight className="w-4 h-4 text-rose-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+            </button>
+          )}
+
           <div className="px-3 text-[10px] font-black uppercase tracking-wider text-slate-400 font-mono mb-2">
             DANH MỤC TÍNH NĂNG
           </div>
@@ -2041,6 +2140,7 @@ export default function App() {
         onClose={() => setIsAdminTeacherModalOpen(false)}
         showToast={showToast}
       />
+      </div>
     </div>
   );
 }

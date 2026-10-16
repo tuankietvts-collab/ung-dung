@@ -51,8 +51,8 @@ Nhiệm vụ của bạn là đọc ảnh bài làm viết tay của học sinh,
  * 429 (rate limit), with automatic retry and model fallback.
  */
 async function callGeminiWithResilience(contents: any, config: any = {}): Promise<string> {
-  // Use approved non-deprecated models: gemini-3.8-flash, gemini-flash-latest, gemini-3.1-flash-lite
-  const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  // Use approved non-deprecated models: prioritize gemini-3.1-flash-lite and gemini-flash-latest for speed & reliability
+  const models = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-4-argon'];
   let lastError: any = null;
 
   // Strict structured JSON output configuration as required
