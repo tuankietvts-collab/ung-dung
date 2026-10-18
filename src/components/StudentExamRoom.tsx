@@ -1436,13 +1436,14 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                       visualType={mc.visualType}
                       caption={mc.visualCaption}
                       questionText={mc.question}
+                      options={mc.options}
                     />
 
                     {/* Custom Snipped Image if teacher clipped from real paper */}
-                    {mc.customImageUrl && (
+                    {(mc.customImageUrl || mc.imageUrl) && (
                       <div className="my-3 p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
                         <img
-                          src={mc.customImageUrl}
+                          src={mc.customImageUrl || mc.imageUrl}
                           alt={`Hình vẽ câu ${qNum}`}
                           className="max-h-60 object-contain mx-auto rounded-lg"
                         />
@@ -1581,10 +1582,10 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                         questionText={tf.prompt}
                       />
 
-                      {tf.customImageUrl && (
+                      {(tf.customImageUrl || tf.imageUrl) && (
                         <div className="my-3 p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
                           <img
-                            src={tf.customImageUrl}
+                            src={tf.customImageUrl || tf.imageUrl}
                             alt={`Hình vẽ câu ${qNum}`}
                             className="max-h-60 object-contain mx-auto rounded-lg"
                           />
@@ -1771,10 +1772,10 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                           questionText={essay.question}
                         />
 
-                        {essay.customImageUrl && (
+                        {(essay.customImageUrl || essay.imageUrl) && (
                           <div className="my-3 p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
                             <img
-                              src={essay.customImageUrl}
+                              src={essay.customImageUrl || essay.imageUrl}
                               alt={`Hình vẽ câu ${qNum}`}
                               className="max-h-60 object-contain mx-auto rounded-lg"
                             />

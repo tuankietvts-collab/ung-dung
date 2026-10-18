@@ -145,11 +145,7 @@ const LatexArrayTable: React.FC<TableProps> = ({ arrayCode }) => {
     const isVariationTable = parsedTable.length >= 3; // Bảng biến thiên: x, y', y
 
     return (
-      <div className="my-4 max-w-2xl mx-auto overflow-x-auto rounded-xl border-2 border-slate-700 bg-white shadow-sm">
-        <div className="bg-slate-100/90 px-3 py-1.5 border-b border-slate-300 text-xs font-bold text-slate-700 flex items-center justify-between">
-          <span>{isVariationTable ? '📊 Bảng biến thiên chuẩn SGK GDPT 2018' : isSignTable ? '📈 Bảng xét dấu chuẩn SGK' : 'Bảng toán học'}</span>
-          <span className="text-[10px] text-slate-500 font-normal">Kẻ viền chi tiết & mũi tên chuẩn</span>
-        </div>
+      <div className="my-3 max-w-2xl mx-auto overflow-x-auto rounded-xl border border-slate-700 bg-white shadow-2xs">
         <table className="w-full text-center border-collapse text-base font-sans select-text">
           <tbody>
             {parsedTable.map((row, rIdx) => {

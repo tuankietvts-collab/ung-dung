@@ -9,6 +9,7 @@ interface QuestionVisualProps {
   visualType?: QuestionVisualType;
   caption?: string;
   questionText?: string;
+  options?: string[];
   forceAutoDetect?: boolean;
 }
 
@@ -83,6 +84,7 @@ export const QuestionVisual: React.FC<QuestionVisualProps> = ({
   visualType,
   caption,
   questionText,
+  options,
   forceAutoDetect = true,
 }) => {
   // Nếu chưa có visualType, tự động nhận diện từ văn bản đề bài
@@ -93,19 +95,19 @@ export const QuestionVisual: React.FC<QuestionVisualProps> = ({
   switch (effectiveType) {
     // Bảng biến thiên
     case 'variation_table_cubic':
-      return <VariationTable type="cubic" title={caption} questionText={questionText} />;
+      return <VariationTable type="cubic" title={caption} questionText={questionText} options={options} />;
     case 'variation_table_rational':
-      return <VariationTable type="rational" title={caption} questionText={questionText} />;
+      return <VariationTable type="rational" title={caption} questionText={questionText} options={options} />;
     case 'variation_table_quadratic':
-      return <VariationTable type="quadratic" title={caption} questionText={questionText} />;
+      return <VariationTable type="quadratic" title={caption} questionText={questionText} options={options} />;
     case 'variation_table_quartic':
-      return <VariationTable type="quartic" title={caption} questionText={questionText} />;
+      return <VariationTable type="quartic" title={caption} questionText={questionText} options={options} />;
     case 'variation_table_custom':
-      return <VariationTable type="cubic" title={caption} questionText={questionText} />;
+      return <VariationTable type="cubic" title={caption} questionText={questionText} options={options} />;
 
     // Bảng xét dấu SGK
     case 'sign_table':
-      return <VariationTable type="sign_table" title={caption || 'Bảng xét dấu chuẩn SGK'} questionText={questionText} />;
+      return <VariationTable type="sign_table" title={caption || 'Bảng xét dấu chuẩn SGK'} questionText={questionText} options={options} />;
 
     // Đồ thị hàm số
     case 'plot_cubic':

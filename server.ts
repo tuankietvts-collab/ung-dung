@@ -51,20 +51,22 @@ Nhiệm vụ của bạn là đọc ảnh bài làm viết tay của học sinh,
  * 429 (rate limit), with automatic retry and model fallback.
  */
 async function callGeminiWithResilience(contents: any, config: any = {}): Promise<string> {
-  // Use approved non-deprecated models: prioritize gemini-3.1-flash-lite and gemini-flash-latest for speed & reliability
-  const models = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-4-argon'];
+  // Use approved non-deprecated models: prioritize gemini-2.5-flash and gemini-3.8-flash for speed, capacity & reliability
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
   let lastError: any = null;
 
-  // Strict structured JSON output configuration as required
+  // Strict structured JSON output configuration with maxOutputTokens: 8192 for full exam generation
   const generationConfig = {
     responseMimeType: 'application/json',
     temperature: 0.2,
+    maxOutputTokens: 8192,
     ...(config.generationConfig || {}),
   };
 
   const finalConfig = {
     responseMimeType: 'application/json',
     temperature: 0.2,
+    maxOutputTokens: 8192,
     ...config,
     ...generationConfig,
   };
@@ -830,9 +832,11 @@ BẮT BUỘC trả về DUY NHẤT định dạng JSON thuần túy (không bọ
     }
 
     const responseText = await callGeminiWithResilience(payload, {
-      systemInstruction: `Bạn là chuyên gia số hóa đề thi môn Toán và khảo thí GDPT 2018.\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
+      systemInstruction: `Bạn là chuyên gia số hóa đề thi môn Toán và khảo thí GDPT 2018.
+Chỉ dẫn bắt buộc tối thượng: "Trích xuất và tái tạo CHÍNH XÁC 100% từng câu hỏi, công thức LaTeX và phương án A, B, C, D từ file đề gốc của giáo viên (hoặc chỉ đổi số liệu tương đương khi giáo viên chọn tạo đề tương tự), TUYỆT ĐỐI KHÔNG tự ý bỏ qua file gốc để sinh đề mẫu khác".\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
       responseMimeType: 'application/json',
       temperature: 0.1,
+      maxOutputTokens: 8192,
     });
 
     const parsed = safeParseGeminiResponse(responseText);
@@ -990,7 +994,7 @@ app.post('/api/generate-exam', async (req, res) => {
 
     const mcTargetCount = activeMatrix?.part1?.totalQuestions ? Number(activeMatrix.part1.totalQuestions) : 12;
     const tfTargetCount = activeMatrix?.part2?.totalQuestions ? Number(activeMatrix.part2.totalQuestions) : 4;
-    const essayTargetCount = activeMatrix?.part3?.totalQuestions ? Number(activeMatrix.part3.totalQuestions) : 2;
+    const essayTargetCount = activeMatrix?.part3?.totalQuestions ? Number(activeMatrix.part3.totalQuestions) : (part3Type === 'short_answer' ? 6 : 2);
 
     const mcPoints = activeMatrix?.part1?.points ? Number(activeMatrix.part1.points) : 3.0;
     const tfPoints = activeMatrix?.part2?.points ? Number(activeMatrix.part2.points) : 4.0;
@@ -1056,15 +1060,16 @@ app.post('/api/generate-exam', async (req, res) => {
       systemDirectives = `
 BẠN LÀ CHUYÊN GIA KHẢO THÍ TOÁN THPT (CHƯƠNG TRÌNH GDPT 2018 - BỘ SÁCH ${textbook}).
 YÊU CẦU ĐẶC BIỆT BẮT BUỘC:
-- BẮT BUỘC sinh 100% câu hỏi mới bám sát CHÍNH XÁC theo Khối lớp: TOÁN LỚP ${effectiveGrade} và Chủ đề: "${effectiveTopic}".
-- CẢNH BÁO QUAN TRỌNG VỀ ĐÚNG KHỐI LỚP: TUYỆT ĐỐI KHÔNG sinh câu hỏi lệch khối lớp! Ví dụ: Nếu giáo viên chọn Toán lớp 10 với chủ đề "Hàm số bậc hai và Bất phương trình bậc hai", bạn CHỈ ĐƯỢC sinh kiến thức hàm số bậc hai, parabol, đỉnh $I$, trục đối xứng, tam thức bậc hai, bất phương trình bậc hai của Toán lớp 10; TUYỆT ĐỐI KHÔNG sinh đạo hàm $f'(x)$, tích phân hay cực trị của Toán lớp 12! Nếu chọn Toán 11 thì chỉ sinh kiến thức Toán 11 (lượng giác, cấp số cộng/nhân, giới hạn, đạo hàm cơ bản, hình không gian cổ điển).
-- Yêu cầu cụ thể của giáo viên: "${promptCustom || 'Bám sát chuẩn kiến thức kỹ năng môn Toán lớp ' + effectiveGrade}".
-- TUYỆT ĐỐI KHÔNG sinh câu hỏi chung chung hoặc ngoài phạm vi chủ đề "${effectiveTopic}".
-- Khối lớp: ${effectiveGrade}. Bộ sách giáo khoa: ${textbook}.
+- BẮT BUỘC ĐỌC KỸ VÀ BÁM SÁT 100% YÊU CẦU / ĐỀ CƯƠNG ÔN TẬP CỦA GIÁO VIÊN DƯỚI ĐÂY:
+  + Chủ đề: "${effectiveTopic}"
+  + Chi tiết yêu cầu / Đề cương của giáo viên: "${promptCustom || 'Bám sát chuẩn kiến thức kỹ năng môn Toán lớp ' + effectiveGrade}"
+- TUYỆT ĐỐI KHÔNG BỎ QUA YÊU CẦU / ĐỀ CƯƠNG ĐÃ CUNG CẤP! BẮT BUỘC tạo đề khớp đúng với các dạng bài, chuyên đề và nội dung mà giáo viên đã nêu trong đề cương hoặc yêu cầu. TUYỆT ĐỐI KHÔNG sinh đề mẫu chung chung không liên quan!
+- Khối lớp xác định: TOÁN LỚP ${effectiveGrade}. Bộ sách: ${textbook}.
 - Cấu trúc đề thi:
-  1. Phần I: Đúng ${mcTargetCount} câu trắc nghiệm 4 lựa chọn A, B, C, D (Tổng: ${mcPoints}đ).
-  2. Phần II: Đúng ${tfTargetCount} câu trắc nghiệm Đúng/Sai, mỗi câu 4 ý a, b, c, d (Tổng: ${tfPoints}đ).
-  3. Phần III: Đúng ${essayTargetCount} câu ${part3Type === 'short_answer' ? 'Trắc nghiệm trả lời ngắn (chỉ yêu cầu tính và điền đáp số)' : 'Tự luận giải chi tiết kèm BAREM ĐIỂM TỪNG BƯỚC theo SGK'} (Tổng: ${essayPoints}đ).
+  1. Phần I: Đúng chính xác ${mcTargetCount} câu trắc nghiệm 4 lựa chọn A, B, C, D (Tổng: ${mcPoints}đ).
+  2. Phần II: Đúng chính xác ${tfTargetCount} câu trắc nghiệm Đúng/Sai, mỗi câu 4 ý a, b, c, d (Tổng: ${tfPoints}đ).
+  3. Phần III: Đúng chính xác ${essayTargetCount} câu ${part3Type === 'short_answer' ? 'Trắc nghiệm trả lời ngắn (chỉ yêu cầu tính và điền đáp số)' : 'Tự luận giải chi tiết kèm BAREM ĐIỂM TỪNG BƯỚC theo SGK'} (Tổng: ${essayPoints}đ).
+TỔNG CỘNG XUẤT ĐỦ 100%: ${mcTargetCount + tfTargetCount + essayTargetCount} CÂU HỎI.
 `;
     }
     // =========================================================================
@@ -1072,14 +1077,14 @@ YÊU CẦU ĐẶC BIỆT BẮT BUỘC:
     // Bám sát tuyệt đối số lượng và dạng thức của ma trận (Biết, Hiểu, Vận dụng)
     // =========================================================================
     else if (mode === 'matrix') {
-      const p1NhanBiet = activeMatrix?.part1?.nhanBiet ?? 6;
-      const p1ThongHieu = activeMatrix?.part1?.thongHieu ?? 4;
-      const p1VanDung = activeMatrix?.part1?.vanDung ?? 2;
+      const p1NhanBiet = activeMatrix?.part1?.nhanBiet ?? Math.round(mcTargetCount * 0.5);
+      const p1ThongHieu = activeMatrix?.part1?.thongHieu ?? Math.round(mcTargetCount * 0.35);
+      const p1VanDung = activeMatrix?.part1?.vanDung ?? Math.max(0, mcTargetCount - p1NhanBiet - p1ThongHieu);
       const p1VanDungCao = activeMatrix?.part1?.vanDungCao ?? 0;
 
-      const p2NhanBiet = activeMatrix?.part2?.nhanBiet ?? 2;
-      const p2ThongHieu = activeMatrix?.part2?.thongHieu ?? 1;
-      const p2VanDung = activeMatrix?.part2?.vanDung ?? 1;
+      const p2NhanBiet = activeMatrix?.part2?.nhanBiet ?? Math.max(1, Math.round(tfTargetCount * 0.5));
+      const p2ThongHieu = activeMatrix?.part2?.thongHieu ?? Math.max(1, Math.round(tfTargetCount * 0.3));
+      const p2VanDung = activeMatrix?.part2?.vanDung ?? Math.max(0, tfTargetCount - p2NhanBiet - p2ThongHieu);
 
       systemDirectives = `
 Bạn là chuyên gia thẩm định và ra đề thi Toán THPT Việt Nam (Chương trình GDPT 2018).
@@ -1096,16 +1101,15 @@ Hãy ĐỌC KỸ 100% NỘI DUNG FILE MA TRẬN / BẢNG ĐẶC TẢ ĐÍNH KÈM
   * TUYỆT ĐỐI KHÔNG RA KIẾN THỨC LỚP 12!
   * Tiêu đề đề thi PHẢI LÀ: "ĐỀ KIỂM TRA TOÁN LỚP 10 - [TÊN CHỦ ĐỀ TRONG MA TRẬN]".
   * Mã đề thi PHẢI BẮT ĐẦU BẰNG "TOAN10-".
-- CẤU TRÚC ĐỀ PHẢI KHỚP ĐÚNG TỪNG CÂU, TỪNG MỨC ĐỘ NHẬN THỨC (Nhận biết, Thông hiểu, Vận dụng) và số lượng câu đã ghi rõ trong file ma trận:
+- CẤU TRÚC ĐỀ PHẢI KHỚP ĐÚNG 100% TỪNG CÂU, TỪNG MỨC ĐỘ NHẬN THỨC VÀ TỔNG SỐ LƯỢNG CÂU HỎI TRONG MA TRẬN (TUYỆT ĐỐI KHÔNG ÉP CỨNG HOẶC CẮT BỚT):
   * Phần I (Trắc nghiệm nhiều lựa chọn): Đúng chính xác ${mcTargetCount} câu (${p1NhanBiet} câu Nhận biết, ${p1ThongHieu} câu Thông hiểu, ${p1VanDung} câu Vận dụng). Tổng điểm: ${mcPoints}đ.
   * Phần II (Trắc nghiệm Đúng/Sai): Đúng chính xác ${tfTargetCount} câu (${p2NhanBiet} ý Nhận biết, ${p2ThongHieu} ý Thông hiểu, ${p2VanDung} ý Vận dụng). Tổng điểm: ${tfPoints}đ.
   * Phần III (${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}): Đúng chính xác ${essayTargetCount} câu chuẩn SGK lớp ${effectiveGrade}. Tổng điểm: ${essayPoints}đ.
+TỔNG CỘNG TOÀN BÀI: Đúng chính xác ${mcTargetCount + tfTargetCount + essayTargetCount} câu hỏi (Gồm ${mcTargetCount} câu Phần I + ${tfTargetCount} câu Phần II + ${essayTargetCount} câu Phần III).
 `;
     }
     // =========================================================================
-    // CƠ CHẾ 3: TÁI TẠO ĐỀ (AI TÁI TẠO ĐỀ TƯƠNG TỰ / ISOMORPHIC REGENERATION)
-    // Giữ nguyên khung cấu trúc kiến thức và độ khó của đề gốc, nhưng hoán đổi số liệu,
-    // đổi ngữ cảnh và xáo trộn vị trí đáp án đúng để tạo ra đề mới hoàn toàn tương đương.
+    // CƠ CHẾ 3: TÁI TẠO ĐỀ (TÁI TẠO ĐỀ GIỐNG 100% FILE GỐC HOẶC TƯƠNG ĐƯƠNG)
     // =========================================================================
     else if (mode === 'recreate') {
       let originalExamContext = '';
@@ -1138,8 +1142,9 @@ ${JSON.stringify({
 
       if (examFileBase64 || matrixFileBase64 || req.body.extractedText) {
         systemDirectives = `
-BẠN ĐANG THỰC HIỆN CƠ CHẾ: SỐ HÓA VÀ TÁI TẠO NGUYÊN BẢN ĐỀ THI TỪ FILE ĐÍNH KÈM "${examFileName || matrixFileName || 'Tài liệu đề thi'}".
-YÊU CẦU TỐI THƯỢNG CỦA GIÁO VIÊN:
+BẠN ĐANG THỰC HIỆN CƠ CHẾ: SỐ HÓA VÀ TÁI TẠO ĐỀ THI TỪ FILE ĐỀ GỐC CỦA GIÁO VIÊN ("${examFileName || matrixFileName || 'Tài liệu đề thi'}").
+CHỈ DẪN NGHIÊM NGẶT BẮT BUỘC:
+"Trích xuất và tái tạo CHÍNH XÁC 100% từng câu hỏi, công thức LaTeX và phương án A, B, C, D từ file đề gốc của giáo viên (hoặc chỉ đổi số liệu tương đương khi giáo viên chọn tạo đề tương tự), TUYỆT ĐỐI KHÔNG tự ý bỏ qua file gốc để sinh đề mẫu khác".
 1. HÃY ĐỌC THẬT KỸ TOÀN BỘ FILE ĐÍNH KÈM VÀ TÁI TẠO ĐÚNG CHÍNH XÁC 100% CÁC CÂU HỎI TRONG ĐỀ GỐC ĐƯỢC TẢI LÊN.
 2. GIỮ NGUYÊN VẸN NỘI DUNG, SỐ LIỆU, CÔNG THỨC TOÁN HỌC, 4 PHƯƠNG ÁN A-B-C-D VÀ ĐÁP ÁN CỦA ĐỀ GỐC.
 3. TUYỆT ĐỐI KHÔNG BỊA ĐỀ MỚI, KHÔNG ĐỔI SỐ LIỆU, KHÔNG HIỂN THỊ ĐỀ MẶC ĐỊNH KHÔNG LIÊN QUAN!
@@ -1147,7 +1152,7 @@ YÊU CẦU TỐI THƯỢNG CỦA GIÁO VIÊN:
    - Phần I: Câu hỏi trắc nghiệm 4 lựa chọn (A, B, C, D)
    - Phần II: Câu hỏi Đúng / Sai (kèm 4 ý a, b, c, d)
    - Phần III: Câu hỏi trả lời ngắn hoặc Tự luận
-5. Với các câu hỏi có hình vẽ thực tế phức tạp (hình học không gian 3D, đồ thị thực tế), hãy trích xuất đầy đủ đề bài chữ và công thức để giáo viên có thể dùng tính năng cắt ảnh dán trực tiếp vào câu hỏi.
+5. Với các câu hỏi có hình vẽ thực tế phức tạp (hình học không gian 3D, đồ thị thực tế, bảng biến thiên phức tạp), hãy trích xuất đầy đủ văn bản đề bài chữ và công thức để giáo viên có thể dùng công cụ cắt ảnh từ đề gốc dán trực tiếp vào câu hỏi.
 `;
       } else {
         systemDirectives = `
@@ -1223,13 +1228,16 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
 }
 `;
 
-    let payload: any = prompt;
-
+    let textPrompt = prompt;
     if (extractedMatrixText && extractedMatrixText.trim().length > 10) {
-      payload = `${prompt}\n\n=== NỘI DUNG VĂN BẢN MA TRẬN & BẢNG ĐẶC TẢ TỪ FILE (${matrixFileName || 'Ma trận'}) ===\n${extractedMatrixText}`;
+      textPrompt = `${prompt}\n\n=== NỘI DUNG VĂN BẢN MA TRẬN & BẢNG ĐẶC TẢ TỪ FILE (${matrixFileName || 'Ma trận'}) ===\n${extractedMatrixText}`;
     } else if (extractedExamText && extractedExamText.trim().length > 10) {
-      payload = `${prompt}\n\n=== NỘI DUNG VĂN BẢN ĐỀ THI GỐC TRÍCH XUẤT TỪ FILE (${examFileName || 'Đề thi gốc'}) ===\n${extractedExamText}`;
-    } else if (matrixFileBase64 && (matrixFileName.toLowerCase().endsWith('.pdf') || matrixMimeType.includes('pdf') || matrixMimeType.includes('image'))) {
+      textPrompt = `${prompt}\n\n=== NỘI DUNG VĂN BẢN ĐỀ THI GỐC TRÍCH XUẤT TỪ FILE (${examFileName || 'Đề thi gốc'}) ===\n${extractedExamText}`;
+    }
+
+    let payload: any = textPrompt;
+
+    if (matrixFileBase64 && (matrixFileName.toLowerCase().endsWith('.pdf') || matrixMimeType.includes('pdf') || matrixMimeType.includes('image') || matrixFileBase64.length > 100)) {
       let cleanBase64 = matrixFileBase64.replace(/^data:.*?;base64,/, '');
       let effectiveMime = matrixFileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : (matrixMimeType || 'image/jpeg');
       payload = [
@@ -1239,9 +1247,9 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
             mimeType: effectiveMime,
           },
         },
-        { text: prompt },
+        { text: textPrompt },
       ];
-    } else if (examFileBase64 && (examFileName.toLowerCase().endsWith('.pdf') || examFileName.toLowerCase().endsWith('.png') || examFileName.toLowerCase().endsWith('.jpg') || examFileName.toLowerCase().endsWith('.jpeg') || (req.body.examFileMimeType && (req.body.examFileMimeType.includes('pdf') || req.body.examFileMimeType.includes('image'))))) {
+    } else if (examFileBase64 && (examFileName.toLowerCase().endsWith('.pdf') || examFileName.toLowerCase().endsWith('.png') || examFileName.toLowerCase().endsWith('.jpg') || examFileName.toLowerCase().endsWith('.jpeg') || (req.body.examFileMimeType && (req.body.examFileMimeType.includes('pdf') || req.body.examFileMimeType.includes('image'))) || examFileBase64.length > 100)) {
       let cleanBase64 = examFileBase64.replace(/^data:.*?;base64,/, '');
       let effectiveMime = examFileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg';
       payload = [
@@ -1251,7 +1259,7 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
             mimeType: effectiveMime,
           },
         },
-        { text: prompt },
+        { text: textPrompt },
       ];
     }
 

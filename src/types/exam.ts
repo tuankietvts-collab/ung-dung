@@ -33,6 +33,7 @@ export interface MultipleChoiceQuestion {
   visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
+  imageUrl?: string;
 }
 
 export interface TrueFalseSubItem {
@@ -49,6 +50,7 @@ export interface TrueFalseQuestion {
   visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
+  imageUrl?: string;
 }
 
 export interface EssayQuestion {
@@ -63,6 +65,7 @@ export interface EssayQuestion {
   visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
+  imageUrl?: string;
 }
 
 export interface Exam {

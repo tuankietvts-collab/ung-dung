@@ -467,15 +467,15 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
 
     if (targetType === 'mc') {
       updatedExam.multipleChoice = updatedExam.multipleChoice.map((q) =>
-        q.id === questionId ? { ...q, customImageUrl: croppedImageUrl } : q
+        q.id === questionId ? { ...q, customImageUrl: croppedImageUrl, imageUrl: croppedImageUrl } : q
       );
     } else if (targetType === 'tf') {
       updatedExam.trueFalseQuestions = updatedExam.trueFalseQuestions.map((q) =>
-        q.id === questionId ? { ...q, customImageUrl: croppedImageUrl } : q
+        q.id === questionId ? { ...q, customImageUrl: croppedImageUrl, imageUrl: croppedImageUrl } : q
       );
     } else {
       updatedExam.essays = updatedExam.essays.map((q) =>
-        q.id === questionId ? { ...q, customImageUrl: croppedImageUrl } : q
+        q.id === questionId ? { ...q, customImageUrl: croppedImageUrl, imageUrl: croppedImageUrl } : q
       );
     }
 
@@ -1696,7 +1696,7 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
                                 className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
                               >
                                 <Scissors className="w-3.5 h-3.5" />
-                                {q.customImageUrl ? 'Cắt lại ảnh câu này' : 'Cắt ảnh đề dán vào câu này'}
+                                {q.customImageUrl ? '✂️ Cắt lại ảnh từ đề gốc' : '✂️ Cắt ảnh từ đề gốc'}
                               </button>
 
                               <button
@@ -1824,7 +1824,7 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
                                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
                                 >
                                   <Scissors className="w-3.5 h-3.5" />
-                                  {tf.customImageUrl ? 'Cắt lại ảnh câu này' : 'Cắt ảnh đề dán vào câu này'}
+                                  {tf.customImageUrl ? '✂️ Cắt lại ảnh từ đề gốc' : '✂️ Cắt ảnh từ đề gốc'}
                                 </button>
 
                                 <button
@@ -1961,7 +1961,7 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
                                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
                                 >
                                   <Scissors className="w-3.5 h-3.5" />
-                                  {essay.customImageUrl ? 'Cắt lại ảnh câu này' : 'Cắt ảnh đề dán vào câu này'}
+                                  {essay.customImageUrl ? '✂️ Cắt lại ảnh từ đề gốc' : '✂️ Cắt ảnh từ đề gốc'}
                                 </button>
 
                                 <button
@@ -2034,6 +2034,8 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
           isOpen={isSnipperOpen}
           onClose={() => setIsSnipperOpen(false)}
           onAttachImageToQuestion={handleAttachImageToQuestion}
+          initialImage={snipperInitialImage}
+          initialTarget={snipperInitialTarget}
         />
       )}
 
