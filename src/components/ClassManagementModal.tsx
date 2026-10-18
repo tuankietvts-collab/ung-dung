@@ -36,6 +36,14 @@ import {
   normalizeVietnameseName,
   isInvalidStudentName
 } from '../services/studentRosterParser';
+import {
+  encodeSchoolName,
+  encodeSubjectName,
+  encodeSchoolYear,
+  generateClassId,
+  generateStudentDocId,
+  generateStudentUsername,
+} from '../services/schoolEncoder';
 
 interface ClassManagementModalProps {
   isOpen: boolean;
@@ -70,15 +78,17 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'classes' | 'students' | 'quick_paste' | 'accounts' | 'assign_exam'>('classes');
   
-  // Create class form state
+  // Create class form state with natural language inputs
+  const [newSchoolFullName, setNewSchoolFullName] = useState<string>('THPT Võ Thị Sáu');
+  const [newSubjectFullName, setNewSubjectFullName] = useState<string>('Toán');
   const [newClassName, setNewClassName] = useState<string>('');
   const [newClassGrade, setNewClassGrade] = useState<string>('12');
-  const [newSchoolYear, setNewSchoolYear] = useState<string>('2024 - 2025');
+  const [newSchoolYear, setNewSchoolYear] = useState<string>('2026-2027');
   const [isSubmittingClass, setIsSubmittingClass] = useState<boolean>(false);
 
   // Selected class for student management
   const [selectedClassId, setSelectedClassId] = useState<string>(
-    initialClassId || (classes.length > 0 ? classes[0].name : '12A1')
+    initialClassId || (classes.length > 0 ? classes[0].name : '12A8')
   );
 
   useEffect(() => {
@@ -139,17 +149,26 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle creating a new class
+  // Handle creating a new class with automatic encoding formula
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = newClassName.trim().toUpperCase();
+    const cleanName = newClassName.trim().toUpperCase().replace(/^LỚP\s+/i, '');
     if (!cleanName) {
-      if (showToast) showToast('Vui lòng nhập tên lớp (Ví dụ: 10A1, 12A8)', 'error');
+      if (showToast) showToast('Vui lòng nhập tên lớp (Ví dụ: 12A8, 11A1)', 'error');
       return;
     }
 
-    if (classes.some((c) => c.name.toUpperCase() === cleanName || c.id.toUpperCase() === cleanName)) {
-      if (showToast) showToast(`Lớp ${cleanName} đã tồn tại trong danh sách!`, 'info');
+    const schoolFullName = newSchoolFullName.trim() || 'THPT Võ Thị Sáu';
+    const subjectFullName = newSubjectFullName.trim() || 'Toán';
+    const schoolYear = newSchoolYear.trim() || '2026-2027';
+    const schoolCode = encodeSchoolName(schoolFullName);
+    const subjectCode = encodeSubjectName(subjectFullName);
+    const yearCode = encodeSchoolYear(schoolYear);
+    // Formula: [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP] (Ví dụ: "VTS_TO_26_12A8")
+    const classId = generateClassId(schoolFullName, subjectFullName, schoolYear, cleanName);
+
+    if (classes.some((c) => c.id === classId || (c.name.toUpperCase() === cleanName && c.schoolYear === schoolYear))) {
+      if (showToast) showToast(`Lớp ${cleanName} (${classId}) đã tồn tại trong danh sách!`, 'info');
       setSelectedClassId(cleanName);
       setNewClassName('');
       return;
@@ -158,16 +177,21 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
     setIsSubmittingClass(true);
     try {
       const newClass: ClassGroup = {
-        id: cleanName,
+        id: classId,
         name: cleanName,
         grade: newClassGrade,
-        schoolYear: newSchoolYear.trim() || '2024 - 2025',
+        schoolYear,
+        schoolFullName,
+        schoolCode,
+        subjectFullName,
+        subjectCode,
+        yearCode,
         createdAt: new Date().toISOString(),
       };
       await onSaveClass(newClass);
       setSelectedClassId(cleanName);
       setNewClassName('');
-      if (showToast) showToast(`Đã tạo thành công lớp ${cleanName}!`);
+      if (showToast) showToast(`Đã tạo thành công lớp ${cleanName} (Mã Document: ${classId})!`);
     } catch (err: any) {
       if (showToast) showToast('Lỗi khi tạo lớp: ' + err.message, 'error');
     } finally {
@@ -229,17 +253,44 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: 'array' });
       const result = parseStudentRosterFromWorkbook(wb, selectedClassId);
-
       const validStudents = result.students.filter((s) => !isInvalidStudentName(s.fullName));
-
       if (validStudents.length === 0) {
         throw new Error('Không nhận diện được học sinh hợp lệ nào từ file.');
       }
 
-      await onSaveRoster(validStudents);
+      const selectedClassObj = classes.find(
+        (c) => c.name.toUpperCase() === selectedClassId.toUpperCase() || c.id === selectedClassId
+      );
+      const schoolName = selectedClassObj?.schoolFullName || 'THPT Võ Thị Sáu';
+      const subjectName = selectedClassObj?.subjectFullName || 'Toán';
+      const schoolYear = selectedClassObj?.schoolYear || '2026-2027';
+      const classId = selectedClassObj?.id || generateClassId(schoolName, subjectName, schoolYear, selectedClassId);
+
+      const enrichedStudents: StudentRosterItem[] = validStudents.map((st, idx) => {
+        const stt = st.stt || idx + 1;
+        const username = generateStudentUsername(selectedClassId, stt);
+        const docId = generateStudentDocId(classId, stt);
+        return {
+          ...st,
+          stt,
+          className: selectedClassId,
+          classId,
+          schoolFullName: schoolName,
+          schoolCode: encodeSchoolName(schoolName),
+          subjectFullName: subjectName,
+          subjectCode: encodeSubjectName(subjectName),
+          yearCode: encodeSchoolYear(schoolYear),
+          username,
+          password: defaultPassword || '123456',
+          isAccountCreated: true,
+          id: docId,
+        };
+      });
+
+      await onSaveRoster(enrichedStudents);
       if (showToast) {
         showToast(
-          `Đã tải thành công ${validStudents.length} học sinh vào lớp ${selectedClassId}! ${result.formatNote ? `[${result.formatNote}]` : ''}`,
+          `Đã tải & cấp tài khoản cho ${enrichedStudents.length} học sinh lớp ${selectedClassId}! ${result.formatNote ? `[${result.formatNote}]` : ''}`,
           'success'
         );
       }
@@ -267,11 +318,40 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
         return;
       }
 
-      await onSaveRoster(validStudents);
+      const selectedClassObj = classes.find(
+        (c) => c.name.toUpperCase() === selectedClassId.toUpperCase() || c.id === selectedClassId
+      );
+      const schoolName = selectedClassObj?.schoolFullName || 'THPT Võ Thị Sáu';
+      const subjectName = selectedClassObj?.subjectFullName || 'Toán';
+      const schoolYear = selectedClassObj?.schoolYear || '2026-2027';
+      const classId = selectedClassObj?.id || generateClassId(schoolName, subjectName, schoolYear, selectedClassId);
+
+      const enrichedStudents: StudentRosterItem[] = validStudents.map((st, idx) => {
+        const stt = st.stt || idx + 1;
+        const username = generateStudentUsername(selectedClassId, stt);
+        const docId = generateStudentDocId(classId, stt);
+        return {
+          ...st,
+          stt,
+          className: selectedClassId,
+          classId,
+          schoolFullName: schoolName,
+          schoolCode: encodeSchoolName(schoolName),
+          subjectFullName: subjectName,
+          subjectCode: encodeSubjectName(subjectName),
+          yearCode: encodeSchoolYear(schoolYear),
+          username,
+          password: defaultPassword || '123456',
+          isAccountCreated: true,
+          id: docId,
+        };
+      });
+
+      await onSaveRoster(enrichedStudents);
       setPastedText('');
       setActiveTab('students');
       if (showToast) {
-        showToast(`Đã nhận diện chuẩn & thêm ${validStudents.length} học sinh vào lớp ${selectedClassId}!`);
+        showToast(`Đã nhận diện chuẩn & cấp tài khoản cho ${enrichedStudents.length} học sinh lớp ${selectedClassId}!`);
       }
     } catch (err: any) {
       if (showToast) showToast('Lỗi lưu danh sách: ' + err.message, 'error');
@@ -305,12 +385,6 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
         stt: editStt,
       };
 
-      const newId = `${editingStudent.className}_${cleanSbd}`.replace(/[\/\s#?]/g, '_');
-      if (newId !== editingStudent.id) {
-        await onDeleteStudent(editingStudent.id);
-        updatedStudent.id = newId;
-      }
-
       await onSaveRoster([updatedStudent]);
       setEditingStudent(null);
       if (showToast) showToast(`Đã cập nhật học sinh "${cleanName}" thành công!`);
@@ -331,22 +405,41 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
     }
     const nextStt = currentClassStudents.length + 1;
     const cleanSbd = singleSbd.trim() || `${selectedClassId}-${String(nextStt).padStart(2, '0')}`;
-    const safeId = `${selectedClassId}_${cleanSbd}`.replace(/[\/\s#?]/g, '_');
+
+    const selectedClassObj = classes.find(
+      (c) => c.name.toUpperCase() === selectedClassId.toUpperCase() || c.id === selectedClassId
+    );
+    const schoolName = selectedClassObj?.schoolFullName || 'THPT Võ Thị Sáu';
+    const subjectName = selectedClassObj?.subjectFullName || 'Toán';
+    const schoolYear = selectedClassObj?.schoolYear || '2026-2027';
+    const classId = selectedClassObj?.id || generateClassId(schoolName, subjectName, schoolYear, selectedClassId);
+
+    const docId = generateStudentDocId(classId, nextStt);
+    const username = generateStudentUsername(selectedClassId, nextStt);
 
     setIsAddingSingleStudent(true);
     try {
       const newSt: StudentRosterItem = {
-        id: safeId,
+        id: docId,
         stt: nextStt,
         fullName: cleanName,
         className: selectedClassId,
+        classId,
+        schoolFullName: schoolName,
+        schoolCode: encodeSchoolName(schoolName),
+        subjectFullName: subjectName,
+        subjectCode: encodeSubjectName(subjectName),
+        yearCode: encodeSchoolYear(schoolYear),
         sbd: cleanSbd,
+        username,
+        password: defaultPassword || '123456',
+        isAccountCreated: true,
         createdAt: new Date().toISOString(),
       };
       await onSaveRoster([newSt]);
       setSingleFullName('');
       setSingleSbd('');
-      if (showToast) showToast(`Đã thêm học sinh "${cleanName}" vào lớp ${selectedClassId}!`);
+      if (showToast) showToast(`Đã thêm học sinh "${cleanName}" (TK: ${username}) vào lớp ${selectedClassId}!`);
     } catch (err: any) {
       if (showToast) showToast('Lỗi khi thêm học sinh: ' + err.message, 'error');
     } finally {
@@ -399,30 +492,48 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
       if (showToast) showToast(`Chưa có học sinh trong lớp ${selectedClassId} để xuất file!`, 'info');
       return;
     }
+
+    const selectedClassObj = classes.find(
+      (c) => c.name.toUpperCase() === selectedClassId.toUpperCase() || c.id === selectedClassId
+    );
+    const schoolName = selectedClassObj?.schoolFullName || 'THPT Võ Thị Sáu';
+    const subjectName = selectedClassObj?.subjectFullName || 'Toán';
+    const schoolYear = selectedClassObj?.schoolYear || '2026-2027';
+    const classId = selectedClassObj?.id || generateClassId(schoolName, subjectName, schoolYear, selectedClassId);
+
     const header = [
       'STT',
       'Họ và tên học sinh',
       'Lớp',
-      'Số báo danh / Mã HS',
       'Tên đăng nhập',
-      'Mật khẩu khởi tạo',
+      'Mật khẩu',
+      'Mã Document Học Sinh',
+      'Trường học',
+      'Môn học',
+      'Năm học',
       'Link phòng thi trực tuyến',
-      'Hướng dẫn làm bài'
+      'Hướng dẫn đăng nhập'
     ];
     const examLink = getClassExamLink(selectedClassId);
     const rows = currentClassStudents.map((s, idx) => {
       const stt = s.stt || idx + 1;
-      const username = s.username || `${selectedClassId.toLowerCase()}_${String(stt).padStart(2, '0')}`;
+      const username = s.username || generateStudentUsername(selectedClassId, stt);
+      const studentDocId = s.id && s.id.includes('_') && s.id.split('_').length >= 4
+        ? s.id
+        : generateStudentDocId(classId, stt);
       const password = s.password || defaultPassword || '123456';
       return [
         stt,
         s.fullName,
         s.className,
-        s.sbd,
         username,
         password,
+        studentDocId,
+        schoolName,
+        subjectName,
+        schoolYear,
         examLink,
-        'Học sinh có thể đăng nhập bằng Tài khoản & Mật khẩu trên, hoặc mở Link phòng thi để làm bài trực tiếp.'
+        `Đăng nhập: Trường "${schoolName}", Môn "${subjectName}", Năm "${schoolYear}", Lớp "${s.className}". Nhập Tài khoản: "${username}" và Mật khẩu: "${password}"`
       ];
     });
 
@@ -432,10 +543,13 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
       { wch: 28 },
       { wch: 12 },
       { wch: 20 },
-      { wch: 20 },
-      { wch: 18 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 24 },
+      { wch: 14 },
+      { wch: 14 },
       { wch: 35 },
-      { wch: 45 }
+      { wch: 55 }
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `TaiKhoan_${selectedClassId}`);
@@ -586,72 +700,116 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
           {/* TAB 1: DANH SÁCH LỚP HỌC & FORM TẠO LỚP */}
           {activeTab === 'classes' && (
             <div className="space-y-6">
-              {/* Form Tạo Lớp Mới */}
+              {/* Form Tạo Lớp Mới Với Tên Đầy Đủ Tự Nhiên & Mã Hóa Ngầm */}
               <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                    <Plus className="w-4 h-4 text-indigo-600" /> Tạo Lớp Học Mới
+                    <Plus className="w-4 h-4 text-indigo-600" /> Tạo Lớp Học Mới (Tự Động Mã Hóa Trường / Môn / Niên Khóa)
                   </h3>
                   <span className="text-[11px] text-slate-500 font-medium">
-                    Ví dụ: 10A1, 10A2, 11B1, 12A8
+                    Nhập có dấu tiếng Việt tự nhiên, hệ thống tự sinh mã Document ID
                   </span>
                 </div>
 
-                <form onSubmit={handleCreateClass} className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                      Tên Lớp <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="10A1, 12A8..."
-                      value={newClassName}
-                      onChange={(e) => setNewClassName(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 uppercase"
-                    />
+                <form onSubmit={handleCreateClass} className="space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Tên Trường Đầy Đủ <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="VD: THPT Võ Thị Sáu, THPT An Phú..."
+                        value={newSchoolFullName}
+                        onChange={(e) => setNewSchoolFullName(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Môn Học Giảng Dạy <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="VD: Toán, Vật Lý, Hóa Học..."
+                        value={newSubjectFullName}
+                        onChange={(e) => setNewSubjectFullName(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Năm Học / Niên Khóa <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="VD: 2026-2027"
+                        value={newSchoolYear}
+                        onChange={(e) => setNewSchoolYear(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-mono"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                          Tên Lớp <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="12A8..."
+                          value={newClassName}
+                          onChange={(e) => setNewClassName(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 uppercase"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                          Khối Lớp
+                        </label>
+                        <select
+                          value={newClassGrade}
+                          onChange={(e) => setNewClassGrade(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                        >
+                          <option value="10">K10</option>
+                          <option value="11">K11</option>
+                          <option value="12">K12</option>
+                        </select>
+                      </div>
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                      Khối Lớp
-                    </label>
-                    <select
-                      value={newClassGrade}
-                      onChange={(e) => setNewClassGrade(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-                    >
-                      <option value="10">Khối 10 (Toán 10)</option>
-                      <option value="11">Khối 11 (Toán 11)</option>
-                      <option value="12">Khối 12 (Toán 12)</option>
-                    </select>
-                  </div>
+                  {/* Live Encoding Badge & Submit */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl">
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                      <span className="font-extrabold text-indigo-900">Mã Lớp Hệ Thống (Document ID):</span>
+                      <code className="px-2 py-0.5 bg-white rounded border border-indigo-300 text-indigo-700 font-mono font-black text-xs shadow-2xs">
+                        {generateClassId(newSchoolFullName, newSubjectFullName, newSchoolYear, newClassName || '12A8')}
+                      </code>
+                      <span className="text-[11px] text-slate-500">
+                        (Trường: <b>{encodeSchoolName(newSchoolFullName)}</b> • Môn: <b>{encodeSubjectName(newSubjectFullName)}</b> • Năm: <b>{encodeSchoolYear(newSchoolYear)}</b> • Lớp: <b>{(newClassName || '12A8').toUpperCase()}</b>)
+                      </span>
+                    </div>
 
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                      Năm Học
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="2024 - 2025"
-                      value={newSchoolYear}
-                      onChange={(e) => setNewSchoolYear(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-                    />
-                  </div>
-
-                  <div className="flex items-end">
                     <button
                       type="submit"
                       disabled={isSubmittingClass || !newClassName.trim()}
-                      className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="py-2 px-5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                     >
                       {isSubmittingClass ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
                         <Plus className="w-4 h-4" />
                       )}
-                      <span>Lưu Lớp Mới</span>
+                      <span>Lưu Lớp Học Mới</span>
                     </button>
                   </div>
                 </form>
@@ -693,9 +851,12 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
                               <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-black rounded-md border border-indigo-200">
                                 Khối {cls.grade}
                               </span>
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-mono font-bold rounded-md border border-slate-200">
+                                {cls.id}
+                              </span>
                             </div>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              Năm học: <b className="text-slate-700">{cls.schoolYear || '2024 - 2025'}</b> • Sĩ số: <b className="text-emerald-700">{count} học sinh</b>
+                            <p className="text-xs text-slate-600 mt-1">
+                              {cls.schoolFullName ? `${cls.schoolFullName} • ` : ''}{cls.subjectFullName ? `${cls.subjectFullName} • ` : ''}Năm: <b className="text-slate-800">{cls.schoolYear || '2026-2027'}</b> • Sĩ số: <b className="text-emerald-700">{count} HS</b>
                             </p>
                           </div>
 
@@ -1145,7 +1306,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
                     ) : (
                       currentClassStudents.map((st, idx) => {
                         const stt = st.stt || idx + 1;
-                        const username = st.username || `${selectedClassId.toLowerCase()}_${String(stt).padStart(2, '0')}`;
+                        const username = st.username || generateStudentUsername(selectedClassId, stt);
                         const pass = st.password || defaultPassword;
                         const isVisible = !!showPasswordMap[st.id || idx];
                         const isCopied = copiedAccountUser === username;
@@ -1153,10 +1314,15 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
                         return (
                           <tr key={st.id || idx} className="hover:bg-amber-50/30 transition-colors">
                             <td className="p-3 text-center font-bold font-mono text-slate-600">
-                              {stt}
+                              {String(stt).padStart(2, '0')}
                             </td>
                             <td className="p-3 font-extrabold text-slate-900 text-sm">
-                              {st.fullName}
+                              <div>{st.fullName}</div>
+                              {st.id && st.id.includes('_') && (
+                                <span className="text-[10px] font-mono text-slate-400 font-normal">
+                                  Doc ID: {st.id}
+                                </span>
+                              )}
                             </td>
                             <td className="p-3 text-center font-black text-indigo-700">
                               {st.className}
@@ -1164,8 +1330,10 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
                             <td className="p-3 text-center font-mono font-bold text-slate-700">
                               {st.sbd}
                             </td>
-                            <td className="p-3 text-center font-mono font-bold text-indigo-700 bg-indigo-50/50">
-                              {username}
+                            <td className="p-3 text-center font-mono font-black text-indigo-700 bg-indigo-50/60">
+                              <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                {username}
+                              </span>
                             </td>
                             <td className="p-3 text-center font-mono font-bold text-slate-800">
                               <div className="flex items-center justify-center gap-1.5">

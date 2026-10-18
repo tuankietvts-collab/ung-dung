@@ -195,10 +195,15 @@ export interface StudentSubmission {
 }
 
 export interface ClassGroup {
-  id: string;
-  name: string; // Ví dụ: "10A1", "10A2", "12A8"
+  id: string; // [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP], VD: "VTS_TO_26_12A8"
+  name: string; // Ví dụ: "12A8"
   grade: string; // "10" | "11" | "12"
-  schoolYear: string; // Ví dụ: "2024 - 2025"
+  schoolYear: string; // Ví dụ: "2026-2027"
+  schoolFullName?: string; // Ví dụ: "THPT Võ Thị Sáu"
+  schoolCode?: string; // Ví dụ: "VTS"
+  subjectFullName?: string; // Ví dụ: "Toán"
+  subjectCode?: string; // Ví dụ: "TO"
+  yearCode?: string; // Ví dụ: "26"
   studentCount?: number;
   createdAt?: string;
   teacherId?: string;
@@ -206,16 +211,22 @@ export interface ClassGroup {
 }
 
 export interface StudentRosterItem {
-  id: string;
+  id: string; // [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP]_[STT_2_SỐ], VD: "VTS_TO_26_12A8_01"
   stt: number;
   fullName: string;
   className: string;
+  classId?: string; // "VTS_TO_26_12A8"
   sbd: string;
   assignedCode?: string;
   createdAt?: string;
-  username?: string;
-  password?: string;
+  username?: string; // "12a801"
+  password?: string; // "123456"
   isAccountCreated?: boolean;
+  schoolFullName?: string;
+  schoolCode?: string;
+  subjectFullName?: string;
+  subjectCode?: string;
+  yearCode?: string;
 }
 
 export type UserRole = 'admin' | 'teacher' | 'student';
@@ -227,11 +238,15 @@ export interface AppUser {
   username: string;
   email?: string;
   school?: string;
+  schoolCode?: string;
   className?: string;
+  classId?: string;
   subject?: string;
+  subjectCode?: string;
+  yearCode?: string;
   sbd?: string;
   createdAt?: string;
-  isApproved?: boolean; // Với giáo viên: phải được admin phê duyệt mới đăng nhập được
+  isApproved?: boolean;
   approvedAt?: string;
   approvedBy?: string;
 }

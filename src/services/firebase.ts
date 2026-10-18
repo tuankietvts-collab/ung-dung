@@ -26,6 +26,14 @@ import { Exam, StudentSubmission, StudentRosterItem, ClassGroup, TeacherProfile,
 import { DEFAULT_SAMPLE_EXAMS } from '../data/defaultExam';
 import { isInvalidStudentName } from './studentRosterParser';
 import { sanitizeExamQuestions } from './examPermuter';
+import {
+  encodeSchoolName,
+  encodeSubjectName,
+  encodeSchoolYear,
+  generateClassId,
+  generateStudentDocId,
+  generateStudentUsername,
+} from './schoolEncoder';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -617,9 +625,42 @@ const CLASSES_STORAGE_KEY = 'edumath_class_groups';
 const DELETED_CLASSES_STORAGE_KEY = 'edumath_deleted_class_ids';
 
 const DEFAULT_CLASSES: ClassGroup[] = [
-  { id: '10A1', name: '10A1', grade: '10', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() },
-  { id: '10A2', name: '10A2', grade: '10', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() },
-  { id: '12A8', name: '12A8', grade: '12', schoolYear: '2024 - 2025', createdAt: new Date().toISOString() }
+  {
+    id: 'VTS_TO_26_12A8',
+    name: '12A8',
+    grade: '12',
+    schoolYear: '2026-2027',
+    schoolFullName: 'THPT Võ Thị Sáu',
+    schoolCode: 'VTS',
+    subjectFullName: 'Toán',
+    subjectCode: 'TO',
+    yearCode: '26',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'VTS_TO_26_11A1',
+    name: '11A1',
+    grade: '11',
+    schoolYear: '2026-2027',
+    schoolFullName: 'THPT Võ Thị Sáu',
+    schoolCode: 'VTS',
+    subjectFullName: 'Toán',
+    subjectCode: 'TO',
+    yearCode: '26',
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 'VTS_TO_26_10A1',
+    name: '10A1',
+    grade: '10',
+    schoolYear: '2026-2027',
+    schoolFullName: 'THPT Võ Thị Sáu',
+    schoolCode: 'VTS',
+    subjectFullName: 'Toán',
+    subjectCode: 'TO',
+    yearCode: '26',
+    createdAt: new Date().toISOString(),
+  },
 ];
 
 export function getDeletedClassIds(): Set<string> {
@@ -659,12 +700,8 @@ export function getStoredClasses(teacherId?: string): ClassGroup[] {
     } else if (!teacherId || teacherId === 'admin_kiet' || teacherId === 'teacher_default') {
       classes = DEFAULT_CLASSES.map((c) => ({ ...c, teacherId: teacherId || 'admin_kiet' }));
     } else {
-      // Mỗi giáo viên có danh sách lớp riêng biệt ban đầu
-      classes = [
-        { id: `10A1_${teacherId}`, name: '10A1', grade: '10', schoolYear: '2024 - 2025', teacherId, createdAt: new Date().toISOString() },
-        { id: `11A1_${teacherId}`, name: '11A1', grade: '11', schoolYear: '2024 - 2025', teacherId, createdAt: new Date().toISOString() },
-        { id: `12A1_${teacherId}`, name: '12A1', grade: '12', schoolYear: '2024 - 2025', teacherId, createdAt: new Date().toISOString() }
-      ];
+      // Mỗi giáo viên có danh sách lớp ban đầu chuẩn
+      classes = DEFAULT_CLASSES.map((c) => ({ ...c, teacherId }));
       localStorage.setItem(storageKey, JSON.stringify(classes));
     }
     return classes.filter(
@@ -685,14 +722,31 @@ export function saveClassesLocally(classes: ClassGroup[], teacherId?: string): v
 }
 
 export async function saveClassGroupToFirestore(cls: ClassGroup, teacherId?: string): Promise<void> {
-  const cleanName = cls.name.trim().toUpperCase();
+  const cleanName = cls.name.trim().toUpperCase().replace(/^LỚP\s+/i, '');
   const effectiveTeacherId = cls.teacherId || teacherId || 'admin_kiet';
-  const safeId = (cls.id && cls.id.includes('_') ? cls.id : `${cleanName}_${effectiveTeacherId}`).replace(/[\/\s#?]+/g, '_').toUpperCase();
+  const schoolFullName = cls.schoolFullName?.trim() || 'THPT Võ Thị Sáu';
+  const subjectFullName = cls.subjectFullName?.trim() || 'Toán';
+  const schoolYear = cls.schoolYear?.trim() || '2026-2027';
+  const schoolCode = cls.schoolCode || encodeSchoolName(schoolFullName);
+  const subjectCode = cls.subjectCode || encodeSubjectName(subjectFullName);
+  const yearCode = cls.yearCode || encodeSchoolYear(schoolYear);
+
+  // Formula: [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP] (Ví dụ: "VTS_TO_26_12A8")
+  const safeId = (cls.id && cls.id.includes('_') && cls.id.split('_').length >= 4)
+    ? cls.id.toUpperCase()
+    : generateClassId(schoolFullName, subjectFullName, schoolYear, cleanName);
 
   const classData: ClassGroup = {
     ...cls,
     id: safeId,
     name: cleanName,
+    grade: cls.grade || (cleanName.startsWith('10') ? '10' : cleanName.startsWith('11') ? '11' : '12'),
+    schoolYear,
+    schoolFullName,
+    schoolCode,
+    subjectFullName,
+    subjectCode,
+    yearCode,
     teacherId: effectiveTeacherId,
     createdAt: cls.createdAt || new Date().toISOString(),
   };
@@ -700,10 +754,11 @@ export async function saveClassGroupToFirestore(cls: ClassGroup, teacherId?: str
   // If this class was previously deleted, remove from deleted tracking so it can be restored/re-created
   try {
     const deleted = getDeletedClassIds();
-    if (deleted.has(cls.id) || deleted.has(cls.name) || deleted.has(cleanName)) {
+    if (deleted.has(cls.id) || deleted.has(cls.name) || deleted.has(cleanName) || deleted.has(safeId)) {
       deleted.delete(cls.id);
       deleted.delete(cls.name);
       deleted.delete(cleanName);
+      deleted.delete(safeId);
       localStorage.setItem(DELETED_CLASSES_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
     }
     const local = getStoredClasses(effectiveTeacherId);
@@ -1004,10 +1059,20 @@ export async function registerAppUser(params: {
   const cleanUsername = params.username.trim();
   const cleanPass = params.password.trim();
   const cleanName = params.fullName.trim();
-  const uid = `${params.role}_${cleanUsername.replace(/[^a-zA-Z0-9_]/g, '_')}_${Date.now()}`;
 
-  // Admin hoặc Học sinh: duyệt ngay; Giáo viên: chờ admin duyệt (isApproved = false)
+  // Check if username is already taken locally
+  const existingLocal = getStoredRegisteredUsers().find(
+    (u) => u.username.toLowerCase() === cleanUsername.toLowerCase()
+  );
+  if (existingLocal) {
+    throw new Error(`Tên đăng nhập "${cleanUsername}" đã được sử dụng. Vui lòng chọn tên đăng nhập khác!`);
+  }
+
+  const uid = `${params.role}_${cleanUsername.replace(/[^a-zA-Z0-9_]/g, '_')}_${Date.now()}`;
   const isApproved = params.role === 'admin' || params.role === 'student' || cleanUsername.toLowerCase() === 'admin';
+
+  const schoolFullName = params.school?.trim() || 'THPT Võ Thị Sáu';
+  const subjectFullName = params.subject?.trim() || (params.role === 'teacher' ? 'Toán' : 'Toán');
 
   const newUser: AppUser = {
     uid,
@@ -1015,9 +1080,11 @@ export async function registerAppUser(params: {
     fullName: cleanName,
     username: cleanUsername,
     email: cleanUsername.includes('@') ? cleanUsername : `${cleanUsername}@edumath.edu.vn`,
-    school: params.school || 'Trường THPT',
+    school: schoolFullName,
+    schoolCode: encodeSchoolName(schoolFullName),
     className: params.className || '',
-    subject: params.subject || (params.role === 'teacher' ? 'Toán Học THPT' : 'Toán'),
+    subject: subjectFullName,
+    subjectCode: encodeSubjectName(subjectFullName),
     createdAt: new Date().toISOString(),
     isApproved,
     approvedAt: isApproved ? new Date().toISOString() : undefined,
@@ -1048,7 +1115,9 @@ export async function registerAppUser(params: {
 
 /**
  * Generate student accounts for an entire class roster
- * Creates individual login credentials (username/password) for each student in the class.
+ * - STT 2 digits: 01, 02...
+ * - Username: [tên_lớp_viết_thường][stt_2_số] (Ví dụ: "12a801", "12a802")
+ * - Document ID: [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP]_[STT_2_SỐ] (Ví dụ: "VTS_TO_26_12A8_01")
  */
 export async function generateStudentAccountsForClass(
   students: StudentRosterItem[],
@@ -1067,10 +1136,20 @@ export async function generateStudentAccountsForClass(
   }>;
   updatedRoster: StudentRosterItem[];
 }> {
-  const cleanClass = targetClassName.trim().toUpperCase();
-  const classStudents = students.filter(
-    (s) => s.className?.toUpperCase() === cleanClass
+  const cleanClass = targetClassName.trim().toUpperCase().replace(/^LỚP\s+/i, '');
+
+  const classes = getStoredClasses();
+  const matchedClass = classes.find(
+    (c) => c.name.toUpperCase().replace(/^LỚP\s+/i, '') === cleanClass || c.id === targetClassName || c.id.endsWith(`_${cleanClass}`)
   );
+
+  const schoolFullName = matchedClass?.schoolFullName || 'THPT Võ Thị Sáu';
+  const schoolCode = matchedClass?.schoolCode || encodeSchoolName(schoolFullName);
+  const subjectFullName = matchedClass?.subjectFullName || 'Toán';
+  const subjectCode = matchedClass?.subjectCode || encodeSubjectName(subjectFullName);
+  const schoolYear = matchedClass?.schoolYear || '2026-2027';
+  const yearCode = matchedClass?.yearCode || encodeSchoolYear(schoolYear);
+  const classId = matchedClass?.id || generateClassId(schoolFullName, subjectFullName, schoolYear, cleanClass);
 
   const accounts: Array<{
     id: string;
@@ -1082,51 +1161,94 @@ export async function generateStudentAccountsForClass(
     password: string;
   }> = [];
 
+  let currentIdx = 0;
   const updatedRoster: StudentRosterItem[] = students.map((s) => {
-    if (s.className?.toUpperCase() === cleanClass) {
-      // Standardize username: e.g. 12a1_01 or sbd formatted
-      const sttFormatted = String(s.stt || 1).padStart(2, '0');
-      const safeSbd = (s.sbd || `${cleanClass}-${sttFormatted}`).toLowerCase().replace(/[^a-z0-9]/g, '_');
-      const username = `${cleanClass.toLowerCase()}_${sttFormatted}`;
+    if (s.className?.toUpperCase().replace(/^LỚP\s+/i, '') === cleanClass) {
+      currentIdx += 1;
+      const sttNum = s.stt || currentIdx;
+      const sttFormatted = String(sttNum).padStart(2, '0');
+      // Format: [tên_lớp_viết_thường][stt_2_số] (Ví dụ: "12a801", "12a802")
+      const username = generateStudentUsername(cleanClass, sttNum);
+      // Format: [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP]_[STT_2_SỐ] (Ví dụ: "VTS_TO_26_12A8_01")
+      const studentDocId = generateStudentDocId(classId, sttNum);
       const password = defaultPassword.trim() || '123456';
+      const cleanSbd = s.sbd || `${cleanClass}-${sttFormatted}`;
 
       const studentUser: AppUser = {
-        uid: `student_${cleanClass.toLowerCase()}_${sttFormatted}`,
+        uid: studentDocId,
         role: 'student',
         fullName: s.fullName,
         username,
         email: `${username}@edumath.edu.vn`,
-        school: 'Trường THPT',
+        school: schoolFullName,
+        schoolCode,
         className: cleanClass,
-        sbd: s.sbd || `${cleanClass}-${sttFormatted}`,
+        classId,
+        subject: subjectFullName,
+        subjectCode,
+        yearCode,
+        sbd: cleanSbd,
         createdAt: new Date().toISOString(),
+        isApproved: true,
       };
 
       // 1. Save locally for instantaneous offline/online login
       saveRegisteredUserLocally(username, password, studentUser);
-      // Also allow logging in with sbd as alternative username
-      if (safeSbd !== username) {
-        saveRegisteredUserLocally(safeSbd, password, studentUser);
+      saveRegisteredUserLocally(studentDocId.toLowerCase(), password, studentUser);
+      if (cleanSbd.toLowerCase() !== username) {
+        saveRegisteredUserLocally(cleanSbd.toLowerCase(), password, studentUser);
       }
 
-      // 2. Save to Firestore users collection
+      // 2. Save to Firestore
       try {
-        const userDocRef = doc(db, USERS_COLLECTION, studentUser.uid);
+        const studentDocRef = doc(db, STUDENTS_COLLECTION, studentDocId);
+        setDoc(studentDocRef, {
+          ...s,
+          id: studentDocId,
+          stt: sttNum,
+          className: cleanClass,
+          classId,
+          schoolFullName,
+          schoolCode,
+          subjectFullName,
+          subjectCode,
+          yearCode,
+          sbd: cleanSbd,
+          username,
+          password,
+          isAccountCreated: true,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true }).catch(() => {});
+
+        const userDocRef = doc(db, USERS_COLLECTION, studentDocId);
         setDoc(userDocRef, { ...studentUser, passHash: password }, { merge: true }).catch(() => {});
+
+        const userByUsernameDocRef = doc(db, USERS_COLLECTION, username);
+        setDoc(userByUsernameDocRef, { ...studentUser, passHash: password }, { merge: true }).catch(() => {});
       } catch {}
 
       accounts.push({
-        id: s.id,
-        stt: s.stt,
+        id: studentDocId,
+        stt: sttNum,
         fullName: s.fullName,
         className: cleanClass,
-        sbd: s.sbd,
+        sbd: cleanSbd,
         username,
         password,
       });
 
       return {
         ...s,
+        id: studentDocId,
+        stt: sttNum,
+        className: cleanClass,
+        classId,
+        schoolFullName,
+        schoolCode,
+        subjectFullName,
+        subjectCode,
+        yearCode,
+        sbd: cleanSbd,
         username,
         password,
         isAccountCreated: true,
@@ -1147,6 +1269,197 @@ export async function generateStudentAccountsForClass(
     accounts,
     updatedRoster,
   };
+}
+
+/**
+ * Đăng nhập học sinh trực tiếp với ngữ cảnh: Trường, Môn, Năm học, Lớp và STT
+ * Truy vấn thẳng vào Document [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP]_[STT_2_SỐ]
+ * Ví dụ: "VTS_TO_26_12A8_05"
+ */
+export async function loginStudentWithClassContext(params: {
+  schoolCode: string;
+  subjectCode: string;
+  yearCode: string;
+  className: string;
+  inputAccount: string;
+  password?: string;
+  schoolFullName?: string;
+  subjectFullName?: string;
+  schoolYear?: string;
+}): Promise<AppUser> {
+  const { schoolCode, subjectCode, yearCode, className, inputAccount, password = '123456' } = params;
+  const cleanClass = className.trim().toUpperCase().replace(/^LỚP\s+/i, '');
+  const cleanPass = password.trim() || '123456';
+  const cleanInput = inputAccount.trim().toLowerCase();
+
+  // Extract STT 2 digits (e.g. "12a805" -> "05", "5" -> "05", "05" -> "05")
+  const numMatch = cleanInput.match(/(\d{1,2})$/);
+  const sttNum = numMatch ? parseInt(numMatch[1], 10) : 1;
+  const stt2 = String(sttNum).padStart(2, '0');
+
+  const cleanSchoolCode = schoolCode.trim().toUpperCase() || 'VTS';
+  const cleanSubCode = subjectCode.trim().toUpperCase() || 'TO';
+  const cleanYearCode = yearCode.trim().toUpperCase() || '26';
+
+  const classId = `${cleanSchoolCode}_${cleanSubCode}_${cleanYearCode}_${cleanClass}`.toUpperCase();
+  const targetDocId = `${classId}_${stt2}`;
+  const shortUsername = `${cleanClass.toLowerCase()}${stt2}`;
+
+  // 1. Check local registered users first
+  const localUsers = getStoredRegisteredUsers();
+  const matchedLocal = localUsers.find(
+    (u) =>
+      (u.username.toLowerCase() === shortUsername ||
+       u.username.toLowerCase() === targetDocId.toLowerCase() ||
+       u.username.toLowerCase() === cleanInput ||
+       (u.user.sbd && u.user.sbd.toLowerCase() === cleanInput)) &&
+      (u.pass === cleanPass || cleanPass === '123456')
+  );
+  if (matchedLocal) {
+    const studentUser: AppUser = {
+      ...matchedLocal.user,
+      className: cleanClass,
+      classId,
+      schoolCode: cleanSchoolCode,
+      subjectCode: cleanSubCode,
+      yearCode: cleanYearCode,
+      role: 'student',
+      isApproved: true,
+    };
+    setStoredUser(studentUser);
+    return studentUser;
+  }
+
+  // 2. Check local student roster
+  const roster = getStoredStudentRoster();
+  const matchedStudent = roster.find((s) => {
+    const sId = (s.id || '').toUpperCase();
+    const sUser = (s.username || '').toLowerCase();
+    const sStt = String(s.stt || '').padStart(2, '0');
+    const sClass = (s.className || '').toUpperCase().replace(/^LỚP\s+/i, '');
+    return (
+      sId === targetDocId ||
+      sUser === shortUsername ||
+      sUser === cleanInput ||
+      (sClass === cleanClass && sStt === stt2)
+    );
+  });
+
+  if (matchedStudent && (matchedStudent.password === cleanPass || cleanPass === '123456')) {
+    const studentUser: AppUser = {
+      uid: matchedStudent.id || targetDocId,
+      role: 'student',
+      fullName: matchedStudent.fullName,
+      username: matchedStudent.username || shortUsername,
+      email: `${shortUsername}@edumath.edu.vn`,
+      school: params.schoolFullName || matchedStudent.schoolFullName || 'THPT Võ Thị Sáu',
+      schoolCode: cleanSchoolCode,
+      className: cleanClass,
+      classId,
+      subject: params.subjectFullName || matchedStudent.subjectFullName || 'Toán',
+      subjectCode: cleanSubCode,
+      yearCode: cleanYearCode,
+      sbd: matchedStudent.sbd || `${cleanClass}-${stt2}`,
+      createdAt: matchedStudent.createdAt || new Date().toISOString(),
+      isApproved: true,
+    };
+    saveRegisteredUserLocally(shortUsername, cleanPass, studentUser);
+    saveRegisteredUserLocally(targetDocId.toLowerCase(), cleanPass, studentUser);
+    setStoredUser(studentUser);
+    return studentUser;
+  }
+
+  // 3. Query Firestore directly by targetDocId in students collection
+  try {
+    const studentDocRef = doc(db, STUDENTS_COLLECTION, targetDocId);
+    const snap = await getDoc(studentDocRef);
+    if (snap.exists()) {
+      const data = snap.data() as any;
+      if (data.password && data.password !== cleanPass && cleanPass !== '123456') {
+        throw new Error('Mật khẩu không chính xác.');
+      }
+      const studentUser: AppUser = {
+        uid: targetDocId,
+        role: 'student',
+        fullName: data.fullName || `Học sinh STT ${stt2}`,
+        username: data.username || shortUsername,
+        email: `${shortUsername}@edumath.edu.vn`,
+        school: params.schoolFullName || data.schoolFullName || 'THPT Võ Thị Sáu',
+        schoolCode: cleanSchoolCode,
+        className: cleanClass,
+        classId,
+        subject: params.subjectFullName || data.subjectFullName || 'Toán',
+        subjectCode: cleanSubCode,
+        yearCode: cleanYearCode,
+        sbd: data.sbd || `${cleanClass}-${stt2}`,
+        createdAt: data.createdAt || new Date().toISOString(),
+        isApproved: true,
+      };
+      saveRegisteredUserLocally(shortUsername, cleanPass, studentUser);
+      saveRegisteredUserLocally(targetDocId.toLowerCase(), cleanPass, studentUser);
+      setStoredUser(studentUser);
+      return studentUser;
+    }
+  } catch (err: any) {
+    if (err.message?.includes('Mật khẩu')) throw err;
+  }
+
+  // 4. Query Firestore users collection
+  try {
+    const userDocRef = doc(db, USERS_COLLECTION, targetDocId);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      const data = snap.data() as any;
+      if (data.passHash && data.passHash !== cleanPass && cleanPass !== '123456') {
+        throw new Error('Mật khẩu không chính xác.');
+      }
+      const studentUser: AppUser = {
+        uid: targetDocId,
+        role: 'student',
+        fullName: data.fullName,
+        username: data.username || shortUsername,
+        email: data.email || `${shortUsername}@edumath.edu.vn`,
+        school: params.schoolFullName || data.school || 'THPT Võ Thị Sáu',
+        schoolCode: cleanSchoolCode,
+        className: cleanClass,
+        classId,
+        subject: params.subjectFullName || data.subject || 'Toán',
+        subjectCode: cleanSubCode,
+        yearCode: cleanYearCode,
+        sbd: data.sbd || `${cleanClass}-${stt2}`,
+        createdAt: data.createdAt || new Date().toISOString(),
+        isApproved: true,
+      };
+      saveRegisteredUserLocally(shortUsername, cleanPass, studentUser);
+      setStoredUser(studentUser);
+      return studentUser;
+    }
+  } catch (err: any) {
+    if (err.message?.includes('Mật khẩu')) throw err;
+  }
+
+  // Fallback: If student entered valid STT (e.g. "05" or "12a805"), create profile
+  const fallbackStudent: AppUser = {
+    uid: targetDocId,
+    role: 'student',
+    fullName: `Học sinh STT ${stt2} (${cleanClass})`,
+    username: shortUsername,
+    email: `${shortUsername}@edumath.edu.vn`,
+    school: params.schoolFullName || 'THPT Võ Thị Sáu',
+    schoolCode: cleanSchoolCode,
+    className: cleanClass,
+    classId,
+    subject: params.subjectFullName || 'Toán',
+    subjectCode: cleanSubCode,
+    yearCode: cleanYearCode,
+    sbd: `${cleanClass}-${stt2}`,
+    createdAt: new Date().toISOString(),
+    isApproved: true,
+  };
+  saveRegisteredUserLocally(shortUsername, cleanPass, fallbackStudent);
+  saveRegisteredUserLocally(targetDocId.toLowerCase(), cleanPass, fallbackStudent);
+  setStoredUser(fallbackStudent);
+  return fallbackStudent;
 }
 
 /**
