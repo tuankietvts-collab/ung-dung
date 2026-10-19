@@ -1923,53 +1923,91 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
                           Phần II: Câu trắc nghiệm Đúng / Sai ({subExam.trueFalseQuestions.length} câu)
                         </div>
 
-                        {subExam.trueFalseQuestions.map((tf, tfIdx) => (
-                          <div key={tf.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-3">
-                            <div className="font-semibold text-slate-900">
-                              <span className="font-bold text-amber-600 mr-1.5">
-                                Câu {subExam.multipleChoice.length + tfIdx + 1}:
-                              </span>
-                              <MathRenderer content={tf.prompt} />
-                            </div>
+                        {subExam.trueFalseQuestions.map((tf, tfIdx) => {
+                          const userAnswersForTf = selectedSubmission.tfAnswers[tf.id] || {};
+                          let correctCount = 0;
+                          tf.items.forEach((item) => {
+                            if (userAnswersForTf[item.key] === item.isCorrect) {
+                              correctCount++;
+                            }
+                          });
+                          let qPoints = 0;
+                          if (correctCount === 1) qPoints = 0.1;
+                          else if (correctCount === 2) qPoints = 0.25;
+                          else if (correctCount === 3) qPoints = 0.5;
+                          else if (correctCount >= 4) qPoints = 1.0;
 
-                            <div className="space-y-2">
-                              {tf.items.map((item) => {
-                                const studentAns = selectedSubmission.tfAnswers[tf.id]?.[item.key];
-                                const isCorrect = studentAns === item.isCorrect;
+                          return (
+                            <div key={tf.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-3">
+                              <div className="font-semibold text-slate-900">
+                                <span className="font-bold text-amber-600 mr-1.5">
+                                  Câu {subExam.multipleChoice.length + tfIdx + 1}:
+                                </span>
+                                <MathRenderer content={tf.prompt} />
+                              </div>
 
-                                return (
-                                  <div
-                                    key={item.key}
-                                    className={`p-2.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                                      isCorrect
-                                        ? 'bg-emerald-50/60 border-emerald-200'
-                                        : 'bg-rose-50/60 border-rose-200'
-                                    }`}
-                                  >
-                                    <div className="flex-1 text-slate-800">
-                                      <b className="text-indigo-700 mr-1.5">{item.key})</b>
-                                      <MathRenderer content={item.statement} />
-                                    </div>
-                                    <div className="flex items-center gap-2 font-mono text-[11px]">
-                                      <span>
-                                        Em chọn: <b>{studentAns === true ? 'ĐÚNG' : studentAns === false ? 'SAI' : 'Chưa chọn'}</b>
-                                      </span>
-                                      <span
-                                        className={`px-1.5 py-0.5 rounded font-bold ${
+                              {/* Tóm tắt điểm câu hỏi theo chuẩn GDPT 2018 */}
+                              <div className="p-2.5 rounded-xl bg-sky-50 border border-sky-200 flex flex-wrap items-center justify-between gap-2 text-sky-950 font-medium">
+                                <span>Thí sinh trả lời đúng: <b className="text-sky-700">{correctCount}/4</b> ý ➔ Đạt: <b className="text-emerald-700">{qPoints.toFixed(2)}đ</b> / 1.0đ</span>
+                                <span className="text-[11px] text-slate-500">(1 ý: 0.1đ • 2 ý: 0.25đ • 3 ý: 0.5đ • 4 ý: 1.0đ)</span>
+                              </div>
+
+                              <div className="space-y-2.5">
+                                {tf.items.map((item) => {
+                                  const studentAns = userAnswersForTf[item.key];
+                                  const isCorrect = studentAns === item.isCorrect;
+
+                                  return (
+                                    <div key={item.key} className="space-y-1.5">
+                                      <div
+                                        className={`p-2.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
                                           isCorrect
-                                            ? 'bg-emerald-100 text-emerald-800'
-                                            : 'bg-rose-100 text-rose-800'
+                                            ? 'bg-emerald-50/60 border-emerald-200'
+                                            : 'bg-rose-50/60 border-rose-200'
                                         }`}
                                       >
-                                        {isCorrect ? '+0.25đ' : '0đ'} (Key: {item.isCorrect ? 'Đ' : 'S'})
-                                      </span>
+                                        <div className="flex-1 text-slate-800">
+                                          <b className="text-indigo-700 mr-1.5">{item.key})</b>
+                                          <MathRenderer content={item.statement} />
+                                        </div>
+                                        <div className="flex items-center gap-2 font-mono text-[11px]">
+                                          <span>
+                                            Em chọn: <b>{studentAns === true ? 'ĐÚNG' : studentAns === false ? 'SAI' : 'Chưa chọn'}</b>
+                                          </span>
+                                          <span
+                                            className={`px-1.5 py-0.5 rounded font-bold ${
+                                              isCorrect
+                                                ? 'bg-emerald-100 text-emerald-800'
+                                                : 'bg-rose-100 text-rose-800'
+                                            }`}
+                                          >
+                                            {isCorrect ? '✓ Đúng' : '✗ Sai'} (Key: {item.isCorrect ? 'ĐÚNG' : 'SAI'})
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      {/* Hiển thị đầy đủ lời giải chi tiết cho từng ý a, b, c, d */}
+                                      {(item.explanation || (item as any).solution) && (
+                                        <div className="ml-2 pl-3 py-1 border-l-2 border-sky-400 text-slate-700 text-[11px]">
+                                          <span className="font-semibold text-sky-800 mr-1">💡 Lời giải ý {item.key}):</span>
+                                          <MathRenderer content={item.explanation || (item as any).solution} />
+                                        </div>
+                                      )}
                                     </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })}
+                              </div>
+
+                              {/* Lời giải chi tiết tổng quát của cả câu Phần II */}
+                              {(tf.explanation || (tf as any).solution) && (
+                                <div className="mt-2 p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-950 text-xs">
+                                  <span className="font-bold text-indigo-900 block mb-1">📖 Hướng dẫn giải chi tiết:</span>
+                                  <MathRenderer content={tf.explanation || (tf as any).solution} />
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

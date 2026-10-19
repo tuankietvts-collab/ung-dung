@@ -77,7 +77,8 @@ import {
   getStoredClasses,
   getDeletedExamIds,
   markExamAsDeletedLocally,
-  subscribeTeachersFromFirestore
+  subscribeTeachersFromFirestore,
+  subscribeUsersFromFirestore
 } from './services/firebase';
 import { isInvalidStudentName } from './services/studentRosterParser';
 import { ExamSession, groupExamsIntoSessions } from './services/examSessionService';
@@ -245,11 +246,14 @@ export default function App() {
       setClasses(firestoreClasses);
     });
 
+    const unsubUsers = subscribeUsersFromFirestore();
+
     return () => {
       unsubExams();
       unsubSubs();
       unsubRoster();
       unsubClasses();
+      unsubUsers();
     };
   }, []);
 

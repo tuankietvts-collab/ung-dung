@@ -40,6 +40,7 @@ export interface TrueFalseSubItem {
   key: string; // 'a' | 'b' | 'c' | 'd'
   statement: string;
   isCorrect: boolean;
+  explanation?: string;
 }
 
 export interface TrueFalseQuestion {
@@ -47,6 +48,7 @@ export interface TrueFalseQuestion {
   prompt: string;
   items: TrueFalseSubItem[];
   pointsPerSub: number;
+  explanation?: string;
   visualType?: QuestionVisualType;
   visualCaption?: string;
   customImageUrl?: string;
@@ -85,6 +87,11 @@ export interface Exam {
   multipleChoice: MultipleChoiceQuestion[];
   trueFalseQuestions: TrueFalseQuestion[];
   essays: EssayQuestion[];
+  // Independent 4-part structure support
+  part1?: MultipleChoiceQuestion[];
+  part2?: TrueFalseQuestion[];
+  part3?: EssayQuestion[]; // Short Answer questions
+  part4?: EssayQuestion[]; // Essay questions
   createdAt: string;
   className?: string;
   assignedClassNames?: string[];

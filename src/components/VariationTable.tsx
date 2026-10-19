@@ -66,12 +66,18 @@ function parseCubicFromTextAndOptions(
   const combined = `${questionText || ''} ${(options || []).join(' ')}`;
 
   // 1. Thử nhận diện công thức hàm bậc 3 tường minh y = ax^3 + bx^2 + cx + d
-  const match = combined.match(/y\s*=\s*([+-]?\d*)x\^3\s*([+-]\s*\d*)x\^2(?:\s*([+-]\s*\d*)x)?(?:\s*([+-]\s*\d+))?/i);
+  // Hỗ trợ cả phân số \frac{1}{3}x^3 hoặc -\frac{1}{3}x^3
+  const match = combined.match(/y\s*=\s*(?:[+-]?\\(?:d?frac)?\{?([+-]?\d+)\}?\{?(\d+)\}?|([+-]?\d*))x\^3\s*([+-]\s*\d*)x\^2(?:\s*([+-]\s*\d*)x)?(?:\s*([+-]\s*\d+))?/i);
   if (match) {
-    let a = match[1] === '' || match[1] === '+' ? 1 : match[1] === '-' ? -1 : parseFloat(match[1]) || 1;
-    let b = match[2] ? parseFloat(match[2].replace(/\s+/g, '')) || 0 : 0;
-    let c = match[3] ? parseFloat(match[3].replace(/\s+/g, '')) || 0 : 0;
-    let d = match[4] ? parseFloat(match[4].replace(/\s+/g, '')) || 0 : 0;
+    let a = 1;
+    if (match[1] && match[2]) {
+      a = parseFloat(match[1]) / parseFloat(match[2]);
+    } else if (match[3] !== undefined) {
+      a = match[3] === '' || match[3] === '+' ? 1 : match[3] === '-' ? -1 : parseFloat(match[3]) || 1;
+    }
+    let b = match[4] ? parseFloat(match[4].replace(/\s+/g, '')) || 0 : 0;
+    let c = match[5] ? parseFloat(match[5].replace(/\s+/g, '')) || 0 : 0;
+    let d = match[6] ? parseFloat(match[6].replace(/\s+/g, '')) || 0 : 0;
 
     const A = 3 * a;
     const B = 2 * b;
@@ -99,11 +105,29 @@ function parseCubicFromTextAndOptions(
   const intervals = extractIntervalsFromText(combined);
   const xPoints = extractXPointsFromText(combined);
 
-  let x1 = -1;
-  let x2 = 2;
+  // Đếm tần suất xuất hiện của các mốc giá trị trong options để tìm đúng 2 điểm cực trị
+  const freq: Record<number, number> = {};
+  intervals.forEach(inv => {
+    freq[inv.left] = (freq[inv.left] || 0) + 1;
+    freq[inv.right] = (freq[inv.right] || 0) + 1;
+  });
+  xPoints.forEach(p => {
+    freq[p] = (freq[p] || 0) + 2;
+  });
 
-  if (intervals.length > 0) {
-    // Lấy khoảng hữu hạn đầu tiên hoặc phổ biến nhất (ví dụ: (-1; 2) hoặc (0; 3))
+  // Tìm 2 giá trị xuất hiện nhiều nhất
+  const sortedPointsByFreq = Object.keys(freq)
+    .map(Number)
+    .sort((m, n) => freq[n] - freq[m]);
+
+  let x1: number;
+  let x2: number;
+
+  if (sortedPointsByFreq.length >= 2) {
+    const pair = [sortedPointsByFreq[0], sortedPointsByFreq[1]].sort((m, n) => m - n);
+    x1 = pair[0];
+    x2 = pair[1];
+  } else if (intervals.length > 0) {
     x1 = intervals[0].left;
     x2 = intervals[0].right;
   } else if (xPoints.length >= 2) {
@@ -118,12 +142,29 @@ function parseCubicFromTextAndOptions(
       x1 = xPoints[0];
       x2 = 0;
     }
+  } else {
+    // Hoàn toàn không tìm thấy mốc số trong văn bản -> Sinh động deterministically từ mã băm câu hỏi
+    // TUYỆT ĐỐI KHÔNG CỐ ĐỊNH (0; 2)
+    let hash = 0;
+    for (let i = 0; i < combined.length; i++) {
+      hash = (hash << 5) - hash + combined.charCodeAt(i);
+      hash |= 0;
+    }
+    const candidates = [
+      [-1, 3],
+      [-2, 1],
+      [1, 4],
+      [-3, 0],
+      [0, 4],
+      [-1, 1],
+      [-2, 2],
+    ];
+    const picked = candidates[Math.abs(hash) % candidates.length];
+    x1 = picked[0];
+    x2 = picked[1];
   }
 
   // Xác định chiều biến thiên dựa trên từ khóa câu hỏi:
-  // Nếu câu hỏi hỏi: "đồng biến trên khoảng nào" và option chứa khoảng (x1; x2),
-  // thì trên (x1; x2) y' mang dấu + (nhánh giữa đi lên -> a < 0),
-  // hoặc nếu đề bài gốc thường cho a > 0 thì trên (x1; x2) y' mang dấu - (nghịch biến).
   const isAskingIncreasing = /đồng biến|tăng/i.test(questionText || '');
   const isAskingDecreasing = /nghịch biến|giảm/i.test(questionText || '');
 

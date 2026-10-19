@@ -175,9 +175,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
             <text x="195" y="92" fontSize="11" fontWeight="bold" fill="#312e81">M(x₀, y₀, z₀)</text>
           </svg>
         </div>
-        <div className="mt-2 text-center text-[11px] text-slate-500 italic">
-          Hệ trục tọa độ Oxyz với các vector đơn vị chuẩn SGK GDPT 2018
-        </div>
       </div>
     );
   }
@@ -214,9 +211,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
             <text x="256" y="154" fontSize="12" fontWeight="bold" fill="#0f172a">C</text>
             <text x="122" y="145" fontSize="12" fontWeight="bold" fill="#0f172a">D</text>
           </svg>
-        </div>
-        <div className="mt-2 text-center text-[11px] text-slate-500 italic">
-          Khối chóp S.ABCD (nét liền nhìn thấy, nét đứt bị che)
         </div>
       </div>
     );
@@ -289,19 +283,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
 
     return (
       <div className="my-3.5 p-4 bg-white rounded-2xl border border-slate-300 shadow-sm max-w-md mx-auto font-sans text-xs select-none">
-        <div className="text-center font-bold text-slate-800 mb-2">
-          {title || 'Đồ thị hàm phân thức chuẩn SGK Toán GDPT 2018'}
-        </div>
-
-        <div className="flex items-center justify-center gap-2 mb-2 text-xs">
-          <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold border border-indigo-200">
-            <MathRenderer content={`$y = \\dfrac{${a === 1 ? '' : a === -1 ? '-' : a}x ${b >= 0 ? '+' : ''}${b}}{${c === 1 ? '' : c === -1 ? '-' : c}x ${d >= 0 ? '+' : ''}${d}}$`} />
-          </span>
-          <span className="text-[11px] text-slate-600 font-medium">
-            TCĐ: <b className="text-rose-600 font-mono">x = {tcdVal}</b>, TCN: <b className="text-rose-600 font-mono">y = {tcnVal}</b>
-          </span>
-        </div>
-
         <div className="flex justify-center bg-slate-50/90 p-2 rounded-xl border border-slate-200">
           <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible select-none">
             <defs>
@@ -340,9 +321,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
             <text x={tcdPixelX - 12} y={tcnPixelY - 5} fontSize="10" fontStyle="italic" fontWeight="bold" fill="#dc2626">I</text>
           </svg>
         </div>
-        <div className="mt-2 text-center text-[11px] text-slate-500 italic">
-          Đồ thị gồm 2 nhánh Hyperbol nhận giao điểm tiệm cận I({tcdVal}; {tcnVal}) làm tâm đối xứng.
-        </div>
       </div>
     );
   }
@@ -374,19 +352,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
 
     return (
       <div className="my-3.5 p-4 bg-white rounded-2xl border border-slate-300 shadow-sm max-w-md mx-auto font-sans text-xs select-none">
-        <div className="text-center font-bold text-slate-800 mb-2">
-          {title || 'Đồ thị Parabol chuẩn SGK Toán GDPT 2018'}
-        </div>
-
-        <div className="flex items-center justify-center gap-2 mb-2 text-xs">
-          <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold border border-indigo-200">
-            <MathRenderer content={`$y = ${a !== 1 ? a : ''}x^2 ${b !== 0 ? (b > 0 ? '+' + b : b) + 'x ' : ''}${c !== 0 ? (c > 0 ? '+' + c : c) : ''}$`} />
-          </span>
-          <span className="text-[11px] text-slate-600 font-medium">
-            Đỉnh: <b className="text-blue-700 font-mono">I({vx}; {vy})</b>
-          </span>
-        </div>
-
         <div className="flex justify-center bg-slate-50/90 p-2 rounded-xl border border-slate-200">
           <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible select-none">
             <defs>
@@ -473,21 +438,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
 
   return (
     <div className="my-3.5 p-4 bg-white rounded-2xl border border-slate-300 shadow-sm max-w-md mx-auto font-sans text-xs select-none">
-      <div className="text-center font-bold text-slate-800 mb-2">
-        {title || 'Đồ thị hàm số bậc ba chuẩn SGK Toán GDPT 2018'}
-      </div>
-
-      <div className="flex items-center justify-center gap-2 mb-2 text-xs">
-        <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold border border-indigo-200">
-          <MathRenderer content={`$y = ${a === -1 ? '-' : a !== 1 ? a : ''}x^3 ${b !== 0 ? (b > 0 ? '+' + b : b) + 'x^2 ' : ''}${c !== 0 ? (c > 0 ? '+' + c : c) + 'x ' : ''}${d !== 0 ? (d > 0 ? '+' + d : d) : ''}$`} />
-        </span>
-        {extremumList.length > 0 && (
-          <span className="text-[11px] text-slate-600 font-medium">
-            Cực trị: <b className="text-rose-600 font-mono">({extremumList[0].x}; {extremumList[0].y})</b>, <b className="text-blue-600 font-mono">({extremumList[1].x}; {extremumList[1].y})</b>
-          </span>
-        )}
-      </div>
-
       <div className="flex justify-center bg-slate-50/90 p-2 rounded-xl border border-slate-200">
         <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible select-none">
           <defs>
@@ -514,9 +464,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
               <line x1={ext.px} y1={oy} x2={ext.px} y2={ext.py} stroke="#94a3b8" strokeWidth="1.2" strokeDasharray="3,3" />
               <line x1={ox} y1={ext.py} x2={ext.px} y2={ext.py} stroke="#94a3b8" strokeWidth="1.2" strokeDasharray="3,3" />
               <circle cx={ext.px} cy={ext.py} r="4" fill={idx === 0 ? '#dc2626' : '#2563eb'} />
-              <text x={ext.px + 4} y={ext.py - 6} fontSize="10" fontWeight="bold" fill={idx === 0 ? '#dc2626' : '#2563eb'}>
-                ({ext.x}; {ext.y})
-              </text>
             </g>
           ))}
 
@@ -527,10 +474,6 @@ export const FunctionPlot: React.FC<FunctionPlotProps> = ({
           <circle cx={uPixelX} cy={uPixelY} r="3" fill="#64748b" />
           <text x={uPixelX - 10} y={uPixelY + 12} fontSize="9" fontStyle="italic" fill="#475569">U</text>
         </svg>
-      </div>
-
-      <div className="mt-2 text-center text-[11px] text-slate-500 italic">
-        Hình vẽ: Đồ thị hàm số bậc ba với các điểm cực trị và điểm uốn chuẩn SGK GDPT 2018.
       </div>
     </div>
   );

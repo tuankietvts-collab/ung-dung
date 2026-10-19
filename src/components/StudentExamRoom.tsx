@@ -93,7 +93,11 @@ const isMathShortAnswerCorrect = (studentAns: string, key: string): boolean => {
   const valS = parseNumeric(dotS);
   const valK = parseNumeric(dotK);
   if (valS !== null && valK !== null) {
-    return Math.abs(valS - valK) < 0.0001;
+    if (Math.abs(valS - valK) < 0.005) return true;
+    // Check rounding to units, 1 decimal place, or 2 decimal places per GDPT 2018
+    if (Math.round(valS) === Math.round(valK)) return true;
+    if (Math.round(valS * 10) === Math.round(valK * 10)) return true;
+    if (Math.round(valS * 100) === Math.round(valK * 100)) return true;
   }
 
   return false;
@@ -469,20 +473,30 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     let mcScore = 0;
     exam.multipleChoice.forEach((mc) => {
       if (mcAnswers[mc.id] === mc.correctAnswer) {
-        mcScore += mc.points;
+        mcScore = (Number(mcScore) || 0) + (Number(mc.points) || 0.25);
       }
     });
+    mcScore = Math.round((Number(mcScore) || 0) * 100) / 100;
 
-    // 2. Programmatic True/False grading
+    // 2. Programmatic True/False grading (Chuẩn GDPT 2018: 1 ý = 0.1đ, 2 ý = 0.25đ, 3 ý = 0.5đ, 4 ý = 1.0đ)
     let tfScore = 0;
     exam.trueFalseQuestions.forEach((tf) => {
       const userAnswersForTf = tfAnswers[tf.id] || {};
+      let correctCount = 0;
       tf.items.forEach((item) => {
         if (userAnswersForTf[item.key] === item.isCorrect) {
-          tfScore += tf.pointsPerSub;
+          correctCount++;
         }
       });
+      let qPoints = 0;
+      if (correctCount === 1) qPoints = 0.1;
+      else if (correctCount === 2) qPoints = 0.25;
+      else if (correctCount === 3) qPoints = 0.5;
+      else if (correctCount >= 4) qPoints = 1.0;
+
+      tfScore = (Number(tfScore) || 0) + (Number(qPoints) || 0);
     });
+    tfScore = Math.round((Number(tfScore) || 0) * 100) / 100;
 
     // 3. Essay / Short Answer Score
     let essayScore = 0;
@@ -492,29 +506,43 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
         if (studentAns) {
           if (essay.shortAnswerKey) {
             const isCorrect = isMathShortAnswerCorrect(studentAns, essay.shortAnswerKey);
-            if (isCorrect) essayScore += essay.maxPoints || 0.5;
+            if (isCorrect) {
+              essayScore = (Number(essayScore) || 0) + (Number(essay.maxPoints) || 0.5);
+            }
           } else {
-            essayScore += essay.maxPoints || 0.5;
+            essayScore = (Number(essayScore) || 0) + (Number(essay.maxPoints) || 0.5);
           }
         }
       });
     } else {
       exam.essays.forEach((essay) => {
-        const graded = essayGradingData[essay.id]?.grading;
-        if (graded) {
-          essayScore += graded.totalScore;
+        const studentUpload = essayGradingData[essay.id];
+        const graded = studentUpload?.grading;
+        const typedAns = (studentUpload?.typedSolution || shortAnswers[essay.id] || '').trim();
+        // Cho phép học sinh tải ảnh HOẶC nhập đáp án cuối cùng vào ô text; nếu đáp án cuối cùng khớp thì tự động chấm điểm tối đa
+        let autoFullPoints = false;
+        if (essay.shortAnswerKey && typedAns) {
+          if (isMathShortAnswerCorrect(typedAns, essay.shortAnswerKey)) {
+            autoFullPoints = true;
+          }
+        }
+        if (autoFullPoints) {
+          essayScore = (Number(essayScore) || 0) + (Number(essay.maxPoints) || 1.0);
+        } else if (graded && typeof graded.totalScore === 'number') {
+          essayScore = (Number(essayScore) || 0) + (Number(graded.totalScore) || 0);
         }
       });
     }
+    essayScore = Math.round((Number(essayScore) || 0) * 100) / 100;
 
-    const totalRaw = mcScore + tfScore + essayScore;
-    const finalTotal = Math.min(10, Math.round(totalRaw * 100) / 100);
+    const totalRaw = (Number(mcScore) || 0) + (Number(tfScore) || 0) + (Number(essayScore) || 0);
+    const finalTotal = Math.min(10, Math.round((Number(totalRaw) || 0) * 100) / 100);
 
     setCalculatedScore({
-      mc: mcScore,
-      tf: tfScore,
-      essay: essayScore,
-      total: finalTotal,
+      mc: Number(mcScore) || 0,
+      tf: Number(tfScore) || 0,
+      essay: Number(essayScore) || 0,
+      total: Number(finalTotal) || 0,
     });
     setIsSubmitted(true);
 
@@ -1593,14 +1621,31 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                       )}
 
                       {/* Sub-items (a, b, c, d) */}
+                      {isExamLocked && (() => {
+                        const userAnswersForTf = tfAnswers[tf.id] || {};
+                        let correctCount = 0;
+                        tf.items.forEach((it) => {
+                          if (userAnswersForTf[it.key] === it.isCorrect) correctCount++;
+                        });
+                        let qPoints = 0;
+                        if (correctCount === 1) qPoints = 0.1;
+                        else if (correctCount === 2) qPoints = 0.25;
+                        else if (correctCount === 3) qPoints = 0.5;
+                        else if (correctCount >= 4) qPoints = 1.0;
+
+                        return (
+                          <div className="my-2 p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-xs flex flex-wrap items-center justify-between gap-2 text-sky-950 font-medium">
+                            <span><b>Kết quả câu hỏi:</b> Thí sinh trả lời đúng <b className="text-sky-700">{correctCount}/4</b> ý ➔ Đạt <b className="text-emerald-700">{qPoints.toFixed(2)}đ</b> / 1.0đ</span>
+                            <span className="text-[11px] text-slate-500">(1 ý = 0.1đ • 2 ý = 0.25đ • 3 ý = 0.5đ • 4 ý = 1.0đ)</span>
+                          </div>
+                        );
+                      })()}
                       <div className="space-y-2.5 pt-1">
                         {tf.items.map((item) => {
                           const currentVal = tfAnswers[tf.id]?.[item.key];
                           return (
-                            <div
-                              key={item.key}
-                              className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-slate-50/80 border border-slate-200 gap-3"
-                            >
+                            <div key={item.key} className="space-y-1.5">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-slate-50/80 border border-slate-200 gap-3">
                               <div className="text-slate-800 text-base sm:text-lg font-medium pr-2 flex-1 leading-relaxed">
                                 <b className="text-amber-700 font-extrabold mr-1.5">{item.key})</b>
                                 <MathRenderer
@@ -1648,14 +1693,31 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                                         : 'bg-rose-100 text-rose-800 border border-rose-300'
                                     }`}
                                   >
-                                    {currentVal === item.isCorrect ? '+0.25đ' : '0đ'} (Đáp án: {item.isCorrect ? 'Đ' : 'S'})
+                                    {currentVal === item.isCorrect ? '✓ Đúng' : '✗ Sai'} (Đáp án: {item.isCorrect ? 'ĐÚNG' : 'SAI'})
                                   </span>
                                 )}
                               </div>
                             </div>
-                          );
-                        })}
+
+                            {/* Lời giải chi tiết cho từng ý a, b, c, d của Phần II */}
+                            {(isExamLocked || showDetailedSolutions) && (item.explanation || (item as any).solution) && (
+                              <div className="mt-1 mb-2 p-2.5 rounded-lg bg-sky-50 border border-sky-200 text-xs text-slate-800">
+                                <span className="font-bold text-sky-800 mr-1.5">💡 Lời giải ý {item.key}):</span>
+                                <MathRenderer content={item.explanation || (item as any).solution} />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Lời giải chi tiết toàn bộ câu hỏi Phần II */}
+                    {(isExamLocked || showDetailedSolutions) && (tf.explanation || (tf as any).solution) && (
+                      <div className="mt-3.5 p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-950 space-y-1">
+                        <span className="font-black text-indigo-900 block">📖 Hướng dẫn giải chi tiết:</span>
+                        <MathRenderer content={tf.explanation || (tf as any).solution} />
                       </div>
+                    )}
                     </div>
                   );
                 })}

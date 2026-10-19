@@ -13,6 +13,7 @@ import {
   getFirestore,
   doc,
   getDoc,
+  getDocs,
   getDocFromServer,
   collection,
   setDoc,
@@ -874,6 +875,79 @@ export function getRegisteredTeachers(): AppUser[] {
 }
 
 /**
+ * Đồng bộ lưu tài khoản người dùng vào Firestore với Document ID chuẩn hóa (ví dụ: user_[username])
+ */
+export async function saveUserToFirestore(username: string, pass: string, user: AppUser): Promise<void> {
+  const cleanUsername = username.trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+  const userDocId = `user_${cleanUsername}`;
+  saveRegisteredUserLocally(username, pass, { ...user, uid: user.uid || userDocId });
+
+  try {
+    const userDocRef = doc(db, USERS_COLLECTION, userDocId);
+    await setDoc(userDocRef, { ...user, uid: userDocId, passHash: pass, updatedAt: new Date().toISOString() }, { merge: true });
+    if (user.role === 'teacher') {
+      const teacherDocRef = doc(db, TEACHERS_COLLECTION, userDocId);
+      await setDoc(teacherDocRef, { ...user, uid: userDocId, passHash: pass, updatedAt: new Date().toISOString() }, { merge: true });
+    }
+  } catch (err) {
+    console.warn('saveUserToFirestore warning:', err);
+  }
+}
+
+/**
+ * Lắng nghe danh sách tài khoản thời gian thực từ Firestore USERS_COLLECTION (onSnapshot)
+ * Giúp khi đăng ký trên máy tính thì điện thoại mở lên thấy và đăng nhập ngay lập tức!
+ */
+export function subscribeUsersFromFirestore(
+  onUsers?: (users: Array<{ username: string; pass: string; user: AppUser }>) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, USERS_COLLECTION);
+  const unsubscribe = onSnapshot(
+    colRef,
+    (snapshot) => {
+      const users: Array<{ username: string; pass: string; user: AppUser }> = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as any;
+        if (data && (data.username || data.email)) {
+          const uName = (data.username || '').toLowerCase();
+          const userObj: AppUser = {
+            uid: data.uid || docSnap.id,
+            role: data.role || 'teacher',
+            fullName: data.fullName || data.username,
+            username: data.username,
+            email: data.email,
+            school: data.school,
+            className: data.className,
+            subject: data.subject,
+            sbd: data.sbd,
+            createdAt: data.createdAt,
+            isApproved: data.isApproved ?? true,
+            approvedAt: data.approvedAt,
+            approvedBy: data.approvedBy,
+          };
+          users.push({
+            username: uName,
+            pass: data.passHash || '123456',
+            user: userObj,
+          });
+        }
+      });
+      if (users.length > 0) {
+        saveRegisteredUsersListLocally(users);
+        if (onUsers) onUsers(users);
+      }
+    },
+    (err) => {
+      console.warn('Real-time users subscription fallback note:', err);
+      if (onError) onError(err);
+    }
+  );
+  return unsubscribe;
+}
+
+
+/**
  * Lắng nghe danh sách giáo viên thời gian thực từ Firestore và LocalStorage
  */
 export function subscribeTeachersFromFirestore(
@@ -1068,14 +1142,15 @@ export async function registerAppUser(params: {
     throw new Error(`Tên đăng nhập "${cleanUsername}" đã được sử dụng. Vui lòng chọn tên đăng nhập khác!`);
   }
 
-  const uid = `${params.role}_${cleanUsername.replace(/[^a-zA-Z0-9_]/g, '_')}_${Date.now()}`;
+  const cleanUserLower = cleanUsername.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+  const userDocId = `user_${cleanUserLower}`;
   const isApproved = params.role === 'admin' || params.role === 'student' || cleanUsername.toLowerCase() === 'admin';
 
   const schoolFullName = params.school?.trim() || 'THPT Võ Thị Sáu';
   const subjectFullName = params.subject?.trim() || (params.role === 'teacher' ? 'Toán' : 'Toán');
 
   const newUser: AppUser = {
-    uid,
+    uid: userDocId,
     role: params.role,
     fullName: cleanName,
     username: cleanUsername,
@@ -1097,14 +1172,14 @@ export async function registerAppUser(params: {
     setStoredUser(newUser);
   }
 
-  // 2. Save to Firestore
+  // 2. Save to Firestore with fixed Document ID and merge: true
   try {
-    const userDocRef = doc(db, USERS_COLLECTION, uid);
-    await setDoc(userDocRef, { ...newUser, passHash: cleanPass }, { merge: true });
+    const userDocRef = doc(db, USERS_COLLECTION, userDocId);
+    await setDoc(userDocRef, { ...newUser, passHash: cleanPass, updatedAt: new Date().toISOString() }, { merge: true });
 
     if (params.role === 'teacher') {
-      const teacherDocRef = doc(db, TEACHERS_COLLECTION, uid);
-      await setDoc(teacherDocRef, { ...newUser, passHash: cleanPass }, { merge: true });
+      const teacherDocRef = doc(db, TEACHERS_COLLECTION, userDocId);
+      await setDoc(teacherDocRef, { ...newUser, passHash: cleanPass, updatedAt: new Date().toISOString() }, { merge: true });
     }
   } catch (err) {
     console.warn('Firestore user registration save note:', err);
@@ -1272,9 +1347,84 @@ export async function generateStudentAccountsForClass(
 }
 
 /**
+ * Chuẩn hóa mã đăng nhập của học sinh:
+ * Tách phần Lớp (ví dụ: "11A1" từ "11a101" hoặc "11A1-19")
+ * và phần Số thứ tự (bỏ số 0 ở đầu, ví dụ: "01" -> 1, "19" -> 19).
+ */
+export function normalizeStudentLoginCode(input: string, fallbackClass: string = ''): {
+  normalizedClass: string;
+  stt: number;
+  sttFormatted: string; // '01', '02', '19'
+} {
+  const raw = (input || '').trim().toUpperCase();
+  const cleanFallback = (fallbackClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+
+  // Case 1: "11A1-19", "11A1_01", "12A8-5", "11A1 19"
+  const separatedMatch = raw.match(/^([0-9]{1,2}[A-Z][0-9]{0,2})[-_\s]+(\d{1,3})$/i);
+  if (separatedMatch) {
+    const cls = separatedMatch[1].toUpperCase();
+    const stt = parseInt(separatedMatch[2], 10);
+    return {
+      normalizedClass: cls,
+      stt,
+      sttFormatted: String(stt).padStart(2, '0'),
+    };
+  }
+
+  // Case 2: "11A101", "11A119", "12A805" (Tên lớp liền ngay sau là số thứ tự)
+  const combinedMatch = raw.match(/^([0-9]{1,2}[A-Z][0-9]{0,2})(\d{1,3})$/i);
+  if (combinedMatch) {
+    const cls = combinedMatch[1].toUpperCase();
+    const stt = parseInt(combinedMatch[2], 10);
+    return {
+      normalizedClass: cls,
+      stt,
+      sttFormatted: String(stt).padStart(2, '0'),
+    };
+  }
+
+  // Case 3: Chỉ nhập số thứ tự, ví dụ: "01", "1", "19"
+  const digitsMatch = raw.match(/^(\d{1,3})$/);
+  if (digitsMatch) {
+    const stt = parseInt(digitsMatch[1], 10);
+    return {
+      normalizedClass: cleanFallback || '12A8',
+      stt,
+      sttFormatted: String(stt).padStart(2, '0'),
+    };
+  }
+
+  // Case 4: Lấy các chữ số cuối cùng
+  const trailingDigits = raw.match(/(\d{1,3})$/);
+  const stt = trailingDigits ? parseInt(trailingDigits[1], 10) : 1;
+  return {
+    normalizedClass: cleanFallback || '12A8',
+    stt,
+    sttFormatted: String(stt).padStart(2, '0'),
+  };
+}
+
+/**
+ * Chấm điểm Phần II (Trắc nghiệm Đúng/Sai) chuẩn GDPT 2018:
+ * Mỗi câu gồm 4 mệnh đề a, b, c, d:
+ * - Đúng 1 ý: 0.1 điểm
+ * - Đúng 2 ý: 0.25 điểm
+ * - Đúng 3 ý: 0.5 điểm
+ * - Đúng 4 ý: 1.0 điểm
+ * Khử hoàn toàn lỗi NaN bằng Number(score) || 0
+ */
+export function calculateGdptPart2Score(correctCount: number): number {
+  const count = Number(correctCount) || 0;
+  if (count === 1) return 0.1;
+  if (count === 2) return 0.25;
+  if (count === 3) return 0.5;
+  if (count >= 4) return 1.0;
+  return 0;
+}
+
+/**
  * Đăng nhập học sinh trực tiếp với ngữ cảnh: Trường, Môn, Năm học, Lớp và STT
- * Truy vấn thẳng vào Document [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP]_[STT_2_SỐ]
- * Ví dụ: "VTS_TO_26_12A8_05"
+ * Ánh xạ chính xác Họ và Tên từ danh sách học sinh theo cả className và stt
  */
 export async function loginStudentWithClassContext(params: {
   schoolCode: string;
@@ -1288,145 +1438,127 @@ export async function loginStudentWithClassContext(params: {
   schoolYear?: string;
 }): Promise<AppUser> {
   const { schoolCode, subjectCode, yearCode, className, inputAccount, password = '123456' } = params;
-  const cleanClass = className.trim().toUpperCase().replace(/^LỚP\s+/i, '');
   const cleanPass = password.trim() || '123456';
-  const cleanInput = inputAccount.trim().toLowerCase();
+  const rawInput = inputAccount.trim();
+  const rawInputUpper = rawInput.toUpperCase();
 
-  // Extract STT 2 digits (e.g. "12a805" -> "05", "5" -> "05", "05" -> "05")
-  const numMatch = cleanInput.match(/(\d{1,2})$/);
-  const sttNum = numMatch ? parseInt(numMatch[1], 10) : 1;
-  const stt2 = String(sttNum).padStart(2, '0');
+  // Chuẩn hóa mã đăng nhập: tách phần Lớp (VD: 11A1) và phần Số thứ tự (bỏ số 0 ở đầu: 01 -> 1, 19 -> 19)
+  const { normalizedClass, stt, sttFormatted } = normalizeStudentLoginCode(rawInput, className);
+  const effectiveClass = (normalizedClass || className).trim().toUpperCase().replace(/^LỚP\s+/i, '');
 
   const cleanSchoolCode = schoolCode.trim().toUpperCase() || 'VTS';
   const cleanSubCode = subjectCode.trim().toUpperCase() || 'TO';
   const cleanYearCode = yearCode.trim().toUpperCase() || '26';
 
-  const classId = `${cleanSchoolCode}_${cleanSubCode}_${cleanYearCode}_${cleanClass}`.toUpperCase();
-  const targetDocId = `${classId}_${stt2}`;
-  const shortUsername = `${cleanClass.toLowerCase()}${stt2}`;
+  const classId = `${cleanSchoolCode}_${cleanSubCode}_${cleanYearCode}_${effectiveClass}`.toUpperCase();
+  const targetDocId = `${classId}_${sttFormatted}`;
+  const shortUsername = `${effectiveClass.toLowerCase()}${sttFormatted}`;
+  const standardizedUserDocId = `user_${shortUsername}`;
 
-  // 1. Check local registered users first
-  const localUsers = getStoredRegisteredUsers();
-  const matchedLocal = localUsers.find(
-    (u) =>
-      (u.username.toLowerCase() === shortUsername ||
-       u.username.toLowerCase() === targetDocId.toLowerCase() ||
-       u.username.toLowerCase() === cleanInput ||
-       (u.user.sbd && u.user.sbd.toLowerCase() === cleanInput)) &&
-      (u.pass === cleanPass || cleanPass === '123456')
-  );
-  if (matchedLocal) {
-    const studentUser: AppUser = {
-      ...matchedLocal.user,
-      className: cleanClass,
-      classId,
-      schoolCode: cleanSchoolCode,
-      subjectCode: cleanSubCode,
-      yearCode: cleanYearCode,
-      role: 'student',
-      isApproved: true,
-    };
-    setStoredUser(studentUser);
-    return studentUser;
-  }
-
-  // 2. Check local student roster
-  const roster = getStoredStudentRoster();
-  const matchedStudent = roster.find((s) => {
-    const sId = (s.id || '').toUpperCase();
-    const sUser = (s.username || '').toLowerCase();
-    const sStt = String(s.stt || '').padStart(2, '0');
+  // 1. Tra cứu chính xác trong danh sách học sinh đã tải lên (cả local và Firestore) theo cả className và stt
+  let roster = getStoredStudentRoster();
+  let matchedStudent = roster.find((s) => {
     const sClass = (s.className || '').toUpperCase().replace(/^LỚP\s+/i, '');
-    return (
-      sId === targetDocId ||
-      sUser === shortUsername ||
-      sUser === cleanInput ||
-      (sClass === cleanClass && sStt === stt2)
-    );
+    const sStt = Number(s.stt) || (s.stt ? parseInt(String(s.stt), 10) : 0);
+    const sbdClean = (s.sbd || '').toUpperCase();
+    const userClean = (s.username || '').toUpperCase();
+    const idClean = (s.id || '').toUpperCase();
+
+    if (sClass === effectiveClass && sStt === stt) return true;
+    if (sbdClean === `${effectiveClass}-${sttFormatted}` || sbdClean === rawInputUpper) return true;
+    if (userClean === shortUsername.toUpperCase() || userClean === rawInputUpper) return true;
+    if (idClean === targetDocId || idClean.endsWith(`_${effectiveClass}_${sttFormatted}`)) return true;
+    return false;
   });
 
-  if (matchedStudent && (matchedStudent.password === cleanPass || cleanPass === '123456')) {
+  // Nếu chưa có trong local, truy vấn trực tiếp Firestore collection 'students'
+  if (!matchedStudent) {
+    try {
+      const snap = await getDocs(collection(db, STUDENTS_COLLECTION));
+      const firestoreStudents: StudentRosterItem[] = [];
+      snap.forEach((d) => {
+        firestoreStudents.push(d.data() as StudentRosterItem);
+      });
+      if (firestoreStudents.length > 0) {
+        matchedStudent = firestoreStudents.find((s) => {
+          const sClass = (s.className || '').toUpperCase().replace(/^LỚP\s+/i, '');
+          const sStt = Number(s.stt) || (s.stt ? parseInt(String(s.stt), 10) : 0);
+          const sbdClean = (s.sbd || '').toUpperCase();
+          const userClean = (s.username || '').toUpperCase();
+          const idClean = (s.id || '').toUpperCase();
+
+          if (sClass === effectiveClass && sStt === stt) return true;
+          if (sbdClean === `${effectiveClass}-${sttFormatted}` || sbdClean === rawInputUpper) return true;
+          if (userClean === shortUsername.toUpperCase() || userClean === rawInputUpper) return true;
+          if (idClean === targetDocId || idClean.endsWith(`_${effectiveClass}_${sttFormatted}`)) return true;
+          return false;
+        });
+      }
+    } catch (e) {
+      console.warn('Firestore students query note:', e);
+    }
+  }
+
+  // Nếu tìm thấy học sinh trong danh sách đã tải lên: Lấy đúng fullName hiển thị và lưu bài nộp
+  if (matchedStudent) {
+    if (matchedStudent.password && matchedStudent.password !== cleanPass && cleanPass !== '123456') {
+      throw new Error('Mật khẩu không chính xác.');
+    }
     const studentUser: AppUser = {
       uid: matchedStudent.id || targetDocId,
       role: 'student',
-      fullName: matchedStudent.fullName,
+      fullName: matchedStudent.fullName, // Đúng Họ và Tên học sinh tải lên
       username: matchedStudent.username || shortUsername,
       email: `${shortUsername}@edumath.edu.vn`,
       school: params.schoolFullName || matchedStudent.schoolFullName || 'THPT Võ Thị Sáu',
       schoolCode: cleanSchoolCode,
-      className: cleanClass,
+      className: effectiveClass,
       classId,
       subject: params.subjectFullName || matchedStudent.subjectFullName || 'Toán',
       subjectCode: cleanSubCode,
       yearCode: cleanYearCode,
-      sbd: matchedStudent.sbd || `${cleanClass}-${stt2}`,
+      sbd: matchedStudent.sbd || `${effectiveClass}-${sttFormatted}`,
       createdAt: matchedStudent.createdAt || new Date().toISOString(),
       isApproved: true,
     };
     saveRegisteredUserLocally(shortUsername, cleanPass, studentUser);
     saveRegisteredUserLocally(targetDocId.toLowerCase(), cleanPass, studentUser);
     setStoredUser(studentUser);
+
+    try {
+      const uRef = doc(db, USERS_COLLECTION, standardizedUserDocId);
+      await setDoc(uRef, { ...studentUser, passHash: cleanPass }, { merge: true });
+    } catch {}
+
     return studentUser;
   }
 
-  // 3. Query Firestore directly by targetDocId in students collection
+  // 2. Tra cứu Firestore USERS_COLLECTION
   try {
-    const studentDocRef = doc(db, STUDENTS_COLLECTION, targetDocId);
-    const snap = await getDoc(studentDocRef);
-    if (snap.exists()) {
-      const data = snap.data() as any;
-      if (data.password && data.password !== cleanPass && cleanPass !== '123456') {
-        throw new Error('Mật khẩu không chính xác.');
-      }
-      const studentUser: AppUser = {
-        uid: targetDocId,
-        role: 'student',
-        fullName: data.fullName || `Học sinh STT ${stt2}`,
-        username: data.username || shortUsername,
-        email: `${shortUsername}@edumath.edu.vn`,
-        school: params.schoolFullName || data.schoolFullName || 'THPT Võ Thị Sáu',
-        schoolCode: cleanSchoolCode,
-        className: cleanClass,
-        classId,
-        subject: params.subjectFullName || data.subjectFullName || 'Toán',
-        subjectCode: cleanSubCode,
-        yearCode: cleanYearCode,
-        sbd: data.sbd || `${cleanClass}-${stt2}`,
-        createdAt: data.createdAt || new Date().toISOString(),
-        isApproved: true,
-      };
-      saveRegisteredUserLocally(shortUsername, cleanPass, studentUser);
-      saveRegisteredUserLocally(targetDocId.toLowerCase(), cleanPass, studentUser);
-      setStoredUser(studentUser);
-      return studentUser;
+    const userDocRef = doc(db, USERS_COLLECTION, standardizedUserDocId);
+    let uSnap = await getDoc(userDocRef);
+    if (!uSnap.exists()) {
+      uSnap = await getDoc(doc(db, USERS_COLLECTION, targetDocId));
     }
-  } catch (err: any) {
-    if (err.message?.includes('Mật khẩu')) throw err;
-  }
-
-  // 4. Query Firestore users collection
-  try {
-    const userDocRef = doc(db, USERS_COLLECTION, targetDocId);
-    const snap = await getDoc(userDocRef);
-    if (snap.exists()) {
-      const data = snap.data() as any;
+    if (uSnap.exists()) {
+      const data = uSnap.data() as any;
       if (data.passHash && data.passHash !== cleanPass && cleanPass !== '123456') {
         throw new Error('Mật khẩu không chính xác.');
       }
       const studentUser: AppUser = {
         uid: targetDocId,
         role: 'student',
-        fullName: data.fullName,
+        fullName: data.fullName || `${effectiveClass} - Thí sinh ${sttFormatted}`,
         username: data.username || shortUsername,
         email: data.email || `${shortUsername}@edumath.edu.vn`,
         school: params.schoolFullName || data.school || 'THPT Võ Thị Sáu',
         schoolCode: cleanSchoolCode,
-        className: cleanClass,
+        className: effectiveClass,
         classId,
         subject: params.subjectFullName || data.subject || 'Toán',
         subjectCode: cleanSubCode,
         yearCode: cleanYearCode,
-        sbd: data.sbd || `${cleanClass}-${stt2}`,
+        sbd: data.sbd || `${effectiveClass}-${sttFormatted}`,
         createdAt: data.createdAt || new Date().toISOString(),
         isApproved: true,
       };
@@ -1438,27 +1570,33 @@ export async function loginStudentWithClassContext(params: {
     if (err.message?.includes('Mật khẩu')) throw err;
   }
 
-  // Fallback: If student entered valid STT (e.g. "05" or "12a805"), create profile
+  // 3. Fallback: Tuyệt đối không hiển thị "Học sinh STT..." mà định dạng rõ Lớp và Số thứ tự
   const fallbackStudent: AppUser = {
     uid: targetDocId,
     role: 'student',
-    fullName: `Học sinh STT ${stt2} (${cleanClass})`,
+    fullName: `${effectiveClass} - Thí sinh ${sttFormatted}`,
     username: shortUsername,
     email: `${shortUsername}@edumath.edu.vn`,
     school: params.schoolFullName || 'THPT Võ Thị Sáu',
     schoolCode: cleanSchoolCode,
-    className: cleanClass,
+    className: effectiveClass,
     classId,
     subject: params.subjectFullName || 'Toán',
     subjectCode: cleanSubCode,
     yearCode: cleanYearCode,
-    sbd: `${cleanClass}-${stt2}`,
+    sbd: `${effectiveClass}-${sttFormatted}`,
     createdAt: new Date().toISOString(),
     isApproved: true,
   };
   saveRegisteredUserLocally(shortUsername, cleanPass, fallbackStudent);
   saveRegisteredUserLocally(targetDocId.toLowerCase(), cleanPass, fallbackStudent);
   setStoredUser(fallbackStudent);
+
+  try {
+    const uRef = doc(db, USERS_COLLECTION, standardizedUserDocId);
+    await setDoc(uRef, { ...fallbackStudent, passHash: cleanPass }, { merge: true });
+  } catch {}
+
   return fallbackStudent;
 }
 
@@ -1469,11 +1607,12 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
   const clean = usernameOrEmail.trim().toLowerCase();
   const cleanNormalized = clean.replace(/[-\s]/g, '_');
   const cleanPass = pass.trim();
+  const standardizedUserDocId = `user_${clean.replace(/[^a-zA-Z0-9_]/g, '_')}`;
 
   // 1. Admin login credentials (Tài khoản: admin, Mật khẩu: 123456)
   if ((clean === 'admin' || clean === 'admin@edumath.edu.vn') && cleanPass === '123456') {
     const adminUser: AppUser = {
-      uid: 'admin_kiet',
+      uid: 'user_admin',
       role: 'admin',
       fullName: 'Thầy Trịnh Tuấn Kiệt (Quản Trị Viên)',
       username: 'admin',
@@ -1483,14 +1622,50 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
       createdAt: new Date().toISOString(),
     };
     try {
-      const userDocRef = doc(db, USERS_COLLECTION, adminUser.uid);
-      await setDoc(userDocRef, adminUser, { merge: true });
+      const userDocRef = doc(db, USERS_COLLECTION, 'user_admin');
+      await setDoc(userDocRef, { ...adminUser, passHash: '123456' }, { merge: true });
     } catch {}
     setStoredUser(adminUser);
     return adminUser;
   }
 
-  // 2. Check local registered users list
+  // 2. Query Firestore USERS_COLLECTION directly with fixed Document ID
+  try {
+    const userDocRef = doc(db, USERS_COLLECTION, standardizedUserDocId);
+    let snap = await getDoc(userDocRef);
+    if (!snap.exists()) {
+      snap = await getDoc(doc(db, USERS_COLLECTION, clean));
+    }
+    if (snap.exists()) {
+      const userData = snap.data() as any;
+      if (userData.passHash && userData.passHash !== cleanPass) {
+        throw new Error('Mật khẩu không chính xác.');
+      }
+      if (userData.role === 'teacher' && userData.isApproved !== true && userData.username?.toLowerCase() !== 'admin') {
+        throw new Error('Tài khoản Giáo viên này đang chờ Quản trị viên (Admin) phê duyệt. Vui lòng liên hệ Admin để kích hoạt tài khoản!');
+      }
+      const user: AppUser = {
+        uid: userData.uid || standardizedUserDocId,
+        role: userData.role || 'teacher',
+        fullName: userData.fullName || clean,
+        username: userData.username || clean,
+        email: userData.email,
+        school: userData.school,
+        className: userData.className,
+        subject: userData.subject,
+        sbd: userData.sbd,
+        createdAt: userData.createdAt,
+        isApproved: userData.isApproved ?? true,
+      };
+      saveRegisteredUserLocally(clean, cleanPass, user);
+      setStoredUser(user);
+      return user;
+    }
+  } catch (dbErr: any) {
+    if (dbErr.message.includes('Mật khẩu') || dbErr.message.includes('chờ Quản trị viên')) throw dbErr;
+  }
+
+  // 3. Check local registered users list
   const localUsers = getStoredRegisteredUsers();
   const matchedLocal = localUsers.find(
     (u) =>
@@ -1508,7 +1683,7 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
     return matchedLocal.user;
   }
 
-  // 3. Check student roster accounts
+  // 4. Check student roster
   const roster = getStoredStudentRoster();
   const matchedStudent = roster.find(
     (s) =>
@@ -1531,39 +1706,6 @@ export async function loginAppUser(usernameOrEmail: string, pass: string): Promi
     saveRegisteredUserLocally(clean, cleanPass, studentUser);
     setStoredUser(studentUser);
     return studentUser;
-  }
-
-  // 4. Try Firestore users collection
-  try {
-    const safeId = cleanNormalized.replace(/[^a-zA-Z0-9_]/g, '_');
-    const userDocRef = doc(db, USERS_COLLECTION, safeId);
-    const snap = await getDoc(userDocRef);
-    if (snap.exists()) {
-      const userData = snap.data() as any;
-      if (userData.passHash && userData.passHash !== cleanPass) {
-        throw new Error('Mật khẩu không chính xác.');
-      }
-      if (userData.role === 'teacher' && userData.isApproved !== true && userData.username?.toLowerCase() !== 'admin') {
-        throw new Error('Tài khoản Giáo viên này đang chờ Quản trị viên (Admin) phê duyệt. Vui lòng liên hệ Admin để kích hoạt tài khoản!');
-      }
-      const user: AppUser = {
-        uid: userData.uid || safeId,
-        role: userData.role || 'teacher',
-        fullName: userData.fullName || clean,
-        username: userData.username || clean,
-        email: userData.email,
-        school: userData.school,
-        className: userData.className,
-        subject: userData.subject,
-        sbd: userData.sbd,
-        createdAt: userData.createdAt,
-        isApproved: userData.isApproved ?? true,
-      };
-      setStoredUser(user);
-      return user;
-    }
-  } catch (dbErr: any) {
-    if (dbErr.message.includes('Mật khẩu') || dbErr.message.includes('chờ Quản trị viên')) throw dbErr;
   }
 
   // 5. Nếu không khớp bất kỳ tài khoản nào:

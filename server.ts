@@ -422,15 +422,20 @@ function extractMatrixFromSheetText(sheetText: string, fileName: string): any {
       lower.includes('tnkq') ||
       lower.includes('trắc nghiệm 4 lựa chọn')
     ) {
-      // Find all numbers in this line
-      const numbers = line.match(/\d+(\.\d+)?/g)?.map(Number) || [];
-      // Usually total questions is between 4 and 40
-      const possibleTotals = numbers.filter((n) => n >= 4 && n <= 40 && Number.isInteger(n));
-      if (possibleTotals.length > 0) {
-        part1.totalQuestions = possibleTotals[possibleTotals.length - 1];
+      const cauMatch = line.match(/(\d+)\s*(?:câu|cau)/i);
+      if (cauMatch) {
+        const count = parseInt(cauMatch[1], 10);
+        if (count >= 4 && count <= 50) {
+          part1.totalQuestions = count;
+        }
+      } else {
+        const numbers = line.match(/\d+(\.\d+)?/g)?.map(Number) || [];
+        const possibleTotals = numbers.filter((n) => n >= 8 && n <= 50 && Number.isInteger(n));
+        if (possibleTotals.length > 0) {
+          part1.totalQuestions = possibleTotals[possibleTotals.length - 1];
+        }
       }
-      // Points (usually 2.0 to 7.0)
-      const possiblePoints = numbers.filter((n) => n >= 1.0 && n <= 7.0 && !possibleTotals.includes(n));
+      const possiblePoints = (line.match(/\d+(\.\d+)?/g)?.map(Number) || []).filter((n) => n >= 1.0 && n <= 7.0 && n !== part1.totalQuestions);
       if (possiblePoints.length > 0) {
         part1.points = possiblePoints[0];
       }
@@ -444,12 +449,21 @@ function extractMatrixFromSheetText(sheetText: string, fileName: string): any {
       lower.includes('đúng/sai') ||
       lower.includes('đúng - sai')
     ) {
-      const numbers = line.match(/\d+(\.\d+)?/g)?.map(Number) || [];
-      const possibleTotals = numbers.filter((n) => n >= 1 && n <= 10 && Number.isInteger(n));
-      if (possibleTotals.length > 0) {
-        part2.totalQuestions = possibleTotals[0];
+      const cauMatch = line.match(/(\d+)\s*(?:câu|cau)/i);
+      if (cauMatch) {
+        const count = parseInt(cauMatch[1], 10);
+        if (count >= 2 && count <= 10) {
+          part2.totalQuestions = count;
+        }
+      } else {
+        const numbers = line.match(/\d+(\.\d+)?/g)?.map(Number) || [];
+        // Only accept between 2 and 8 (standard is 4, do NOT accept 1 from 'Phần 1' or 'Mục 1')
+        const possibleTotals = numbers.filter((n) => n >= 2 && n <= 8 && Number.isInteger(n));
+        if (possibleTotals.length > 0) {
+          part2.totalQuestions = possibleTotals[0];
+        }
       }
-      const possiblePoints = numbers.filter((n) => n >= 1.0 && n <= 6.0 && !possibleTotals.includes(n));
+      const possiblePoints = (line.match(/\d+(\.\d+)?/g)?.map(Number) || []).filter((n) => n >= 1.0 && n <= 6.0 && n !== part2.totalQuestions);
       if (possiblePoints.length > 0) {
         part2.points = possiblePoints[0];
       }
@@ -463,12 +477,24 @@ function extractMatrixFromSheetText(sheetText: string, fileName: string): any {
       lower.includes('trả lời ngắn') ||
       lower.includes('tln')
     ) {
-      const numbers = line.match(/\d+(\.\d+)?/g)?.map(Number) || [];
-      const possibleTotals = numbers.filter((n) => n >= 1 && n <= 10 && Number.isInteger(n));
-      if (possibleTotals.length > 0) {
-        part3.totalQuestions = possibleTotals[0];
+      const isShortAnswer = lower.includes('trả lời ngắn') || lower.includes('tra loi ngan') || lower.includes('tln') || lower.includes('điền khuyết');
+      if (isShortAnswer && part3.totalQuestions === 2) {
+        part3.totalQuestions = 6; // Standard GDPT 2018 for short-answer is 6 questions
       }
-      const possiblePoints = numbers.filter((n) => n >= 1.0 && n <= 6.0 && !possibleTotals.includes(n));
+      const cauMatch = line.match(/(\d+)\s*(?:câu|cau)/i);
+      if (cauMatch) {
+        const count = parseInt(cauMatch[1], 10);
+        if (count >= 2 && count <= 10) {
+          part3.totalQuestions = count;
+        }
+      } else {
+        const numbers = line.match(/\d+(\.\d+)?/g)?.map(Number) || [];
+        const possibleTotals = numbers.filter((n) => n >= 2 && n <= 10 && Number.isInteger(n));
+        if (possibleTotals.length > 0) {
+          part3.totalQuestions = possibleTotals[0];
+        }
+      }
+      const possiblePoints = (line.match(/\d+(\.\d+)?/g)?.map(Number) || []).filter((n) => n >= 1.0 && n <= 6.0 && n !== part3.totalQuestions);
       if (possiblePoints.length > 0) {
         part3.points = possiblePoints[0];
       }
@@ -536,6 +562,12 @@ app.post('/api/parse-matrix', async (req, res) => {
       mimeType.includes('excel') ||
       mimeType.includes('sheet');
 
+    const isWordDoc =
+      fileName.toLowerCase().endsWith('.docx') ||
+      fileName.toLowerCase().endsWith('.doc') ||
+      mimeType.includes('word') ||
+      mimeType.includes('officedocument.wordprocessingml');
+
     // 1. If it's an Excel spreadsheet or CSV, parse text directly using XLSX
     if (isSpreadsheet && fileBase64) {
       try {
@@ -553,8 +585,21 @@ app.post('/api/parse-matrix', async (req, res) => {
         console.warn('[API /api/parse-matrix] Excel parsing error:', excelErr);
       }
     }
+    // 2. If it's a Word document (.docx/.doc), extract text & tables using mammoth
+    else if (isWordDoc && fileBase64) {
+      try {
+        const buffer = Buffer.from(fileBase64.replace(/^data:.*?;base64,/, ''), 'base64');
+        const docxRes = await mammoth.extractRawText({ buffer });
+        if (docxRes && docxRes.value) {
+          extractedText = (extractedText ? extractedText + '\n\n' : '') + docxRes.value;
+          console.log('[API /api/parse-matrix] Extracted', docxRes.value.length, 'chars from Word docx matrix');
+        }
+      } catch (docxErr) {
+        console.warn('[API /api/parse-matrix] Word docx parsing error:', docxErr);
+      }
+    }
 
-    // 2. Perform local algorithmic extraction first
+    // 3. Perform local algorithmic extraction first
     const algorithmicMatrix = extractMatrixFromSheetText(extractedText || rawText || fileName, fileName);
     algorithmicMatrix.grade = effectiveDetectedGrade;
     if (effectiveDetectedGrade === '11') {
@@ -563,7 +608,7 @@ app.post('/api/parse-matrix', async (req, res) => {
       algorithmicMatrix.topic = 'Hàm Số Bậc Hai, Tam Thức & Bất Phương Trình Bậc Hai';
     }
 
-    // 3. Prepare prompt for AI multimodal or text extraction
+    // 4. Prepare prompt for AI multimodal or text extraction
     const prompt = `
 Bạn là chuyên gia thẩm định và ra đề thi môn Toán THPT Việt Nam (Chương trình GDPT 2018).
 Nhiệm vụ: Hãy ĐỌC KỸ 100% NỘI DUNG FILE MA TRẬN / BẢNG ĐẶC TẢ ĐÍNH KÈM (file: "${fileName}").
@@ -574,26 +619,21 @@ File đính kèm là tài liệu Toán của KHỐI LỚP NÀO thì BẮT BUỘC
   * CẢNH BÁO TỐI CAO: TUYỆT ĐỐI KHÔNG ra kiến thức đạo hàm/tích phân/khảo sát hàm số của Lớp 12!
 - Khối lớp đã được hệ thống định danh từ file: TOÁN LỚP ${effectiveDetectedGrade}.
 
-Hãy phân tích kỹ các dòng và cột trong ma trận để đếm CHÍNH XÁC:
+CHỈ DẪN QUAN TRỌNG VỀ SỐ LƯỢNG CÂU HỎI:
+Hãy phân tích kỹ các dòng và cột trong ma trận để đếm CHÍNH XÁC 100% số lượng câu hỏi từng phần:
 1. Phần I: Câu hỏi trắc nghiệm nhiều lựa chọn (4 phương án A, B, C, D)
-   - Số câu cấp độ Nhận biết
-   - Số câu cấp độ Thông hiểu
-   - Số câu cấp độ Vận dụng
-   - Số câu cấp độ Vận dụng cao
-   - Tổng số câu Phần I (đúng số câu ghi trong tài liệu ma trận)
-   - Điểm số Phần I (thường là 3.0 điểm)
+   - Đếm đủ số câu ghi trong tài liệu ma trận (chuẩn GDPT 2018 là 12 câu, TUYỆT ĐỐI KHÔNG ép về 10 câu).
+   - Điểm số Phần I (thường là 3.0 điểm).
 2. Phần II: Câu hỏi trắc nghiệm Đúng / Sai
-   - Số câu hỏi Đúng/Sai (thường là 4 câu)
-   - Số ý theo các mức độ Nhận biết, Thông hiểu, Vận dụng, Vận dụng cao
-   - Điểm số Phần II (thường là 4.0 điểm)
-3. Phần III: Tự luận giải chi tiết (hoặc trả lời ngắn)
-   - Số câu hỏi / bài toán
-   - Số bước hoặc mức độ Vận dụng, Vận dụng cao
-   - Điểm số Phần III (thường là 3.0 điểm)
+   - Đếm đủ số câu hỏi Đúng/Sai (chuẩn GDPT 2018 là 4 câu, mỗi câu 4 ý a-b-c-d, TUYỆT ĐỐI KHÔNG ép về 1 câu).
+   - Điểm số Phần II (thường là 4.0 điểm).
+3. Phần III: Tự luận giải chi tiết HOẶC trả lời ngắn
+   - Đếm đủ số câu theo ma trận (thường là 6 câu trả lời ngắn hoặc 2-3 câu tự luận; tổng toàn bài ví dụ: 12 + 4 + 6 = 22 câu).
+   - Điểm số Phần III (thường là 3.0 điểm).
 4. Tổng điểm toàn bài: 10.0 điểm.
 5. Khối lớp: "${effectiveDetectedGrade}".
 
-Trả về định dạng JSON thuần túy (KHÔNG dùng markdown \`\`\`json) với cấu trúc:
+TrẢ VỀ ĐỊNH DẠNG JSON THUẦN TÚY (KHÔNG dùng markdown \`\`\`json) với cấu trúc:
 {
   "topic": "${effectiveDetectedGrade === '11' ? 'Lượng Giác, Dãy Số - Cấp Số Cộng/Nhân, Giới Hạn & Hình Học Không Gian' : effectiveDetectedGrade === '10' ? 'Hàm Số Bậc Hai, Tam Thức & Bất Phương Trình Bậc Hai' : 'Khảo sát hàm số & Tích phân'}",
   "grade": "${effectiveDetectedGrade}",
@@ -619,24 +659,25 @@ Trả về định dạng JSON thuần túy (KHÔNG dùng markdown \`\`\`json) v
     "points": 4.0
   },
   "part3": {
-    "title": "Phần III: Tự luận giải toán",
+    "title": "Phần III: Trả lời ngắn / Tự luận",
     "nhanBiet": 0,
-    "thongHieu": 1,
-    "vanDung": 1,
+    "thongHieu": 2,
+    "vanDung": 3,
     "vanDungCao": 1,
-    "totalQuestions": 2,
+    "totalQuestions": 6,
     "points": 3.0
   },
-  "rawSummary": "Tóm tắt ngắn gọn số câu từng phần..."
+  "part3Type": "short_answer",
+  "rawSummary": "Phần I (12 câu TN), Phần II (4 câu Đ/S), Phần III (6 câu TLN) = Tổng 22 câu."
 }
 `;
 
     let contentPayload: any = prompt;
 
     if (extractedText && extractedText.trim().length > 10) {
-      // For Excel/CSV/Text: pass as pure text to AI (Gemini excels at tabular CSV parsing)
-      contentPayload = `${prompt}\n\n=== NỘI DUNG MA TRẬN BẢNG TÍNH EXCEL / CSV TỪ FILE (${fileName}) ===\n${extractedText}`;
-    } else if (fileBase64 && (fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf') || mimeType.includes('image'))) {
+      // For Word/Excel/CSV/Text: pass as pure text to AI
+      contentPayload = `${prompt}\n\n=== NỘI DUNG MA TRẬN TRÍCH XUẤT TỪ FILE (${fileName}) ===\n${extractedText}`;
+    } else if (fileBase64 && (fileName.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf') || mimeType.includes('image') || fileBase64.length > 50)) {
       // For PDF or image: pass as inlineData
       let cleanBase64 = fileBase64.replace(/^data:.*?;base64,/, '');
       let effectiveMime = mimeType;
@@ -662,6 +703,7 @@ Trả về định dạng JSON thuần túy (KHÔNG dùng markdown \`\`\`json) v
         systemInstruction: `Bạn là chuyên gia thẩm định và ra đề thi môn Toán THPT Việt Nam.\n${STRICT_JSON_SYSTEM_INSTRUCTION}`,
         responseMimeType: 'application/json',
         temperature: 0.2,
+        maxOutputTokens: 8192,
       });
 
       parsedMatrix = safeParseGeminiResponse(responseText);
@@ -1102,10 +1144,10 @@ Hãy ĐỌC KỸ 100% NỘI DUNG FILE MA TRẬN / BẢNG ĐẶC TẢ ĐÍNH KÈM
   * Tiêu đề đề thi PHẢI LÀ: "ĐỀ KIỂM TRA TOÁN LỚP 10 - [TÊN CHỦ ĐỀ TRONG MA TRẬN]".
   * Mã đề thi PHẢI BẮT ĐẦU BẰNG "TOAN10-".
 - CẤU TRÚC ĐỀ PHẢI KHỚP ĐÚNG 100% TỪNG CÂU, TỪNG MỨC ĐỘ NHẬN THỨC VÀ TỔNG SỐ LƯỢNG CÂU HỎI TRONG MA TRẬN (TUYỆT ĐỐI KHÔNG ÉP CỨNG HOẶC CẮT BỚT):
-  * Phần I (Trắc nghiệm nhiều lựa chọn): Đúng chính xác ${mcTargetCount} câu (${p1NhanBiet} câu Nhận biết, ${p1ThongHieu} câu Thông hiểu, ${p1VanDung} câu Vận dụng). Tổng điểm: ${mcPoints}đ.
-  * Phần II (Trắc nghiệm Đúng/Sai): Đúng chính xác ${tfTargetCount} câu (${p2NhanBiet} ý Nhận biết, ${p2ThongHieu} ý Thông hiểu, ${p2VanDung} ý Vận dụng). Tổng điểm: ${tfPoints}đ.
-  * Phần III (${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}): Đúng chính xác ${essayTargetCount} câu chuẩn SGK lớp ${effectiveGrade}. Tổng điểm: ${essayPoints}đ.
-TỔNG CỘNG TOÀN BÀI: Đúng chính xác ${mcTargetCount + tfTargetCount + essayTargetCount} câu hỏi (Gồm ${mcTargetCount} câu Phần I + ${tfTargetCount} câu Phần II + ${essayTargetCount} câu Phần III).
+  * Phần I (Trắc nghiệm nhiều lựa chọn): Đúng chính xác ${mcTargetCount} câu (${p1NhanBiet} câu Nhận biết, ${p1ThongHieu} câu Thông hiểu, ${p1VanDung} câu Vận dụng). Tổng điểm: ${mcPoints}đ. TUYỆT ĐỐI KHÔNG ép cứng về 10 câu, phải xuất đủ ${mcTargetCount} câu!
+  * Phần II (Trắc nghiệm Đúng/Sai): Đúng chính xác ${tfTargetCount} câu (${p2NhanBiet} ý Nhận biết, ${p2ThongHieu} ý Thông hiểu, ${p2VanDung} ý Vận dụng). Mỗi câu 4 ý a, b, c, d. Tổng điểm: ${tfPoints}đ. TUYỆT ĐỐI KHÔNG ép cứng về 1 câu, phải xuất đủ ${tfTargetCount} câu!
+  * Phần III (${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}): Đúng chính xác ${essayTargetCount} câu chuẩn SGK lớp ${effectiveGrade}. Tổng điểm: ${essayPoints}đ. TUYỆT ĐỐI KHÔNG ép cứng về 1 câu, phải xuất đủ ${essayTargetCount} câu!
+TỔNG CỘNG TOÀN BÀI: Đúng chính xác ${mcTargetCount + tfTargetCount + essayTargetCount} câu hỏi (Gồm ${mcTargetCount} câu Phần I + ${tfTargetCount} câu Phần II + ${essayTargetCount} câu Phần III = Tổng ${mcTargetCount + tfTargetCount + essayTargetCount} câu).
 `;
     }
     // =========================================================================
@@ -1178,6 +1220,14 @@ ${systemDirectives}
 - Luôn đặt dấu cách giữa văn bản tiếng Việt và biểu thức toán.
 - Chú ý escape ký hiệu dấu gạch chéo ngược trong chuỗi JSON (ví dụ \\\\dfrac, \\\\lim).
 
+QUY TẮC BẮT BUỘC VỀ SỐ LƯỢNG VÀ 4 PHẦN ĐỀ THI:
+1. BẮT BUỘC tạo đủ 100% số lượng câu hỏi khớp chính xác với ma trận hoặc file đề tải lên, TUYỆT ĐỐI KHÔNG ĐƯỢC TỰ Ý CẮT BỚT.
+2. Phân tách rõ cấu trúc dữ liệu đề thi thành 4 phần độc lập:
+   - Phần I (part1 / multipleChoice): Trắc nghiệm nhiều lựa chọn (A, B, C, D).
+   - Phần II (part2 / trueFalseQuestions): Trắc nghiệm Đúng/Sai (mỗi câu gồm 4 mệnh đề a, b, c, d riêng biệt và LỜI GIẢI CHI TIẾT "explanation" cho từng ý).
+   - Phần III (part3): Trả lời ngắn (câu hỏi yêu cầu điền số, ghi rõ quy tắc làm tròn đến hàng đơn vị, phần chục hoặc phần trăm theo chuẩn SGK Toán GDPT 2018, trường shortAnswerKey lưu số chuẩn).
+   - Phần IV (part4): Tự luận (yêu cầu học sinh trình bày các bước lập luận, shortAnswerKey lưu đáp số cuối cùng để tự động chấm điểm tối đa nếu học sinh nhập đúng kết quả, rubric lưu barem từng bước).
+
 Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) với schema:
 {
   "title": "${mode === 'recreate' ? 'ĐỀ THI TÁI TẠO TƯƠNG ĐƯƠNG' : 'ĐỀ KIỂM TRA TOÁN'} LỚP ${effectiveGrade} - ${(effectiveTopic || 'CHUYÊN ĐỀ').toUpperCase()}",
@@ -1188,7 +1238,7 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
   "textbook": "${textbook}",
   "topic": "${effectiveTopic}",
   "part3Type": "${part3Type}",
-  "multipleChoice": [
+  "part1": [
     {
       "id": "mc1",
       "question": "Cho hàm số bậc hai $y = ax^2 + bx + c$ ($a \\ne 0$) có đỉnh $I$...",
@@ -1198,31 +1248,76 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
       "explanation": "Giải thích chi tiết từng bước..."
     }
   ],
-  "trueFalseQuestions": [
+  "part2": [
     {
       "id": "tf1",
       "prompt": "Cho hình chóp $S.ABCD$ có đáy là hình vuông...",
       "items": [
-        {"key": "a", "statement": "...", "isCorrect": true},
-        {"key": "b", "statement": "...", "isCorrect": false},
-        {"key": "c", "statement": "...", "isCorrect": true},
-        {"key": "d", "statement": "...", "isCorrect": false}
+        {"key": "a", "statement": "...", "isCorrect": true, "explanation": "Lời giải chi tiết ý a..."},
+        {"key": "b", "statement": "...", "isCorrect": false, "explanation": "Lời giải chi tiết ý b..."},
+        {"key": "c", "statement": "...", "isCorrect": true, "explanation": "Lời giải chi tiết ý c..."},
+        {"key": "d", "statement": "...", "isCorrect": false, "explanation": "Lời giải chi tiết ý d..."}
       ],
-      "pointsPerSub": 0.25
+      "pointsPerSub": 0.25,
+      "explanation": "Lời giải tổng quát toàn bộ câu hỏi..."
+    }
+  ],
+  "part3": [
+    {
+      "id": "sa1",
+      "type": "short_answer",
+      "question": "Cho tam giác $ABC$... Tính diện tích tam giác (làm tròn kết quả đến hàng phần mười).",
+      "maxPoints": ${(essayPoints / essayTargetCount).toFixed(2)},
+      "shortAnswerKey": "12.5",
+      "shortAnswerPlaceholder": "Nhập kết quả số (ví dụ: 12.5)..."
+    }
+  ],
+  "part4": [
+    {
+      "id": "essay1",
+      "type": "essay",
+      "question": "Tìm tất cả các giá trị của tham số $m$ để...",
+      "maxPoints": 1.0,
+      "shortAnswerKey": "2",
+      "shortAnswerPlaceholder": "Nhập đáp án cuối cùng hoặc tải ảnh bài làm...",
+      "rubric": [
+        {"step": "Bước 1", "description": "Lập luận cơ sở...", "points": 0.5},
+        {"step": "Bước 2", "description": "Kết luận tham số...", "points": 0.5}
+      ]
+    }
+  ],
+  "multipleChoice": [
+    {
+      "id": "mc1",
+      "question": "Cho hàm số bậc hai...",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "correctAnswer": "B",
+      "points": ${(mcPoints / mcTargetCount).toFixed(2)},
+      "explanation": "..."
+    }
+  ],
+  "trueFalseQuestions": [
+    {
+      "id": "tf1",
+      "prompt": "...",
+      "items": [
+        {"key": "a", "statement": "...", "isCorrect": true, "explanation": "..."},
+        {"key": "b", "statement": "...", "isCorrect": false, "explanation": "..."},
+        {"key": "c", "statement": "...", "isCorrect": true, "explanation": "..."},
+        {"key": "d", "statement": "...", "isCorrect": false, "explanation": "..."}
+      ],
+      "pointsPerSub": 0.25,
+      "explanation": "..."
     }
   ],
   "essays": [
     {
       "id": "essay1",
       "type": "${part3Type}",
-      "question": "Tìm tất cả các giá trị của tham số $m$ để...",
+      "question": "...",
       "maxPoints": ${(essayPoints / essayTargetCount).toFixed(2)},
-      "shortAnswerKey": "m > 2",
-      "shortAnswerPlaceholder": "Nhập kết quả...",
-      "rubric": [
-        {"step": "Bước 1", "description": "...", "points": 0.5},
-        {"step": "Bước 2", "description": "...", "points": 0.5}
-      ]
+      "shortAnswerKey": "12.5",
+      "shortAnswerPlaceholder": "Nhập kết quả..."
     }
   ]
 }
@@ -1280,6 +1375,7 @@ ${STRICT_JSON_SYSTEM_INSTRUCTION}`
         systemInstruction: systemInstructionForGen,
         responseMimeType: 'application/json',
         temperature: 0.2,
+        maxOutputTokens: 8192,
       });
 
       examData = safeParseGeminiResponse(responseText);
@@ -1376,6 +1472,61 @@ ${STRICT_JSON_SYSTEM_INSTRUCTION}`
             es.question = es.question.replace(/^(?:Câu|Bài)\s*\d+\s*(\(.*?\))?\s*[:.]*\s*/i, '').trim();
           }
         });
+      }
+
+      // Harmonize 4-part independent structure & 3-part legacy structure
+      if (Array.isArray(examData.part1) && (!examData.multipleChoice || examData.multipleChoice.length === 0)) {
+        examData.multipleChoice = examData.part1;
+      }
+      if (Array.isArray(examData.part2) && (!examData.trueFalseQuestions || examData.trueFalseQuestions.length === 0)) {
+        examData.trueFalseQuestions = examData.part2;
+      }
+      if (!Array.isArray(examData.part1) && Array.isArray(examData.multipleChoice)) {
+        examData.part1 = examData.multipleChoice;
+      }
+      if (!Array.isArray(examData.part2) && Array.isArray(examData.trueFalseQuestions)) {
+        examData.part2 = examData.trueFalseQuestions;
+      }
+
+      // Ensure every True/False item has explanation
+      if (Array.isArray(examData.trueFalseQuestions)) {
+        examData.trueFalseQuestions.forEach((tf: any) => {
+          if (Array.isArray(tf.items)) {
+            tf.items.forEach((item: any) => {
+              if (!item.explanation) {
+                item.explanation = item.isCorrect
+                  ? `Mệnh đề ${item.key}) là ĐÚNG theo giả thiết và công thức SGK.`
+                  : `Mệnh đề ${item.key}) là SAI theo giả thiết và công thức SGK.`;
+              }
+            });
+          }
+        });
+      }
+
+      // Harmonize Part III (short_answer) & Part IV (essay)
+      if (Array.isArray(examData.part3) || Array.isArray(examData.part4)) {
+        const p3 = (examData.part3 || []).map((q: any, i: number) => ({
+          ...q,
+          id: q.id || `sa_${i + 1}`,
+          type: 'short_answer',
+          shortAnswerPlaceholder: q.shortAnswerPlaceholder || 'Nhập kết quả số...',
+        }));
+        const p4 = (examData.part4 || []).map((q: any, i: number) => ({
+          ...q,
+          id: q.id || `essay_${i + 1}`,
+          type: 'essay',
+          shortAnswerPlaceholder: q.shortAnswerPlaceholder || 'Nhập đáp án cuối cùng hoặc tải ảnh bài làm...',
+        }));
+        examData.part3 = p3;
+        examData.part4 = p4;
+        if (!Array.isArray(examData.essays) || examData.essays.length === 0) {
+          examData.essays = [...p3, ...p4];
+        }
+      } else if (Array.isArray(examData.essays)) {
+        const shortAns = examData.essays.filter((e: any) => e.type === 'short_answer');
+        const essays = examData.essays.filter((e: any) => e.type !== 'short_answer');
+        examData.part3 = shortAns.length > 0 ? shortAns : examData.essays;
+        examData.part4 = essays;
       }
 
       console.log(`[API /api/generate-exam] Exam generated successfully with Gemini AI (mode=${mode}, grade=${grade}, topic=${topic})`);

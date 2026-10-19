@@ -303,31 +303,31 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950 flex flex-col justify-between p-4 sm:p-6 lg:p-8 text-slate-100 font-sans">
+    <div className="min-h-screen bg-gradient-to-br from-sky-50 via-white to-blue-100 text-slate-800 flex flex-col justify-between p-4 sm:p-6 lg:p-8 font-sans">
       {/* Top Banner / Logo */}
-      <header className="max-w-6xl mx-auto w-full flex items-center justify-between py-2 border-b border-slate-800/80 pb-4">
+      <header className="max-w-6xl mx-auto w-full flex items-center justify-between py-2 border-b border-sky-200/60 pb-4">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-500 via-indigo-500 to-sky-400 flex items-center justify-center text-white shadow-lg shadow-indigo-500/25">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-sky-500 via-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-sky-500/25">
             <Sigma className="w-7 h-7 stroke-[2.5]" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-black text-xl tracking-tight bg-gradient-to-r from-blue-400 via-indigo-300 to-white bg-clip-text text-transparent">
+              <span className="font-black text-xl tracking-tight bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-700 bg-clip-text text-transparent">
                 EduMath AI
               </span>
-              <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-700/60">
+              <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 border border-sky-200">
                 GDPT 2018
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-medium">
+            <p className="text-[11px] text-slate-500 font-medium">
               Cổng Thi Trực Tuyến & Quản Lý Khảo Thí GDPT 2018
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-300 bg-slate-800/60 px-3 py-1.5 rounded-full border border-slate-700/60">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 bg-white/90 px-3 py-1.5 rounded-full border border-sky-200 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="hidden sm:inline">Máy chủ trực tuyến sẵn sàng</span>
             <span className="sm:hidden">Online</span>
           </div>
@@ -336,31 +336,31 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
 
       {/* Main Authentication Card */}
       <main className="max-w-xl mx-auto w-full my-6">
-        <div className="bg-slate-900/95 backdrop-blur-xl rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-800 relative overflow-hidden">
+        <div className="bg-white border border-sky-100 shadow-xl shadow-sky-100/60 rounded-3xl p-6 sm:p-8 relative overflow-hidden">
           {/* Top accent line */}
-          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-500 via-indigo-500 to-sky-400" />
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-sky-400 via-blue-500 to-indigo-500" />
 
           {/* Heading */}
           <div className="text-center space-y-2 mb-6">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 via-blue-600 to-sky-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-indigo-600/30">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-sky-500 via-blue-600 to-indigo-600 text-white flex items-center justify-center mx-auto shadow-lg shadow-sky-500/25">
               {portalMode === 'student' ? (
                 <GraduationCap className="w-7 h-7" />
               ) : (
                 <ShieldCheck className="w-7 h-7" />
               )}
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight">
+            <h1 className="text-2xl font-bold text-slate-800 tracking-tight">
               Cổng Xác Thực Hệ Thống
             </h1>
             <div className="inline-block">
-              <span className="text-[11px] font-extrabold text-indigo-300 bg-indigo-950/80 py-1 px-3.5 rounded-full border border-indigo-700/60 shadow-xs">
+              <span className="text-[11px] font-extrabold bg-sky-50 text-sky-700 border border-sky-200 py-1 px-3.5 rounded-full shadow-xs">
                 Được phát triển bởi Thầy Trịnh Tuấn Kiệt
               </span>
             </div>
           </div>
 
           {/* 2 MAIN ROLE TABS */}
-          <div className="grid grid-cols-2 p-1.5 bg-slate-950 rounded-2xl mb-6 text-xs font-black border border-slate-800">
+          <div className="grid grid-cols-2 p-1.5 bg-slate-100/80 rounded-2xl mb-6 text-xs font-black border border-slate-200">
             <button
               type="button"
               onClick={() => {
@@ -370,8 +370,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
               }}
               className={`py-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
                 portalMode === 'student'
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md'
+                  : 'text-slate-600 hover:text-sky-600'
               }`}
             >
               <GraduationCap className="w-4 h-4" />
@@ -386,8 +386,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
               }}
               className={`py-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 ${
                 portalMode === 'teacher'
-                  ? 'bg-gradient-to-r from-indigo-600 to-sky-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-md'
+                  : 'text-slate-600 hover:text-sky-600'
               }`}
             >
               <User className="w-4 h-4" />
@@ -397,16 +397,16 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
 
           {/* Error Message */}
           {errorMessage && (
-            <div className="mb-4 p-3.5 rounded-xl bg-rose-950/80 border border-rose-800 text-xs text-rose-200 flex items-center gap-2.5 font-medium animate-in fade-in">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+            <div className="mb-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2.5 font-medium animate-in fade-in">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
               <span>{errorMessage}</span>
             </div>
           )}
 
           {/* Success Message */}
           {successMessage && (
-            <div className="mb-4 p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-700 text-xs text-emerald-200 flex items-start gap-2.5 font-medium animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+            <div className="mb-4 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2.5 font-medium animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
               <span>{successMessage}</span>
             </div>
           )}
@@ -416,23 +416,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
           {/* ======================================================== */}
           {portalMode === 'student' && (
             <form onSubmit={handleStudentLoginSubmit} className="space-y-4">
-              <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-900/60 text-xs text-indigo-200 flex items-start gap-2">
-                <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="p-3 rounded-xl bg-sky-50/90 border border-sky-200 text-xs text-slate-700 flex items-start gap-2">
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                 <span className="leading-relaxed">
-                  Học sinh chọn <b>Trường, Năm học, Môn học, Lớp</b> bên dưới và gõ nhanh <b>Mã STT</b> (VD: <code className="bg-indigo-900 text-amber-300 font-mono font-bold px-1 rounded">12a805</code> hoặc <code className="bg-indigo-900 text-amber-300 font-mono font-bold px-1 rounded">05</code>) để vào đúng phòng thi.
+                  Học sinh chọn <b>Trường, Năm học, Môn học, Lớp</b> bên dưới và gõ nhanh <b>Mã STT</b> (VD: <code className="bg-sky-100 text-sky-800 font-semibold font-mono px-1.5 py-0.5 rounded">12a805</code> hoặc <code className="bg-sky-100 text-sky-800 font-semibold font-mono px-1.5 py-0.5 rounded">05</code>) để vào đúng phòng thi.
                 </span>
               </div>
 
               {/* 4 DROPDOWNS: Trường, Năm học, Môn học, Lớp */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-slate-950/70 rounded-2xl border border-slate-800">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-slate-50/80 rounded-2xl border border-slate-200">
                 {/* 1. Chọn Trường */}
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
-                      <School className="w-3.5 h-3.5 text-indigo-400" /> Chọn Trường
+                      <School className="w-3.5 h-3.5 text-sky-600" /> Chọn Trường
                     </span>
-                    <span className="text-[10px] font-mono text-indigo-300">
-                      Mã: {activeSchoolCode}
+                    <span className="text-[10px] font-mono text-sky-600 font-semibold">
+                      MÃ: {activeSchoolCode}
                     </span>
                   </label>
                   <select
@@ -441,7 +441,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       setStudentSchool(e.target.value);
                       saveStudentPrefs(e.target.value, studentYear, studentSubject, studentClass);
                     }}
-                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer"
+                    className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer transition-all"
                   >
                     {uniqueSchools.map((sch) => (
                       <option key={sch} value={sch}>
@@ -453,12 +453,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
 
                 {/* 2. Chọn Năm Học */}
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-indigo-400" /> Năm Học
+                      <Calendar className="w-3.5 h-3.5 text-sky-600" /> Năm Học
                     </span>
-                    <span className="text-[10px] font-mono text-indigo-300">
-                      Niên khóa: {activeYearCode}
+                    <span className="text-[10px] font-mono text-sky-600 font-semibold">
+                      NIÊN KHÓA: {activeYearCode}
                     </span>
                   </label>
                   <select
@@ -467,7 +467,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       setStudentYear(e.target.value);
                       saveStudentPrefs(studentSchool, e.target.value, studentSubject, studentClass);
                     }}
-                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer font-mono"
+                    className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer font-mono transition-all"
                   >
                     {uniqueYears.map((yr) => (
                       <option key={yr} value={yr}>
@@ -479,12 +479,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
 
                 {/* 3. Chọn Môn Học */}
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
-                      <BookOpen className="w-3.5 h-3.5 text-indigo-400" /> Môn Học
+                      <BookOpen className="w-3.5 h-3.5 text-sky-600" /> Môn Học
                     </span>
-                    <span className="text-[10px] font-mono text-indigo-300">
-                      Mã: {activeSubjectCode}
+                    <span className="text-[10px] font-mono text-sky-600 font-semibold">
+                      MÃ: {activeSubjectCode}
                     </span>
                   </label>
                   <select
@@ -493,7 +493,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       setStudentSubject(e.target.value);
                       saveStudentPrefs(studentSchool, studentYear, e.target.value, studentClass);
                     }}
-                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer"
+                    className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer transition-all"
                   >
                     {uniqueSubjects.map((sub) => (
                       <option key={sub} value={sub}>
@@ -505,11 +505,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
 
                 {/* 4. Chọn Lớp */}
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-indigo-400" /> Chọn Lớp
+                      <Layers className="w-3.5 h-3.5 text-sky-600" /> Chọn Lớp
                     </span>
-                    <span className="text-[10px] font-mono text-amber-400">
+                    <span className="text-[10px] font-mono text-sky-600 font-semibold">
                       {studentClass}
                     </span>
                   </label>
@@ -519,7 +519,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       setStudentClass(e.target.value);
                       saveStudentPrefs(studentSchool, studentYear, studentSubject, e.target.value);
                     }}
-                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer uppercase"
+                    className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer uppercase transition-all"
                   >
                     {availableClassNames.map((cls) => (
                       <option key={cls} value={cls}>
@@ -532,10 +532,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
 
               {/* Ô TÀI KHOẢN: HỌC SINH GÕ [LỚP + STT] (VD: 12a805 hoặc 05) */}
               <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
-                  <span>Mã Tài Khoản Học Sinh [Lớp + STT] <span className="text-rose-400">*</span></span>
-                  <span className="text-[10px] text-slate-400 font-normal">
-                    VD: <b>12a805</b> hoặc <b>05</b>
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                  <span>Mã Tài Khoản Học Sinh [Lớp + STT] <span className="text-rose-500">*</span></span>
+                  <span className="text-[10px] text-slate-500 font-normal">
+                    VD: <b className="text-sky-700">12a805</b> hoặc <b className="text-sky-700">05</b>
                   </span>
                 </label>
                 <div className="relative">
@@ -546,17 +546,17 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                     value={studentAccount}
                     onChange={(e) => setStudentAccount(e.target.value)}
                     placeholder="Nhập 12a805 hoặc 05..."
-                    className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-base font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 placeholder:text-slate-600"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-base font-mono font-bold transition-all placeholder:text-slate-400"
                   />
                 </div>
               </div>
 
               {/* Mật khẩu học sinh (mặc định 123456) */}
               <div>
-                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5 flex items-center justify-between">
                   <span>Mật Khẩu Khởi Tạo</span>
-                  <span className="text-[10px] text-slate-400 font-normal">
-                    Mặc định: <code className="text-amber-300 font-mono font-bold">123456</code>
+                  <span className="text-[10px] text-slate-500 font-normal">
+                    Mặc định: <code className="text-sky-700 font-mono font-bold">123456</code>
                   </span>
                 </label>
                 <div className="relative">
@@ -566,12 +566,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                     value={studentPassword}
                     onChange={(e) => setStudentPassword(e.target.value)}
                     placeholder="123456"
-                    className="w-full pl-10 pr-10 py-3 bg-slate-950 border border-slate-700 rounded-xl text-base font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    className="w-full pl-10 pr-10 py-3 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-base font-mono font-bold transition-all"
                   />
                   <button
                     type="button"
                     onClick={() => setShowStudentPassword((p) => !p)}
-                    className="absolute right-3 top-3.5 text-slate-400 hover:text-white"
+                    className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-600"
                   >
                     {showStudentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -579,9 +579,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
               </div>
 
               {/* Live Document ID Indicator */}
-              <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-[11px] text-slate-600 flex items-center justify-between">
                 <span>Document ID truy vấn:</span>
-                <code className="px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-amber-300 font-mono font-bold text-[10px]">
+                <code className="px-2 py-0.5 bg-white text-sky-700 border border-sky-300 rounded font-mono font-bold text-[10px]">
                   {previewTargetDocId}
                 </code>
               </div>
@@ -589,7 +589,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 hover:from-blue-500 hover:to-sky-500 text-white font-black text-base rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full py-3.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-black text-base rounded-xl shadow-lg shadow-sky-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {isLoading ? (
                   <>
@@ -613,7 +613,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
           {portalMode === 'teacher' && (
             <div className="space-y-4">
               {/* Sub-tabs for Teacher: Login or Register */}
-              <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800 text-xs font-bold">
+              <div className="flex items-center gap-2 p-1 bg-slate-100/90 rounded-xl border border-slate-200 text-xs font-bold">
                 <button
                   type="button"
                   onClick={() => {
@@ -622,8 +622,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                   }}
                   className={`flex-1 py-2 rounded-lg text-center transition-all cursor-pointer ${
                     teacherSubTab === 'login'
-                      ? 'bg-slate-800 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-white text-sky-700 shadow-xs'
+                      : 'text-slate-600 hover:text-sky-700'
                   }`}
                 >
                   Đăng Nhập Giáo Viên / Admin
@@ -636,8 +636,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                   }}
                   className={`flex-1 py-2 rounded-lg text-center transition-all cursor-pointer ${
                     teacherSubTab === 'register'
-                      ? 'bg-slate-800 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-white'
+                      ? 'bg-white text-sky-700 shadow-xs'
+                      : 'text-slate-600 hover:text-sky-700'
                   }`}
                 >
                   Đăng Ký Tài Khoản Mới
@@ -648,7 +648,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
               {teacherSubTab === 'login' && (
                 <form onSubmit={handleTeacherLoginSubmit} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
                       Tên Đăng Nhập / Email Giáo Viên
                     </label>
                     <div className="relative">
@@ -659,13 +659,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                         value={teacherLoginUsername}
                         onChange={(e) => setTeacherLoginUsername(e.target.value)}
                         placeholder="admin hoặc username của giáo viên..."
-                        className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-base font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        className="w-full pl-10 pr-4 py-3 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-base font-bold transition-all placeholder:text-slate-400"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
                       Mật Khẩu
                     </label>
                     <div className="relative">
@@ -676,13 +676,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                         value={teacherLoginPassword}
                         onChange={(e) => setTeacherLoginPassword(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-base font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        className="w-full pl-10 pr-4 py-3 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-base font-bold transition-all placeholder:text-slate-400"
                       />
                     </div>
                   </div>
 
                   {/* Fast Admin Quick-fill Hint */}
-                  <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                  <div className="p-3 bg-sky-50/80 rounded-xl border border-sky-200 text-[11px] text-slate-600 flex items-center justify-between">
                     <span>Tài khoản Quản trị viên mẫu:</span>
                     <button
                       type="button"
@@ -690,7 +690,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                         setTeacherLoginUsername('admin');
                         setTeacherLoginPassword('123456');
                       }}
-                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 font-mono font-bold text-xs cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-sky-100 text-sky-700 border border-sky-200 font-mono font-bold text-xs cursor-pointer shadow-2xs transition-colors"
                     >
                       Điền admin / 123456
                     </button>
@@ -699,7 +699,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                   <button
                     type="submit"
                     disabled={isLoading}
-                    className="w-full py-3.5 bg-gradient-to-r from-indigo-600 via-blue-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white font-black text-base rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="w-full py-3.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-black text-base rounded-xl shadow-lg shadow-sky-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     {isLoading ? (
                       <>
@@ -720,13 +720,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
               {/* TEACHER SUB-TAB 2: REGISTER (TỰ DO ĐẶT USERNAME) */}
               {teacherSubTab === 'register' && (
                 <form onSubmit={handleTeacherRegisterSubmit} className="space-y-3.5">
-                  <div className="p-2.5 bg-amber-950/40 border border-amber-800/60 rounded-xl text-[11px] text-amber-200">
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800">
                     💡 Thầy/Cô có thể <b>tự do đặt Tên đăng nhập</b> theo ý muốn (miễn không trùng với tài khoản đã có trên hệ thống).
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
-                      Họ và Tên Thầy/Cô <span className="text-rose-400">*</span>
+                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                      Họ và Tên Thầy/Cô <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -734,13 +734,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       value={regFullName}
                       onChange={(e) => setRegFullName(e.target.value)}
                       placeholder="VD: Thầy Nguyễn Văn A"
-                      className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                      className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold transition-all placeholder:text-slate-400"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1 flex items-center justify-between">
-                      <span>Tên Đăng Nhập Tự Do <span className="text-rose-400">*</span></span>
+                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
+                      <span>Tên Đăng Nhập Tự Do <span className="text-rose-500">*</span></span>
                       <span className="text-[10px] text-slate-400">Không phân biệt hoa thường</span>
                     </label>
                     <input
@@ -749,13 +749,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       value={regUsername}
                       onChange={(e) => setRegUsername(e.target.value)}
                       placeholder="VD: thaykiet, kietvts, giaovientoan..."
-                      className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                      className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-mono font-bold transition-all placeholder:text-slate-400"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
-                      Mật Khẩu Khởi Tạo <span className="text-rose-400">*</span>
+                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
+                      Mật Khẩu Khởi Tạo <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="password"
@@ -763,13 +763,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       placeholder="Tối thiểu 6 ký tự..."
-                      className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-mono font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                      className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-mono font-bold transition-all placeholder:text-slate-400"
                     />
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                      <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
                         Trường Công Tác
                       </label>
                       <input
@@ -777,12 +777,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                         value={regSchool}
                         onChange={(e) => setRegSchool(e.target.value)}
                         placeholder="VD: THPT Võ Thị Sáu"
-                        className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold transition-all placeholder:text-slate-400"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
+                      <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
                         Môn Giảng Dạy
                       </label>
                       <input
@@ -790,7 +790,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                         value={regSubject}
                         onChange={(e) => setRegSubject(e.target.value)}
                         placeholder="VD: Toán"
-                        className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                        className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold transition-all placeholder:text-slate-400"
                       />
                     </div>
                   </div>
@@ -798,7 +798,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                   <button
                     type="submit"
                     disabled={isLoading}
-                    className="w-full py-3 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white font-black text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="w-full py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-black text-sm rounded-xl shadow-lg shadow-sky-200 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     {isLoading ? (
                       <>
@@ -820,7 +820,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
       </main>
 
       {/* Footer */}
-      <footer className="max-w-6xl mx-auto w-full text-center text-xs text-slate-500 py-3 border-t border-slate-800/60">
+      <footer className="max-w-6xl mx-auto w-full text-center text-xs text-slate-500 py-3 border-t border-sky-200/60">
         EduMath AI • Nền tảng khảo thí chuẩn Bộ GD&ĐT GDPT 2018 • Phát triển bởi Thầy Trịnh Tuấn Kiệt
       </footer>
     </div>
