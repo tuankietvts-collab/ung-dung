@@ -17,6 +17,7 @@ import {
   getDocFromServer,
   collection,
   setDoc,
+  updateDoc,
   deleteDoc,
   onSnapshot,
   query,
@@ -948,7 +949,8 @@ export function subscribeUsersFromFirestore(
 
 
 /**
- * Lắng nghe danh sách giáo viên thời gian thực từ Firestore và LocalStorage
+ * Lắng nghe danh sách giáo viên thời gian thực từ Cloud Firestore (onSnapshot)
+ * Tuyệt đối không lấy localStorage đè làm mất danh sách từ Firestore.
  */
 export function subscribeTeachersFromFirestore(
   onTeachers: (teachers: AppUser[]) => void,
@@ -960,21 +962,36 @@ export function subscribeTeachersFromFirestore(
     (snapshot) => {
       const firestoreList: AppUser[] = [];
       snapshot.forEach((docSnap) => {
-        firestoreList.push(docSnap.data() as AppUser);
+        const data = docSnap.data() as any;
+        const id = docSnap.id;
+        const isAppr = data.status === 'active' || (data.status !== 'pending' && data.isApproved === true);
+        const createdAtStr =
+          typeof data.createdAt === 'number'
+            ? new Date(data.createdAt).toISOString()
+            : data.createdAt || new Date().toISOString();
+
+        const teacherObj: AppUser = {
+          uid: id,
+          role: 'teacher',
+          fullName: data.fullName || data.name || id,
+          username: data.username || id,
+          email: data.email || (data.username?.includes('@') ? data.username : `${data.username || id}@edumath.edu.vn`),
+          school: data.school || data.schoolFullName || 'THPT Võ Thị Sáu',
+          schoolCode: data.schoolCode || encodeSchoolName(data.school || 'THPT Võ Thị Sáu'),
+          subject: data.subject || data.subjectFullName || 'Toán',
+          subjectCode: data.subjectCode || encodeSubjectName(data.subject || 'Toán'),
+          createdAt: createdAtStr,
+          isApproved: isAppr,
+          approvedAt: data.approvedAt,
+          approvedBy: data.approvedBy,
+        };
+        (teacherObj as any).status = data.status || (isAppr ? 'active' : 'pending');
+        firestoreList.push(teacherObj);
       });
-      // Merge with local stored registered teachers
-      const local = getRegisteredTeachers();
-      const map = new Map<string, AppUser>();
-      local.forEach((t) => map.set(t.uid, t));
-      firestoreList.forEach((t) => {
-        if (t.role === 'teacher') {
-          map.set(t.uid, { ...(map.get(t.uid) || {}), ...t });
-        }
-      });
-      const combined = Array.from(map.values()).sort((a, b) =>
-        (b.createdAt || '').localeCompare(a.createdAt || '')
-      );
-      onTeachers(combined);
+
+      // Sắp xếp danh sách mới nhất lên đầu, giữ toàn vẹn dữ liệu từ Firestore
+      firestoreList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      onTeachers(firestoreList);
     },
     (error) => {
       console.warn('Teachers subscription fallback to local storage:', error);
@@ -987,14 +1004,19 @@ export function subscribeTeachersFromFirestore(
 }
 
 export async function approveTeacherUser(teacherUid: string, approve: boolean = true): Promise<void> {
+  const cleanId = teacherUid.trim().toLowerCase().replace(/[\s]/g, '');
+  const status = approve ? 'active' : 'pending';
+  const approvedAt = approve ? new Date().toISOString() : null;
+
   const users = getStoredRegisteredUsers();
   const updated = users.map((u) => {
-    if (u.user.uid === teacherUid || u.user.username.toLowerCase() === teacherUid.toLowerCase()) {
+    if (u.user.uid === teacherUid || u.user.username.toLowerCase() === cleanId) {
       return {
         ...u,
         user: {
           ...u.user,
           isApproved: approve,
+          status,
           approvedAt: approve ? new Date().toISOString() : undefined,
           approvedBy: 'admin',
         },
@@ -1005,11 +1027,40 @@ export async function approveTeacherUser(teacherUid: string, approve: boolean = 
   saveRegisteredUsersListLocally(updated);
 
   try {
-    const userDocRef = doc(db, USERS_COLLECTION, teacherUid);
-    await setDoc(userDocRef, { isApproved: approve, approvedAt: approve ? new Date().toISOString() : null }, { merge: true });
+    // 1. Khi Admin bấm Duyệt, cập nhật updateDoc(doc(db, 'teachers', id), { status: 'active' })
+    const teacherDocRef = doc(db, TEACHERS_COLLECTION, cleanId);
+    await updateDoc(teacherDocRef, {
+      status,
+      isApproved: approve,
+      approvedAt,
+      approvedBy: 'admin',
+    }).catch(async () => {
+      // Fallback nếu document được tạo bằng setDoc trước đó
+      await setDoc(teacherDocRef, {
+        status,
+        isApproved: approve,
+        approvedAt,
+        approvedBy: 'admin',
+      }, { merge: true });
+    });
 
-    const teacherDocRef = doc(db, TEACHERS_COLLECTION, teacherUid);
-    await setDoc(teacherDocRef, { isApproved: approve, approvedAt: approve ? new Date().toISOString() : null }, { merge: true });
+    // Đồng bộ cả bản ghi có tiền tố user_ nếu có
+    if (!cleanId.startsWith('user_')) {
+      const legacyDocRef = doc(db, TEACHERS_COLLECTION, `user_${cleanId}`);
+      await updateDoc(legacyDocRef, {
+        status,
+        isApproved: approve,
+        approvedAt,
+        approvedBy: 'admin',
+      }).catch(() => {});
+    }
+
+    // 2. Cập nhật USERS_COLLECTION để giáo viên đăng nhập tức thì
+    const userDocRef = doc(db, USERS_COLLECTION, `user_${cleanId}`);
+    await setDoc(userDocRef, { isApproved: approve, status, approvedAt, approvedBy: 'admin' }, { merge: true });
+
+    const rawUserRef = doc(db, USERS_COLLECTION, cleanId);
+    await setDoc(rawUserRef, { isApproved: approve, status, approvedAt, approvedBy: 'admin' }, { merge: true });
   } catch (e) {
     console.warn('Teacher approval Firestore sync note:', e);
   }
@@ -1178,8 +1229,39 @@ export async function registerAppUser(params: {
     await setDoc(userDocRef, { ...newUser, passHash: cleanPass, updatedAt: new Date().toISOString() }, { merge: true });
 
     if (params.role === 'teacher') {
-      const teacherDocRef = doc(db, TEACHERS_COLLECTION, userDocId);
-      await setDoc(teacherDocRef, { ...newUser, passHash: cleanPass, updatedAt: new Date().toISOString() }, { merge: true });
+      const cleanTeacherId = cleanUsername.toLowerCase().replace(/[\s]/g, '');
+      const teacherDocRef = doc(db, TEACHERS_COLLECTION, cleanTeacherId);
+      await setDoc(
+        teacherDocRef,
+        {
+          ...newUser,
+          uid: cleanTeacherId,
+          role: 'teacher',
+          status: 'pending',
+          isApproved: false,
+          passHash: cleanPass,
+          createdAt: Date.now(),
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+      // Also save with userDocId for backwards compatibility
+      const legacyDocRef = doc(db, TEACHERS_COLLECTION, userDocId);
+      await setDoc(
+        legacyDocRef,
+        {
+          ...newUser,
+          uid: cleanTeacherId,
+          role: 'teacher',
+          status: 'pending',
+          isApproved: false,
+          passHash: cleanPass,
+          createdAt: Date.now(),
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
     }
   } catch (err) {
     console.warn('Firestore user registration save note:', err);

@@ -658,7 +658,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                         required
                         value={teacherLoginUsername}
                         onChange={(e) => setTeacherLoginUsername(e.target.value)}
-                        placeholder="admin hoặc username của giáo viên..."
+                        placeholder="Nhập tên đăng nhập hoặc email..."
                         className="w-full pl-10 pr-4 py-3 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-base font-bold transition-all placeholder:text-slate-400"
                       />
                     </div>
@@ -679,21 +679,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                         className="w-full pl-10 pr-4 py-3 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-base font-bold transition-all placeholder:text-slate-400"
                       />
                     </div>
-                  </div>
-
-                  {/* Fast Admin Quick-fill Hint */}
-                  <div className="p-3 bg-sky-50/80 rounded-xl border border-sky-200 text-[11px] text-slate-600 flex items-center justify-between">
-                    <span>Tài khoản Quản trị viên mẫu:</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTeacherLoginUsername('admin');
-                        setTeacherLoginPassword('123456');
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-sky-100 text-sky-700 border border-sky-200 font-mono font-bold text-xs cursor-pointer shadow-2xs transition-colors"
-                    >
-                      Điền admin / 123456
-                    </button>
                   </div>
 
                   <button

@@ -48,34 +48,55 @@ export function encodeSchoolName(name: string): string {
   return tokens.map((t) => t[0]).join('').toUpperCase();
 }
 
+export interface GdptSubject {
+  name: string;
+  code: string;
+}
+
+export const GDPT_SUBJECTS: GdptSubject[] = [
+  { name: 'Toán', code: 'TO' },
+  { name: 'Vật lí', code: 'VL' },
+  { name: 'Hóa học', code: 'HH' },
+  { name: 'Sinh học', code: 'SH' },
+  { name: 'Tin học', code: 'TH' },
+  { name: 'Ngữ văn', code: 'NV' },
+  { name: 'Lịch sử', code: 'LS' },
+  { name: 'Địa lí', code: 'DL' },
+  { name: 'Tiếng Anh', code: 'TA' },
+  { name: 'Giáo dục kinh tế và pháp luật', code: 'KTPL' },
+  { name: 'Công nghệ', code: 'CN' },
+  { name: 'Giáo dục công dân', code: 'GDCD' },
+  { name: 'Khoa học tự nhiên', code: 'KHTN' },
+  { name: 'Lịch sử và Địa lí', code: 'LSDL' },
+];
+
 /**
  * Hàm encodeSubjectName(subject):
- * Bỏ dấu tiếng Việt.
- * Nếu chỉ có 1 từ thì lấy 2 chữ cái đầu (VD: "Toán" -> "TO", "Lý" -> "LY").
- * Nếu từ 2 từ trở lên thì lấy chữ cái đầu của mỗi từ (VD: "Vật Lý" -> "VL", "Ngữ Văn" -> "NV", "Tiếng Anh" -> "TA", "Toán Học" -> "TO").
+ * Chuẩn hóa mã môn học theo chuẩn GDPT 2018 (TO, VL, HH, SH, TH, NV, LS, DL, TA, KTPL, CN, GDCD, KHTN, LSDL)
  */
 export function encodeSubjectName(subject: string): string {
   if (!subject || !subject.trim()) return 'TO';
-  const noAccents = removeVietnameseAccents(subject);
-  const rawTokens = noAccents.split(/[\s,._-]+/).filter(Boolean);
+  const cleanSub = removeVietnameseAccents(subject).toLowerCase().replace(/[^a-z0-9]/g, '');
 
+  if (cleanSub.includes('kinhte') || cleanSub.includes('ktpl') || cleanSub.includes('phapluat')) return 'KTPL';
+  if (cleanSub.includes('khoahoctunhien') || cleanSub.includes('khtn')) return 'KHTN';
+  if (cleanSub.includes('lichsuvadiali') || cleanSub.includes('lsdl')) return 'LSDL';
+  if (cleanSub.includes('congdan') || cleanSub.includes('gdcd')) return 'GDCD';
+  if (cleanSub.includes('congnghe')) return 'CN';
+  if (cleanSub.includes('toan')) return 'TO';
+  if (cleanSub.includes('vatli') || cleanSub.includes('vatly')) return 'VL';
+  if (cleanSub.includes('hoahoc') || cleanSub.includes('hoa')) return 'HH';
+  if (cleanSub.includes('sinhhoc') || cleanSub.includes('sinh')) return 'SH';
+  if (cleanSub.includes('tinhoc') || cleanSub.includes('tin')) return 'TH';
+  if (cleanSub.includes('nguvan') || cleanSub.includes('van')) return 'NV';
+  if (cleanSub.includes('lichsu') || cleanSub.includes('su')) return 'LS';
+  if (cleanSub.includes('diali') || cleanSub.includes('dialy') || cleanSub.includes('dia')) return 'DL';
+  if (cleanSub.includes('tienganh') || cleanSub.includes('anh')) return 'TA';
+
+  const rawTokens = removeVietnameseAccents(subject).split(/[\s,._-]+/).filter(Boolean);
   if (rawTokens.length === 0) return 'TO';
-
-  // "Toán Học" -> "TO"
-  if (
-    rawTokens.length >= 2 &&
-    rawTokens[0].toLowerCase() === 'toan' &&
-    rawTokens[1].toLowerCase() === 'hoc'
-  ) {
-    return 'TO';
-  }
-
-  if (rawTokens.length === 1) {
-    const single = rawTokens[0].toUpperCase();
-    return single.slice(0, 2);
-  }
-
-  return rawTokens.map((t) => t[0]).join('').toUpperCase();
+  if (rawTokens.length === 1) return rawTokens[0].toUpperCase().slice(0, 2);
+  return rawTokens.map((t) => t[0]).join('').toUpperCase().slice(0, 4);
 }
 
 /**
