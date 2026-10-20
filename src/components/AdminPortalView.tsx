@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { AppUser, Exam, StudentSubmission, StudentRosterItem, ClassGroup } from '../types/exam';
 import {
+  db,
   getRegisteredTeachers,
   subscribeTeachersFromFirestore,
   approveTeacherUser,
@@ -53,6 +54,8 @@ import {
   getStoredRegisteredUsers,
   saveRegisteredUsersListLocally
 } from '../services/firebase';
+import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { encodeSchoolName, encodeSubjectName } from '../services/schoolEncoder';
 
 interface AdminPortalViewProps {
   currentUser: AppUser;
@@ -138,12 +141,47 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     }
   });
 
-  // Subscribe real-time teachers list
+  // Lấy toàn bộ danh sách giáo viên từ Cloud Firestore theo thời gian thực (onSnapshot)
+  // Tuyệt đối không lấy localStorage đè làm mất danh sách từ Firestore.
   useEffect(() => {
-    setTeachers(getRegisteredTeachers());
-    const unsub = subscribeTeachersFromFirestore((updated) => {
-      setTeachers(updated);
-    });
+    const unsub = onSnapshot(
+      collection(db, 'teachers'),
+      (snapshot) => {
+        const firestoreList: AppUser[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as any;
+          const id = docSnap.id;
+          const isAppr = data.status === 'active' || (data.status !== 'pending' && data.isApproved === true);
+          const createdAtStr =
+            typeof data.createdAt === 'number'
+              ? new Date(data.createdAt).toISOString()
+              : data.createdAt || new Date().toISOString();
+
+          firestoreList.push({
+            uid: id,
+            role: 'teacher',
+            fullName: data.fullName || data.name || id,
+            username: data.username || id,
+            email: data.email || (data.username?.includes('@') ? data.username : `${data.username || id}@edumath.edu.vn`),
+            school: data.school || data.schoolFullName || 'THPT Võ Thị Sáu',
+            schoolCode: data.schoolCode || encodeSchoolName(data.school || 'THPT Võ Thị Sáu'),
+            subject: data.subject || data.subjectFullName || 'Toán',
+            subjectCode: data.subjectCode || encodeSubjectName(data.subject || 'Toán'),
+            createdAt: createdAtStr,
+            isApproved: isAppr,
+            status: data.status || (isAppr ? 'active' : 'pending'),
+            approvedAt: data.approvedAt,
+            approvedBy: data.approvedBy,
+          } as any);
+        });
+
+        firestoreList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setTeachers(firestoreList);
+      },
+      (error) => {
+        console.warn('Real-time teachers snapshot error in AdminPortalView:', error);
+      }
+    );
     return () => unsub();
   }, []);
 
@@ -154,18 +192,29 @@ export const AdminPortalView: React.FC<AdminPortalViewProps> = ({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // Toggle approval
+  // Khi Admin bấm Duyệt, cập nhật updateDoc(doc(db, 'teachers', id), { status: 'active' })
   const handleToggleApproval = async (teacher: AppUser, approve: boolean) => {
     setActionLoadingId(teacher.uid);
     try {
-      await approveTeacherUser(teacher.uid, approve);
-      setTeachers((prev) =>
-        prev.map((t) =>
-          t.uid === teacher.uid
-            ? { ...t, isApproved: approve, approvedAt: approve ? new Date().toISOString() : undefined, approvedBy: 'admin' }
-            : t
-        )
-      );
+      const cleanId = teacher.uid.trim().toLowerCase().replace(/[\s]/g, '');
+      const newStatus = approve ? 'active' : 'pending';
+
+      await updateDoc(doc(db, 'teachers', cleanId), {
+        status: newStatus,
+        isApproved: approve,
+        approvedAt: approve ? new Date().toISOString() : null,
+        approvedBy: 'admin',
+      }).catch(async () => {
+        await updateDoc(doc(db, 'teachers', teacher.uid), {
+          status: newStatus,
+          isApproved: approve,
+          approvedAt: approve ? new Date().toISOString() : null,
+          approvedBy: 'admin',
+        });
+      });
+
+      await approveTeacherUser(teacher.uid, approve).catch(() => {});
+
       showToast(
         approve
           ? `Đã phê duyệt tài khoản giáo viên "${teacher.fullName}". Giáo viên có thể đăng nhập ngay!`

@@ -27,7 +27,9 @@ import {
   loginStudentWithClassContext,
   getStoredClasses,
   subscribeClassGroupsFromFirestore,
+  db,
 } from '../services/firebase';
+import { doc, setDoc } from 'firebase/firestore';
 import {
   encodeSchoolName,
   encodeSubjectName,
@@ -35,6 +37,25 @@ import {
   generateClassId,
   generateStudentDocId,
 } from '../services/schoolEncoder';
+
+export const SUBJECTS: { name: string; code: string }[] = [
+  { name: 'Toán', code: 'TO' },
+  { name: 'Vật lí', code: 'VL' },
+  { name: 'Hóa học', code: 'HH' },
+  { name: 'Sinh học', code: 'SH' },
+  { name: 'Tin học', code: 'TH' },
+  { name: 'Ngữ văn', code: 'NV' },
+  { name: 'Lịch sử', code: 'LS' },
+  { name: 'Địa lí', code: 'DL' },
+  { name: 'Tiếng Anh', code: 'TA' },
+  { name: 'Giáo dục kinh tế và pháp luật', code: 'KTPL' },
+  { name: 'Công nghệ', code: 'CN' },
+  { name: 'Giáo dục công dân', code: 'GDCD' },
+  { name: 'Khoa học tự nhiên', code: 'KHTN' },
+  { name: 'Lịch sử và Địa lí', code: 'LSDL' },
+];
+
+export const GRADES = ['6', '7', '8', '9', '10', '11', '12'];
 
 interface AuthPortalProps {
   onAuthSuccess: (user: AppUser) => void;
@@ -71,6 +92,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
   const [studentSchool, setStudentSchool] = useState<string>('THPT Võ Thị Sáu');
   const [studentYear, setStudentYear] = useState<string>('2026-2027');
   const [studentSubject, setStudentSubject] = useState<string>('Toán');
+  const [studentGrade, setStudentGrade] = useState<string>('12');
   const [studentClass, setStudentClass] = useState<string>('12A8');
   const [studentAccount, setStudentAccount] = useState<string>('');
   const [studentPassword, setStudentPassword] = useState<string>('123456');
@@ -85,6 +107,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
         if (saved.school) setStudentSchool(saved.school);
         if (saved.year) setStudentYear(saved.year);
         if (saved.subject) setStudentSubject(saved.subject);
+        if (saved.grade) setStudentGrade(saved.grade);
         if (saved.className) setStudentClass(saved.className);
       }
     } catch {}
@@ -95,12 +118,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
     school: string,
     year: string,
     subject: string,
+    grade: string,
     className: string
   ) => {
     try {
       localStorage.setItem(
         STUDENT_LOGIN_PREFS_KEY,
-        JSON.stringify({ school, year, subject, className })
+        JSON.stringify({ school, year, subject, grade, className })
       );
     } catch {}
   };
@@ -125,40 +149,31 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
     return Array.from(set);
   }, [classesList]);
 
+  // Cập nhật mảng SUBJECTS đủ các môn chuẩn GDPT 2018
   const uniqueSubjects = useMemo(() => {
-    const set = new Set<string>();
-    set.add('Toán');
-    set.add('Vật Lý');
-    set.add('Hóa Học');
-    set.add('Sinh Học');
-    set.add('Ngữ Văn');
-    set.add('Tiếng Anh');
-    set.add('Giáo dục kinh tế và pháp luật');
-    classesList.forEach((c) => {
-      if (c.subjectFullName?.trim()) set.add(c.subjectFullName.trim());
-    });
-    return Array.from(set);
-  }, [classesList]);
+    return SUBJECTS;
+  }, []);
 
+  // Khi chọn Khối grade (6-12), tự động sinh danh sách ô CHỌN LỚP từ ${grade}A1 đến ${grade}A12
   const availableClassNames = useMemo(() => {
-    const matching = classesList
-      .filter((c) => {
-        const matchSchool =
-          !c.schoolFullName ||
-          c.schoolFullName.toLowerCase() === studentSchool.toLowerCase();
-        const matchYear =
-          !c.schoolYear ||
-          c.schoolYear.toLowerCase() === studentYear.toLowerCase();
-        const matchSubject =
-          !c.subjectFullName ||
-          c.subjectFullName.toLowerCase() === studentSubject.toLowerCase();
-        return matchSchool || matchYear || matchSubject;
-      })
-      .map((c) => c.name);
+    const generated = Array.from({ length: 12 }, (_, i) => `${studentGrade}A${i + 1}`);
+    const customClasses = classesList
+      .map((c) => c.name.trim().toUpperCase().replace(/^LỚP\s+/i, ''))
+      .filter((name) => name.startsWith(studentGrade));
+    const all = Array.from(new Set([...generated, ...customClasses]));
+    return all.sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ''), 10) || 0;
+      const numB = parseInt(b.replace(/\D/g, ''), 10) || 0;
+      return numA - numB || a.localeCompare(b);
+    });
+  }, [studentGrade, classesList]);
 
-    const all = Array.from(new Set([...matching, '12A8', '11A1', '10A1']));
-    return all.sort();
-  }, [classesList, studentSchool, studentYear, studentSubject]);
+  const handleGradeChange = (newGrade: string) => {
+    setStudentGrade(newGrade);
+    const newClass = `${newGrade}A1`;
+    setStudentClass(newClass);
+    saveStudentPrefs(studentSchool, studentYear, studentSubject, newGrade, newClass);
+  };
 
   // Compute live underlying codes and preview Document ID
   const activeSchoolCode = encodeSchoolName(studentSchool);
@@ -168,10 +183,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
   const previewTargetDocId = useMemo(() => {
     const numMatch = studentAccount.trim().match(/(\d{1,2})$/);
     const stt2 = numMatch ? String(numMatch[1]).padStart(2, '0') : '01';
-    const clsClean = (studentClass || '12A8').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+    const clsClean = (studentClass || `${studentGrade}A1`).trim().toUpperCase().replace(/^LỚP\s+/i, '');
     const classId = generateClassId(studentSchool, studentSubject, studentYear, clsClean);
     return generateStudentDocId(classId, parseInt(stt2, 10));
-  }, [studentSchool, studentSubject, studentYear, studentClass, studentAccount]);
+  }, [studentSchool, studentSubject, studentYear, studentClass, studentGrade, studentAccount]);
 
   // ==========================================
   // TAB 2: TEACHER LOGIN & REGISTER STATE
@@ -204,7 +219,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
 
     setIsLoading(true);
     try {
-      saveStudentPrefs(studentSchool, studentYear, studentSubject, studentClass);
+      saveStudentPrefs(studentSchool, studentYear, studentSubject, studentGrade, studentClass);
 
       const studentUser = await loginStudentWithClassContext({
         schoolCode: activeSchoolCode,
@@ -223,7 +238,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
       console.error('Student login error:', err);
       setErrorMessage(
         err?.message ||
-          'Đăng nhập không thành công. Vui lòng kiểm tra lại Trường, Môn, Lớp và Số thứ tự học sinh.'
+          'Đăng nhập không thành công. Vui lòng kiểm tra lại Trường, Môn, Khối, Lớp và Số thứ tự học sinh.'
       );
     } finally {
       setIsLoading(false);
@@ -258,38 +273,76 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
     }
   };
 
-  // Handle Teacher Register
+  // Handle Teacher Register (Bắt buộc dùng setDoc trên collection 'teachers' theo cleanUsername)
   const handleTeacherRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    if (!regFullName.trim() || !regUsername.trim() || !regPassword.trim()) {
+    const cleanName = regFullName.trim();
+    const rawUsername = regUsername.trim();
+    const cleanUsername = rawUsername.toLowerCase().replace(/\s+/g, '');
+    const cleanPassword = regPassword.trim();
+    const cleanSchool = regSchool.trim() || 'THPT Võ Thị Sáu';
+    const cleanSubject = regSubject.trim() || 'Toán';
+
+    if (!cleanName || !rawUsername || !cleanPassword) {
       setErrorMessage('Vui lòng điền đầy đủ Họ và tên, Tên đăng nhập và Mật khẩu.');
       return;
     }
 
-    if (regPassword.length < 6) {
+    if (cleanPassword.length < 6) {
       setErrorMessage('Mật khẩu phải có tối thiểu 6 ký tự.');
       return;
     }
 
     setIsLoading(true);
     try {
+      const teacherData = {
+        uid: cleanUsername,
+        role: 'teacher',
+        status: 'pending',
+        fullName: cleanName,
+        username: rawUsername,
+        cleanUsername,
+        email: rawUsername.includes('@') ? rawUsername : `${cleanUsername}@edumath.edu.vn`,
+        school: cleanSchool,
+        schoolCode: encodeSchoolName(cleanSchool),
+        subject: cleanSubject,
+        subjectCode: encodeSubjectName(cleanSubject),
+        isApproved: false,
+        passHash: cleanPassword,
+        createdAt: Date.now(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Bắt buộc dùng setDoc(doc(db, 'teachers', cleanUsername), { ...teacherData, role: 'teacher', status: 'pending', createdAt: Date.now() }, { merge: true })
+      await setDoc(
+        doc(db, 'teachers', cleanUsername),
+        {
+          ...teacherData,
+          role: 'teacher',
+          status: 'pending',
+          createdAt: Date.now(),
+        },
+        { merge: true }
+      );
+
+      // Đăng ký bổ sung qua AppUser service để lưu đồng bộ vào USERS_COLLECTION và local storage
       const user = await registerAppUser({
         role: 'teacher',
-        fullName: regFullName.trim(),
-        username: regUsername.trim(),
-        password: regPassword.trim(),
-        school: regSchool.trim(),
-        subject: regSubject.trim(),
+        fullName: cleanName,
+        username: rawUsername,
+        password: cleanPassword,
+        school: cleanSchool,
+        subject: cleanSubject,
       });
 
       if (!user.isApproved) {
         setTeacherSubTab('login');
         setTeacherLoginUsername(user.username);
         setSuccessMessage(
-          `Đăng ký tài khoản Giáo viên "${user.username}" thành công! Tài khoản của Thầy/Cô đang chờ Quản trị viên (Admin) phê duyệt trước khi có thể đăng nhập.`
+          `Đăng ký tài khoản Giáo viên "${user.username}" thành công! Tài khoản của Thầy/Cô đang chờ Quản trị viên (Admin) phê duyệt trên hệ thống trước khi có thể đăng nhập.`
         );
         return;
       }
@@ -423,7 +476,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                 </span>
               </div>
 
-              {/* 4 DROPDOWNS: Trường, Năm học, Môn học, Lớp */}
+              {/* 5 DROPDOWNS: Trường, Năm học, Môn học, Khối, Lớp */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-slate-50/80 rounded-2xl border border-slate-200">
                 {/* 1. Chọn Trường */}
                 <div>
@@ -439,7 +492,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                     value={studentSchool}
                     onChange={(e) => {
                       setStudentSchool(e.target.value);
-                      saveStudentPrefs(e.target.value, studentYear, studentSubject, studentClass);
+                      saveStudentPrefs(e.target.value, studentYear, studentSubject, studentGrade, studentClass);
                     }}
                     className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer transition-all"
                   >
@@ -465,7 +518,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                     value={studentYear}
                     onChange={(e) => {
                       setStudentYear(e.target.value);
-                      saveStudentPrefs(studentSchool, e.target.value, studentSubject, studentClass);
+                      saveStudentPrefs(studentSchool, e.target.value, studentSubject, studentGrade, studentClass);
                     }}
                     className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer font-mono transition-all"
                   >
@@ -477,37 +530,60 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                   </select>
                 </div>
 
-                {/* 3. Chọn Môn Học */}
-                <div>
+                {/* 3. Chọn Môn Học (Chuẩn GDPT 2018) */}
+                <div className="sm:col-span-2">
                   <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
-                      <BookOpen className="w-3.5 h-3.5 text-sky-600" /> Môn Học
+                      <BookOpen className="w-3.5 h-3.5 text-sky-600" /> Môn Học Chuẩn GDPT 2018
                     </span>
                     <span className="text-[10px] font-mono text-sky-600 font-semibold">
-                      MÃ: {activeSubjectCode}
+                      MÃ MÔN: {activeSubjectCode}
                     </span>
                   </label>
                   <select
                     value={studentSubject}
                     onChange={(e) => {
                       setStudentSubject(e.target.value);
-                      saveStudentPrefs(studentSchool, studentYear, e.target.value, studentClass);
+                      saveStudentPrefs(studentSchool, studentYear, e.target.value, studentGrade, studentClass);
                     }}
                     className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer transition-all"
                   >
                     {uniqueSubjects.map((sub) => (
-                      <option key={sub} value={sub}>
-                        {sub}
+                      <option key={sub.code} value={sub.name}>
+                        {sub.name} ({sub.code})
                       </option>
                     ))}
                   </select>
                 </div>
 
-                {/* 4. Chọn Lớp */}
+                {/* 4. CHỌN KHỐI (Từ Khối 6 đến Khối 12) */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-sky-600" /> Chọn Lớp
+                      <Layers className="w-3.5 h-3.5 text-sky-600" /> Chọn Khối
+                    </span>
+                    <span className="text-[10px] font-mono text-sky-600 font-semibold">
+                      KHỐI {studentGrade}
+                    </span>
+                  </label>
+                  <select
+                    value={studentGrade}
+                    onChange={(e) => handleGradeChange(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer transition-all"
+                  >
+                    {GRADES.map((g) => (
+                      <option key={g} value={g}>
+                        Khối {g} (Lớp {g}A1 - {g}A12)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 5. CHỌN LỚP (Tự động sinh từ ${grade}A1 đến ${grade}A12) */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <GraduationCap className="w-3.5 h-3.5 text-sky-600" /> Chọn Lớp
                     </span>
                     <span className="text-[10px] font-mono text-sky-600 font-semibold">
                       {studentClass}
@@ -517,7 +593,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                     value={studentClass}
                     onChange={(e) => {
                       setStudentClass(e.target.value);
-                      saveStudentPrefs(studentSchool, studentYear, studentSubject, e.target.value);
+                      saveStudentPrefs(studentSchool, studentYear, studentSubject, studentGrade, e.target.value);
                     }}
                     className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold cursor-pointer uppercase transition-all"
                   >
@@ -770,13 +846,17 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess }) => {
                       <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1">
                         Môn Giảng Dạy
                       </label>
-                      <input
-                        type="text"
+                      <select
                         value={regSubject}
                         onChange={(e) => setRegSubject(e.target.value)}
-                        placeholder="VD: Toán"
-                        className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold transition-all placeholder:text-slate-400"
-                      />
+                        className="w-full px-3 py-2.5 bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                      >
+                        {SUBJECTS.map((sub) => (
+                          <option key={sub.code} value={sub.name}>
+                            {sub.name} ({sub.code})
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 

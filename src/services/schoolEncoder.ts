@@ -70,6 +70,8 @@ export const GDPT_SUBJECTS: GdptSubject[] = [
   { name: 'Lịch sử và Địa lí', code: 'LSDL' },
 ];
 
+export const SUBJECTS = GDPT_SUBJECTS;
+
 /**
  * Hàm encodeSubjectName(subject):
  * Chuẩn hóa mã môn học theo chuẩn GDPT 2018 (TO, VL, HH, SH, TH, NV, LS, DL, TA, KTPL, CN, GDCD, KHTN, LSDL)
