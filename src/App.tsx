@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   GraduationCap,
   Sparkles,
@@ -148,6 +148,34 @@ export default function App() {
   const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
   const [studentRoster, setStudentRoster] = useState<StudentRosterItem[]>([]);
   const [classes, setClasses] = useState<ClassGroup[]>(() => getStoredClasses());
+  const [confirmDeleteClassObj, setConfirmDeleteClassObj] = useState<ClassGroup | null>(null);
+
+  // Danh sách lớp hiển thị: Giáo viên tạo lớp nào thì hiển thị lớp đó (Không ép hiển thị lớp mẫu)
+  const displayedClasses = useMemo(() => {
+    if (!currentUser || currentUser.role === 'admin') {
+      return classes;
+    }
+    if (currentUser.role === 'teacher') {
+      const myId = (currentUser.uid || '').toLowerCase().trim();
+      const myUser = (currentUser.username || '').toLowerCase().trim();
+      const myClean = myUser.replace(/[\s_]/g, '');
+      const myName = (currentUser.fullName || '').toLowerCase().trim();
+
+      return classes.filter((c) => {
+        const tId = (c.teacherId || '').toLowerCase().trim();
+        if (!tId) return false; // Không hiển thị lớp mẫu / lớp không thuộc giáo viên
+        return (
+          tId === myId ||
+          tId === myUser ||
+          tId === myClean ||
+          (myUser && tId.includes(myUser)) ||
+          (myId && tId.includes(myId)) ||
+          (myName && tId.includes(myName))
+        );
+      });
+    }
+    return classes;
+  }, [classes, currentUser]);
 
   // Modals
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -400,18 +428,46 @@ export default function App() {
 
   // Class Management Handlers
   const handleSaveClass = async (cl: ClassGroup) => {
-    await saveClassGroupToFirestore(cl);
+    const teacherIdentifier = currentUser?.uid || currentUser?.username || 'teacher';
+    const classToSave: ClassGroup = {
+      ...cl,
+      teacherId: cl.teacherId || teacherIdentifier,
+    };
+    await saveClassGroupToFirestore(classToSave, teacherIdentifier);
     setClasses((prev) => {
-      const exists = prev.some((c) => c.id === cl.id);
-      return exists ? prev.map((c) => (c.id === cl.id ? cl : c)) : [cl, ...prev];
+      const exists = prev.some((c) => c.id === classToSave.id || c.name.toUpperCase() === classToSave.name.toUpperCase());
+      return exists
+        ? prev.map((c) => (c.id === classToSave.id || c.name.toUpperCase() === classToSave.name.toUpperCase() ? classToSave : c))
+        : [classToSave, ...prev];
     });
     showToast(`Đã lưu thông tin lớp [${cl.name}] thành công!`);
   };
 
   const handleDeleteClass = async (classId: string) => {
+    const targetClass = classes.find((c) => c.id === classId || c.name === classId);
+    const classNameClean = targetClass ? targetClass.name.trim().toUpperCase() : classId.trim().toUpperCase();
+
     await deleteClassGroupFromFirestore(classId);
-    setClasses((prev) => prev.filter((c) => c.id !== classId));
-    showToast('Đã xóa lớp học thành công.');
+    if (targetClass?.id) {
+      await deleteClassGroupFromFirestore(targetClass.id);
+    }
+
+    setClasses((prev) => prev.filter((c) => c.id !== classId && c.name.toUpperCase() !== classNameClean));
+
+    // Xóa học sinh thuộc lớp này khỏi roster
+    const studentsInClass = studentRoster.filter(
+      (s) => (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === classNameClean.replace(/^LỚP\s+/i, '')
+    );
+    for (const st of studentsInClass) {
+      deleteStudentFromFirestore(st.id).catch(() => {});
+    }
+    setStudentRoster((prev) =>
+      prev.filter(
+        (s) => (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') !== classNameClean.replace(/^LỚP\s+/i, '')
+      )
+    );
+
+    showToast(`Đã xóa vĩnh viễn lớp [${targetClass?.name || classId}] thành công!`, 'success');
   };
 
   const handleSaveRoster = async (incomingStudents: StudentRosterItem[]) => {
@@ -1103,7 +1159,7 @@ export default function App() {
                     }`}
                   >
                     <Building2 className="w-4 h-4" />
-                    <span>Lớp Học & Khảo Thí ({classes.length} lớp)</span>
+                    <span>Lớp Học & Khảo Thí ({displayedClasses.length} lớp)</span>
                   </button>
 
                   <button
@@ -1167,7 +1223,7 @@ export default function App() {
                               Phân Hệ Quản Lý Lớp Học & Khảo Thí
                             </span>
                             <span className="text-xs text-slate-500 font-mono font-bold">
-                              {classes.length} Lớp • {studentRoster.filter((s) => !isInvalidStudentName(s.fullName)).length} Học Sinh
+                              {displayedClasses.length} Lớp • {studentRoster.filter((s) => !isInvalidStudentName(s.fullName) && displayedClasses.some((c) => c.name.toUpperCase() === (s.className || '').toUpperCase().replace(/^LỚP\s+/i, ''))).length} Học Sinh
                             </span>
                           </div>
                           <h2 className="text-xl font-black text-slate-900 mt-1">
@@ -1194,7 +1250,7 @@ export default function App() {
                       </div>
 
                       {/* LƯỚI THẺ CÁC LỚP HỌC (HIỂN THỊ CHUẨN SĨ SỐ THỰC TẾ, KHÔNG CÒN 0 HỌC SINH) */}
-                      {classes.length === 0 ? (
+                      {displayedClasses.length === 0 ? (
                         <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3">
                           <Building2 className="w-12 h-12 text-slate-300 mx-auto" />
                           <h4 className="font-black text-base text-slate-700">Chưa có lớp học nào</h4>
@@ -1215,7 +1271,7 @@ export default function App() {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                          {classes.map((cl) => {
+                          {displayedClasses.map((cl) => {
                             const normCls = cl.name.trim().toUpperCase().replace(/^LỚP\s+/i, '');
                             // Đếm số lượng học sinh thực tế từ studentRoster chuẩn xác
                             const classStudents = studentRoster.filter(
@@ -1236,12 +1292,16 @@ export default function App() {
                               classSubs.map((s) => s.examId || s.examCode).filter(Boolean)
                             );
 
-                            // Điểm trung bình của lớp
+                            // Điểm trung bình của lớp (bảo vệ tuyệt đối chống NaN)
+                            const validScores = classSubs
+                              .map((s) => Number(s.totalScore))
+                              .filter((n) => typeof n === 'number' && !isNaN(n) && isFinite(n));
+
                             const avgScore =
-                              classSubs.length > 0
+                              validScores.length > 0
                                 ? (
-                                    classSubs.reduce((acc, cur) => acc + cur.totalScore, 0) /
-                                    classSubs.length
+                                    validScores.reduce((acc, cur) => acc + cur, 0) /
+                                    validScores.length
                                   ).toFixed(2)
                                 : null;
 
@@ -1261,13 +1321,13 @@ export default function App() {
                                         Lớp {cl.name}
                                       </h3>
                                       <div className="text-xs text-slate-500 font-semibold mt-0.5">
-                                        Khối {cl.grade} • Năm học {cl.schoolYear || '2024 - 2025'}
+                                        Khối {cl.grade} • Năm học {cl.schoolYear || '2026 - 2027'}
                                       </div>
                                     </div>
                                   </div>
 
-                                  {/* Sĩ số Badge */}
-                                  <div>
+                                  {/* Sĩ số Badge & NÚT XÓA LỚP */}
+                                  <div className="flex items-center gap-2">
                                     {realCount > 0 ? (
                                       <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
                                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
@@ -1279,6 +1339,19 @@ export default function App() {
                                         <span>0 học sinh</span>
                                       </span>
                                     )}
+
+                                    {/* Nút Xóa Lớp (Giải quyết yêu cầu Ảnh 2) */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setConfirmDeleteClassObj(cl);
+                                      }}
+                                      className="p-1.5 text-rose-500 hover:text-white hover:bg-rose-600 rounded-xl border border-rose-200 transition-all cursor-pointer shadow-2xs"
+                                      title={`Xóa Lớp ${cl.name}`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
                                   </div>
                                 </div>
 
@@ -1810,7 +1883,7 @@ export default function App() {
                   exams={savedExams}
                   submissions={submissions}
                   className={currentExam?.className || submissions[0]?.studentClass || (studentRoster[0]?.className) || 'Toàn Khối'}
-                  classes={classes}
+                  classes={displayedClasses}
                   roster={studentRoster}
                   variants={variantPackage?.variants || []}
                   answerMatrix={variantPackage?.answerMatrix || []}
@@ -2089,11 +2162,73 @@ export default function App() {
         </div>
       )}
 
+      {/* MODAL XÁC NHẬN XÓA LỚP HỌC (GIẢI QUYẾT YÊU CẦU ẢNH 2) */}
+      {confirmDeleteClassObj && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-6 bg-gradient-to-r from-rose-50 to-orange-50 border-b border-rose-100 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-rose-600/20">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-rose-950">
+                  Xác Nhận Xóa Lớp Học
+                </h3>
+                <p className="text-xs text-rose-700 mt-0.5">
+                  Lớp: <span className="font-extrabold uppercase">Lớp {confirmDeleteClassObj.name}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-700 leading-relaxed">
+                Thầy/Cô có chắc chắn muốn xóa <b>Lớp {confirmDeleteClassObj.name}</b> ({confirmDeleteClassObj.schoolFullName || 'Trường THPT Võ Thị Sáu'}) không?
+              </p>
+              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-900 space-y-2">
+                <div className="font-bold flex items-center gap-1.5 text-rose-900">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Hệ quả sau khi xóa:</span>
+                </div>
+                <ul className="list-disc list-inside text-rose-800 space-y-1 pl-1">
+                  <li>Lớp sẽ bị xóa vĩnh viễn khỏi danh sách của giáo viên và Cloud Firestore.</li>
+                  <li>Danh sách học sinh và các liên kết nộp bài của lớp này sẽ được dọn dẹp.</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteClassObj(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer transition-colors"
+              >
+                Giữ Lại / Không Xóa
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const targetId = confirmDeleteClassObj.id || confirmDeleteClassObj.name;
+                  await handleDeleteClass(targetId);
+                  setConfirmDeleteClassObj(null);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs flex items-center gap-2 shadow-md shadow-rose-600/20 cursor-pointer transition-all"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Xác Nhận Xóa Lớp Này</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Quản lý lớp học & Học sinh Modal */}
       <ClassManagementModal
         isOpen={isClassModalOpen}
         onClose={() => setIsClassModalOpen(false)}
-        classes={classes}
+        classes={displayedClasses}
         roster={studentRoster}
         currentExam={currentExam}
         savedExams={savedExams}
@@ -2104,6 +2239,7 @@ export default function App() {
         onSaveRoster={handleSaveRoster}
         onDeleteStudent={handleDeleteStudent}
         showToast={showToast}
+        teacherId={currentUser?.uid || currentUser?.username || ''}
       />
 
       {/* Chấm Tự Luận AI Modal */}
@@ -2124,7 +2260,7 @@ export default function App() {
         isOpen={isAssignModalOpen}
         onClose={() => setIsAssignModalOpen(false)}
         exam={currentExam}
-        classes={classes}
+        classes={displayedClasses}
         roster={studentRoster}
         onAssignExam={handleAssignExam}
         showToast={showToast}

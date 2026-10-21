@@ -59,6 +59,7 @@ interface ClassManagementModalProps {
   onSaveRoster: (students: StudentRosterItem[]) => Promise<void>;
   onDeleteStudent: (studentId: string) => Promise<void>;
   showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  teacherId?: string;
 }
 
 export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
@@ -75,6 +76,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
   onSaveRoster,
   onDeleteStudent,
   showToast,
+  teacherId,
 }) => {
   const [activeTab, setActiveTab] = useState<'classes' | 'students' | 'quick_paste' | 'accounts' | 'assign_exam'>('classes');
   
@@ -186,6 +188,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
         subjectFullName,
         subjectCode,
         yearCode,
+        teacherId: teacherId || undefined,
         createdAt: new Date().toISOString(),
       };
       await onSaveClass(newClass);

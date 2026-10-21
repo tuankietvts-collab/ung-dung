@@ -232,13 +232,62 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   // Helper to normalize class names for comparison
   const normalizeCls = (c?: string) => (c || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
 
-  // Available classes in this exam's submissions + teacher's classes + roster
+  // Available classes in this exam's submissions + assigned classes
   const classesList = useMemo(() => {
-    const fromSubs = examSubmissions.map((s) => s.studentClass?.trim()).filter(Boolean);
-    const fromTeacher = classes.map((c) => c.name?.trim()).filter(Boolean);
-    const fromRoster = roster ? roster.map((r) => r.className?.trim()).filter(Boolean) : [];
-    return Array.from(new Set([...fromTeacher, ...fromSubs, ...fromRoster])).sort();
-  }, [examSubmissions, classes, roster]);
+    // 1. Classes with submissions for this exam
+    const fromSubs = Array.from(
+      new Set(
+        examSubmissions
+          .map((s) => (s.studentClass || '').trim())
+          .filter(Boolean)
+      )
+    );
+
+    // 2. If "Tất cả bài kiểm tra" is chosen, show classes having submissions or matching teacher
+    if (selectedSessionKey === 'all') {
+      const fromAllSubs = submissions.map((s) => (s.studentClass || '').trim()).filter(Boolean);
+      const fromTeacher = classes.map((c) => (c.name || '').trim()).filter(Boolean);
+      return Array.from(new Set([...fromAllSubs, ...fromTeacher])).sort();
+    }
+
+    // 3. For a specific exam:
+    // If the exam has submissions, ONLY show classes that have submissions for this exam!
+    if (fromSubs.length > 0) {
+      return fromSubs.sort();
+    }
+
+    // 4. If no submissions yet for this exam, check assigned classes or same grade classes
+    const assignedClasses: string[] = [];
+    if (activeSelectedExam) {
+      const examTargets = activeSelectedExam.assignedClassNames || (activeSelectedExam as any).targetClasses;
+      if (Array.isArray(examTargets)) {
+        assignedClasses.push(...examTargets.map((c: string) => String(c).trim()).filter(Boolean));
+      }
+      if (activeSelectedExam.className && !activeSelectedExam.className.includes('Toán')) {
+        assignedClasses.push(activeSelectedExam.className.trim());
+      }
+    }
+    const validAssigned = Array.from(new Set(assignedClasses)).filter(Boolean);
+    if (validAssigned.length > 0) {
+      return validAssigned.sort();
+    }
+
+    const examGrade = activeSelectedExam?.grade || activeSession?.grade;
+    if (examGrade && classes.length > 0) {
+      const sameGradeClasses = classes
+        .filter((c) => {
+          const cGrade = c.grade || (c.name.match(/^(\d+)/) ? c.name.match(/^(\d+)/)![1] : '');
+          return cGrade === examGrade;
+        })
+        .map((c) => c.name.trim())
+        .filter(Boolean);
+      if (sameGradeClasses.length > 0) {
+        return sameGradeClasses.sort();
+      }
+    }
+
+    return classes.map((c) => c.name.trim()).filter(Boolean).sort();
+  }, [examSubmissions, activeSelectedExam, activeSession, selectedSessionKey, submissions, classes]);
 
   // 1. Target Submissions for current class filter within this exam (merged with student roster)
   const currentClassSubmissions = useMemo(() => {
@@ -355,30 +404,28 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   const gradedSubs = currentClassSubmissions.filter((s) => !s.isPendingSubmission);
   const totalCount = currentClassSubmissions.length;
   const gradedCount = gradedSubs.length;
+
+  const validScores = gradedSubs
+    .map((s) => Number(s.totalScore))
+    .filter((n) => typeof n === 'number' && !isNaN(n) && isFinite(n));
+
   const avgScore =
-    gradedCount > 0
-      ? (
-          gradedSubs.reduce((acc, cur) => acc + cur.totalScore, 0) /
-          gradedCount
-        ).toFixed(2)
+    validScores.length > 0
+      ? (validScores.reduce((acc, cur) => acc + cur, 0) / validScores.length).toFixed(2)
       : '0.00';
   const highestScore =
-    gradedCount > 0
-      ? Math.max(...gradedSubs.map((s) => s.totalScore)).toFixed(2)
-      : '0.00';
+    validScores.length > 0 ? Math.max(...validScores).toFixed(2) : '0.00';
   const lowestScore =
-    gradedCount > 0
-      ? Math.min(...gradedSubs.map((s) => s.totalScore)).toFixed(2)
-      : '0.00';
+    validScores.length > 0 ? Math.min(...validScores).toFixed(2) : '0.00';
 
-  const countGioi = gradedSubs.filter((s) => s.totalScore >= 8.0).length;
+  const countGioi = gradedSubs.filter((s) => (Number(s.totalScore) || 0) >= 8.0).length;
   const countKha = gradedSubs.filter(
-    (s) => s.totalScore >= 6.5 && s.totalScore < 8.0
+    (s) => (Number(s.totalScore) || 0) >= 6.5 && (Number(s.totalScore) || 0) < 8.0
   ).length;
   const countTB = gradedSubs.filter(
-    (s) => s.totalScore >= 5.0 && s.totalScore < 6.5
+    (s) => (Number(s.totalScore) || 0) >= 5.0 && (Number(s.totalScore) || 0) < 6.5
   ).length;
-  const countYeu = gradedSubs.filter((s) => s.totalScore < 5.0).length;
+  const countYeu = gradedSubs.filter((s) => (Number(s.totalScore) || 0) < 5.0).length;
   const countAppeals = gradedSubs.filter(
     (s) => s.appeals && s.appeals.length > 0
   ).length;
@@ -389,27 +436,35 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   ).length;
 
   // 3. Detailed Statistics Breakdown by Class for this specific exam
+  // Mỗi lớp thống kê riêng và theo từng bài kiểm tra: chỉ thống kê các lớp thuộc bài kiểm tra này
   const classBreakdownStats = useMemo(() => {
-    const fromSubs = examSubmissions
-      .map((s) => s.studentClass?.trim() || 'Chưa phân lớp')
-      .filter(Boolean);
-    const fromTeacher = classes.map((c) => c.name?.trim()).filter(Boolean);
-    const classNames = Array.from(new Set([...fromTeacher, ...fromSubs])).sort();
-
-    return classNames.map((cName) => {
+    const relevantClasses = classesList.filter((cName) => {
       const classSubs = examSubmissions.filter(
-        (s) => (s.studentClass?.trim() || 'Chưa phân lớp') === cName
+        (s) => normalizeCls(s.studentClass) === normalizeCls(cName)
+      );
+      if (examSubmissions.length > 0) {
+        return classSubs.length > 0;
+      }
+      return true;
+    });
+
+    return relevantClasses.map((cName) => {
+      const classSubs = examSubmissions.filter(
+        (s) => normalizeCls(s.studentClass) === normalizeCls(cName)
       );
       const count = classSubs.length;
-      const scores = classSubs.map((s) => s.totalScore);
-      const avg = count > 0 ? scores.reduce((acc, v) => acc + v, 0) / count : 0;
-      const max = count > 0 ? Math.max(...scores) : 0;
-      const min = count > 0 ? Math.min(...scores) : 0;
+      const validClassScores = classSubs
+        .map((s) => Number(s.totalScore))
+        .filter((n) => typeof n === 'number' && !isNaN(n) && isFinite(n));
 
-      const cGioi = classSubs.filter((s) => s.totalScore >= 8.0).length;
-      const cKha = classSubs.filter((s) => s.totalScore >= 6.5 && s.totalScore < 8.0).length;
-      const cTB = classSubs.filter((s) => s.totalScore >= 5.0 && s.totalScore < 6.5).length;
-      const cYeu = classSubs.filter((s) => s.totalScore < 5.0).length;
+      const avg = validClassScores.length > 0 ? validClassScores.reduce((acc, v) => acc + v, 0) / validClassScores.length : 0;
+      const max = validClassScores.length > 0 ? Math.max(...validClassScores) : 0;
+      const min = validClassScores.length > 0 ? Math.min(...validClassScores) : 0;
+
+      const cGioi = classSubs.filter((s) => (Number(s.totalScore) || 0) >= 8.0).length;
+      const cKha = classSubs.filter((s) => (Number(s.totalScore) || 0) >= 6.5 && (Number(s.totalScore) || 0) < 8.0).length;
+      const cTB = classSubs.filter((s) => (Number(s.totalScore) || 0) >= 5.0 && (Number(s.totalScore) || 0) < 6.5).length;
+      const cYeu = classSubs.filter((s) => (Number(s.totalScore) || 0) < 5.0).length;
       const passRate = count > 0 ? Math.round(((cGioi + cKha + cTB) / count) * 100) : 0;
 
       return {
@@ -429,7 +484,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
         passRate,
       };
     });
-  }, [examSubmissions, classes]);
+  }, [examSubmissions, classesList, activeSelectedExam]);
 
   const handleExportExcel = () => {
     if (exam) {
@@ -1096,7 +1151,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
             </button>
 
             {classesList.map((cName) => {
-              const cCount = examSubmissions.filter((s) => s.studentClass === cName).length;
+              const cCount = examSubmissions.filter((s) => normalizeCls(s.studentClass) === normalizeCls(cName)).length;
               const isSelected = selectedClassFilter === cName;
               return (
                 <button

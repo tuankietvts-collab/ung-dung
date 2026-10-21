@@ -626,44 +626,7 @@ const CLASSES_COLLECTION = 'classes';
 const CLASSES_STORAGE_KEY = 'edumath_class_groups';
 const DELETED_CLASSES_STORAGE_KEY = 'edumath_deleted_class_ids';
 
-const DEFAULT_CLASSES: ClassGroup[] = [
-  {
-    id: 'VTS_TO_26_12A8',
-    name: '12A8',
-    grade: '12',
-    schoolYear: '2026-2027',
-    schoolFullName: 'THPT Võ Thị Sáu',
-    schoolCode: 'VTS',
-    subjectFullName: 'Toán',
-    subjectCode: 'TO',
-    yearCode: '26',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'VTS_TO_26_11A1',
-    name: '11A1',
-    grade: '11',
-    schoolYear: '2026-2027',
-    schoolFullName: 'THPT Võ Thị Sáu',
-    schoolCode: 'VTS',
-    subjectFullName: 'Toán',
-    subjectCode: 'TO',
-    yearCode: '26',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'VTS_TO_26_10A1',
-    name: '10A1',
-    grade: '10',
-    schoolYear: '2026-2027',
-    schoolFullName: 'THPT Võ Thị Sáu',
-    schoolCode: 'VTS',
-    subjectFullName: 'Toán',
-    subjectCode: 'TO',
-    yearCode: '26',
-    createdAt: new Date().toISOString(),
-  },
-];
+const DEFAULT_CLASSES: ClassGroup[] = [];
 
 export function getDeletedClassIds(): Set<string> {
   try {
@@ -677,13 +640,24 @@ export function getDeletedClassIds(): Set<string> {
 export function markClassAsDeletedLocally(classId: string): void {
   try {
     const clean = classId.trim().toUpperCase();
+    const cleanName = clean.replace(/^LỚP\s+/i, '');
+    const safeId = clean.replace(/[\/\s#?]+/g, '_');
     const deleted = getDeletedClassIds();
     deleted.add(classId);
     deleted.add(clean);
+    deleted.add(cleanName);
+    deleted.add(safeId);
+    deleted.add(classId.toLowerCase());
     localStorage.setItem(DELETED_CLASSES_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
 
     const remaining = getStoredClasses().filter(
-      (c) => c.id !== classId && c.name !== classId && c.name?.toUpperCase() !== clean && c.id?.toUpperCase() !== clean
+      (c) =>
+        c.id !== classId &&
+        c.name !== classId &&
+        c.name?.toUpperCase() !== clean &&
+        c.name?.toUpperCase() !== cleanName &&
+        c.id?.toUpperCase() !== clean &&
+        c.id?.toUpperCase() !== safeId
     );
     saveClassesLocally(remaining);
   } catch (e) {
@@ -699,15 +673,13 @@ export function getStoredClasses(teacherId?: string): ClassGroup[] {
     let classes: ClassGroup[] = [];
     if (raw) {
       classes = JSON.parse(raw);
-    } else if (!teacherId || teacherId === 'admin_kiet' || teacherId === 'teacher_default') {
-      classes = DEFAULT_CLASSES.map((c) => ({ ...c, teacherId: teacherId || 'admin_kiet' }));
-    } else {
-      // Mỗi giáo viên có danh sách lớp ban đầu chuẩn
-      classes = DEFAULT_CLASSES.map((c) => ({ ...c, teacherId }));
-      localStorage.setItem(storageKey, JSON.stringify(classes));
     }
     return classes.filter(
-      (c) => !deleted.has(c.id) && !deleted.has(c.name) && !deleted.has(c.name?.toUpperCase()) && !deleted.has(c.id?.toUpperCase())
+      (c) =>
+        !deleted.has(c.id) &&
+        !deleted.has(c.name) &&
+        !deleted.has(c.name?.toUpperCase()) &&
+        !deleted.has(c.id?.toUpperCase())
     );
   } catch {
     return [];
@@ -826,13 +798,18 @@ export function subscribeClassGroupsFromFirestore(
 
 export async function deleteClassGroupFromFirestore(classId: string): Promise<void> {
   markClassAsDeletedLocally(classId);
-  const safeId = classId.replace(/[\/\s#?]+/g, '_').toUpperCase();
-  const path = `${CLASSES_COLLECTION}/${safeId}`;
-  try {
-    const docRef = doc(db, CLASSES_COLLECTION, safeId);
-    await deleteDoc(docRef);
-  } catch (error) {
-    console.warn('Firestore class delete note (deleted locally):', error);
+  const clean = classId.trim();
+  const safeId = clean.replace(/[\/\s#?]+/g, '_').toUpperCase();
+  const rawClean = clean.toUpperCase();
+  const variations = Array.from(new Set([clean, safeId, rawClean, clean.toLowerCase()]));
+
+  for (const targetId of variations) {
+    try {
+      const docRef = doc(db, CLASSES_COLLECTION, targetId);
+      await deleteDoc(docRef);
+    } catch (error) {
+      // Ignore if variation doesn't exist
+    }
   }
 }
 
