@@ -63,6 +63,8 @@ import {
   subscribeExamsFromFirestore,
   saveSubmissionToFirestore,
   deleteSubmissionFromFirestore,
+  purgeSubmissionsForClassFromFirestore,
+  purgeOrphanSubmissionsFromFirestore,
   subscribeSubmissionsFromFirestore,
   subscribeStudentRosterFromFirestore,
   saveStudentRosterToFirestore,
@@ -176,6 +178,28 @@ export default function App() {
     }
     return classes;
   }, [classes, currentUser]);
+
+  // Danh sách bài nộp hiển thị: chỉ hiển thị bài nộp của các lớp thuộc giáo viên đang quản lý
+  const displayedSubmissions = useMemo(() => {
+    if (!currentUser || currentUser.role === 'admin') {
+      return submissions;
+    }
+    const currentClassSet = new Set(
+      displayedClasses.map((c) => c.name.trim().toUpperCase().replace(/^LỚP\s+/i, ''))
+    );
+    return submissions.filter((s) => {
+      const sCls = (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      return currentClassSet.has(sCls);
+    });
+  }, [submissions, displayedClasses, currentUser]);
+
+  // Tự động dọn dẹp các bài nộp mồ côi (thuộc các lớp đã xóa trước đây) khỏi Firestore
+  useEffect(() => {
+    if (currentUser?.role === 'teacher' && submissions.length > 0) {
+      const activeNames = displayedClasses.map((c) => c.name);
+      purgeOrphanSubmissionsFromFirestore(activeNames).catch(() => {});
+    }
+  }, [currentUser?.role, displayedClasses, submissions.length]);
 
   // Modals
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -455,19 +479,43 @@ export default function App() {
     setClasses((prev) => prev.filter((c) => c.id !== classId && c.name.toUpperCase() !== classNameClean));
 
     // Xóa học sinh thuộc lớp này khỏi roster
+    const normClean = classNameClean.replace(/^LỚP\s+/i, '');
     const studentsInClass = studentRoster.filter(
-      (s) => (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === classNameClean.replace(/^LỚP\s+/i, '')
+      (s) => (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normClean
     );
     for (const st of studentsInClass) {
       deleteStudentFromFirestore(st.id).catch(() => {});
     }
     setStudentRoster((prev) =>
       prev.filter(
-        (s) => (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') !== classNameClean.replace(/^LỚP\s+/i, '')
+        (s) => (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') !== normClean
       )
     );
 
-    showToast(`Đã xóa vĩnh viễn lớp [${targetClass?.name || classId}] thành công!`, 'success');
+    // Xóa sạch toàn bộ điểm số & bài nộp thuộc lớp này khỏi Firestore & state (Yêu cầu: khi xóa lớp thì các phần về điểm số cũng xóa sạch luôn)
+    const subsInClass = submissions.filter((s) => {
+      const sCls = (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      return sCls === normClean;
+    });
+    for (const sub of subsInClass) {
+      deleteSubmissionFromFirestore(sub.id).catch(() => {});
+    }
+    purgeSubmissionsForClassFromFirestore(classNameClean).catch(() => {});
+    setSubmissions((prev) =>
+      prev.filter((s) => {
+        const sCls = (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+        return sCls !== normClean;
+      })
+    );
+
+    // Reset drill-down nếu đang xem lớp vừa xóa
+    if (selectedClassForGrading && selectedClassForGrading.trim().toUpperCase().replace(/^LỚP\s+/i, '') === normClean) {
+      setSelectedClassForGrading(null);
+      setSelectedSessionForGrading(null);
+      setSelectedExamForGrading(null);
+    }
+
+    showToast(`Đã xóa vĩnh viễn lớp [${targetClass?.name || classId}] và toàn bộ điểm số liên quan thành công!`, 'success');
   };
 
   const handleSaveRoster = async (incomingStudents: StudentRosterItem[]) => {
@@ -558,7 +606,7 @@ export default function App() {
       setIsClassModalOpen(true);
     } else if (target === 'gradebook') {
       setCurrentNav('classes_grading');
-      setSubGradingTab('gradebook');
+      setSubGradingTab('classes');
     } else if (target === 'essay_grading') {
       setCurrentNav('classes_grading');
       setSubGradingTab('essay_grading');
@@ -1151,6 +1199,7 @@ export default function App() {
                       setSubGradingTab('classes');
                       setSelectedClassForGrading(null);
                       setSelectedExamForGrading(null);
+                      setSelectedSessionForGrading(null);
                     }}
                     className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
                       subGradingTab === 'classes'
@@ -1159,20 +1208,7 @@ export default function App() {
                     }`}
                   >
                     <Building2 className="w-4 h-4" />
-                    <span>Lớp Học & Khảo Thí ({displayedClasses.length} lớp)</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSubGradingTab('gradebook')}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
-                      subGradingTab === 'gradebook'
-                        ? 'bg-indigo-600 text-white shadow-xs'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Bảng Điểm Tổng Hợp ({submissions.length} bài)</span>
+                    <span>Quản Lý Lớp & Khảo Thí ({displayedClasses.length} lớp)</span>
                   </button>
 
                   <button
@@ -1815,9 +1851,9 @@ export default function App() {
                         session={selectedSessionForGrading}
                         exam={selectedExamForGrading || selectedSessionForGrading?.masterExam}
                         exams={savedExams}
-                        submissions={submissions}
+                        submissions={displayedSubmissions}
                         className={selectedClassForGrading}
-                        classes={classes}
+                        classes={displayedClasses}
                         roster={studentRoster}
                         initialClassFilter={selectedClassForGrading}
                         initialExamFilter={selectedSessionForGrading?.id || selectedExamForGrading?.id || selectedExamForGrading?.examCode}
@@ -1846,7 +1882,7 @@ export default function App() {
                             });
                           } else if (selectedExamForGrading) {
                             const normCls = (selectedClassForGrading || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
-                            const relatedSubs = submissions.filter(
+                            const relatedSubs = displayedSubmissions.filter(
                               (s) =>
                                 (s.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '') === normCls &&
                                 (s.examId === examId || s.examCode === examCode)
@@ -1874,44 +1910,6 @@ export default function App() {
                     </div>
                   )}
                 </div>
-              )}
-
-              {/* CHẾ ĐỘ 2: BẢNG ĐIỂM TỔNG HỢP TOÀN KHỐI (TẤT CẢ CÁC LỚP) */}
-              {subGradingTab === 'gradebook' && (
-                <GradebookReport
-                  exam={currentExam}
-                  exams={savedExams}
-                  submissions={submissions}
-                  className={currentExam?.className || submissions[0]?.studentClass || (studentRoster[0]?.className) || 'Toàn Khối'}
-                  classes={displayedClasses}
-                  roster={studentRoster}
-                  variants={variantPackage?.variants || []}
-                  answerMatrix={variantPackage?.answerMatrix || []}
-                  onSelectExam={(ex) => setCurrentExam(ex)}
-                  onDeleteExam={(examId, examCode) => {
-                    const targetExam = savedExams.find((e) => e.id === examId || e.examCode === examCode) || currentExam;
-                    const relatedSubs = submissions.filter(
-                      (s) => s.examId === examId || s.examCode === examCode
-                    );
-                    setExamToDelete({
-                      id: examId,
-                      examCode: examCode || targetExam?.examCode || '',
-                      title: targetExam?.title || `Bài kiểm tra ${examCode}`,
-                      subsCount: relatedSubs.length,
-                      subs: relatedSubs,
-                    });
-                  }}
-                  onUpdateSubmission={async (updated) => {
-                    setSubmissions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-                    await saveSubmissionToFirestore(updated);
-                    showToast('Đã lưu kết quả phúc khảo bài thi thành công!');
-                  }}
-                  onDeleteSubmission={async (subId) => {
-                    await deleteSubmissionFromFirestore(subId);
-                    setSubmissions((prev) => prev.filter((s) => s.id !== subId));
-                    showToast('Đã xóa bài thi thành công.');
-                  }}
-                />
               )}
 
               {/* CHẾ ĐỘ 3: CHẤM BÀI TỰ LUẬN AI */}

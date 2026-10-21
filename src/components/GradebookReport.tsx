@@ -100,6 +100,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
   const setSelectedExamFilter = setSelectedSessionKey;
 
   // 2. CHỌN LỚP CỤ THỂ
+  const isClassSpecificMode = Boolean(initialClassFilter && initialClassFilter !== 'all');
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>(() => {
     return initialClassFilter || 'all';
   });
@@ -1126,60 +1127,62 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
             )}
 
         {/* TẦNG 2: CHỌN LỚP CỤ THỂ CHO BÀI KIỂM TRA ĐANG CHỌN */}
-        <div className="pt-3 border-t border-slate-200/80 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-              <Users className="w-4 h-4 text-emerald-600" />
-              <span>2. Chọn Lớp Cụ Thể (Lọc theo danh sách lớp):</span>
-            </span>
-            <span className="text-[11px] text-slate-500 font-semibold">
-              {currentClassSubmissions.length} bài nộp của lớp đang chọn
-            </span>
-          </div>
+        {!isClassSpecificMode && (
+          <div className="pt-3 border-t border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-emerald-600" />
+                <span>2. Chọn Lớp Cụ Thể (Lọc theo danh sách lớp):</span>
+              </span>
+              <span className="text-[11px] text-slate-500 font-semibold">
+                {currentClassSubmissions.length} bài nộp của lớp đang chọn
+              </span>
+            </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-nowrap sm:flex-wrap">
-            <button
-              type="button"
-              onClick={() => setSelectedClassFilter('all')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
-                selectedClassFilter === 'all'
-                  ? 'bg-emerald-700 text-white shadow-xs'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-              }`}
-            >
-              Toàn Bộ Các Lớp ({examSubmissions.length} bài)
-            </button>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-nowrap sm:flex-wrap">
+              <button
+                type="button"
+                onClick={() => setSelectedClassFilter('all')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                  selectedClassFilter === 'all'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
+              >
+                Toàn Bộ Các Lớp ({examSubmissions.length} bài)
+              </button>
 
-            {classesList.map((cName) => {
-              const cCount = examSubmissions.filter((s) => normalizeCls(s.studentClass) === normalizeCls(cName)).length;
-              const isSelected = selectedClassFilter === cName;
-              return (
-                <button
-                  key={cName}
-                  type="button"
-                  onClick={() => setSelectedClassFilter(cName)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                    isSelected
-                      ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-300'
-                      : 'bg-emerald-50/70 hover:bg-emerald-100 text-emerald-950 border border-emerald-200'
-                  }`}
-                >
-                  <span>🏫 Lớp {cName}</span>
-                  <span
-                    className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
-                      isSelected ? 'bg-white text-emerald-800' : 'bg-emerald-200 text-emerald-900'
+              {classesList.map((cName) => {
+                const cCount = examSubmissions.filter((s) => normalizeCls(s.studentClass) === normalizeCls(cName)).length;
+                const isSelected = selectedClassFilter === cName;
+                return (
+                  <button
+                    key={cName}
+                    type="button"
+                    onClick={() => setSelectedClassFilter(cName)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-300'
+                        : 'bg-emerald-50/70 hover:bg-emerald-100 text-emerald-950 border border-emerald-200'
                     }`}
                   >
-                    {cCount}
-                  </span>
-                </button>
-              );
-            })}
+                    <span>🏫 Lớp {cName}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full font-bold ${
+                        isSelected ? 'bg-white text-emerald-800' : 'bg-emerald-200 text-emerald-900'
+                      }`}
+                    >
+                      {cCount}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* TẦNG 3: BỘ LỌC HỌC LỰC & KHIẾU NẠI ĐIỂM THI */}
-        <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between gap-2 flex-wrap">
+        <div className={`flex items-center justify-between gap-2 flex-wrap ${(!session || !isClassSpecificMode) ? 'pt-3 border-t border-slate-200/80' : ''}`}>
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[11px] font-black uppercase text-slate-400 mr-1">Bộ lọc:</span>
             {[
@@ -1264,7 +1267,7 @@ export const GradebookReport: React.FC<GradebookReportProps> = ({
       </div>
 
       {/* BẢNG THỐNG KÊ CHI TIẾT THEO TỪNG ĐƠN VỊ LỚP (CHUẨN BÁO CÁO BỘ GD&ĐT) */}
-      {classBreakdownStats.length > 0 && (
+      {classBreakdownStats.length > 0 && !isClassSpecificMode && (
         <div className="bg-white rounded-2xl border-2 border-indigo-200 shadow-md p-5 sm:p-6 space-y-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2">

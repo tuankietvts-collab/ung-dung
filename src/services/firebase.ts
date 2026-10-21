@@ -811,6 +811,68 @@ export async function deleteClassGroupFromFirestore(classId: string): Promise<vo
       // Ignore if variation doesn't exist
     }
   }
+
+  // Tự động xóa sạch toàn bộ bài nộp và điểm số của lớp này
+  await purgeSubmissionsForClassFromFirestore(clean);
+}
+
+/**
+ * Xóa sạch tất cả bài nộp / điểm số thuộc về một lớp khỏi Cloud Firestore
+ */
+export async function purgeSubmissionsForClassFromFirestore(className: string): Promise<number> {
+  const clean = className.trim().toUpperCase().replace(/^LỚP\s+/i, '');
+  const colRef = collection(db, SUBMISSIONS_COLLECTION);
+  let purgedCount = 0;
+  try {
+    const snap = await getDocs(colRef);
+    const deletePromises: Promise<void>[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as StudentSubmission;
+      const sCls = (data.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      if (sCls === clean) {
+        deletePromises.push(deleteDoc(d.ref));
+        purgedCount++;
+      }
+    });
+    await Promise.allSettled(deletePromises);
+  } catch (err) {
+    console.error('Error purging submissions for class:', err);
+  }
+  return purgedCount;
+}
+
+/**
+ * Dọn dẹp sạch toàn bộ các bài nộp mồ côi (thuộc lớp đã bị xóa) khỏi Cloud Firestore
+ */
+export async function purgeOrphanSubmissionsFromFirestore(activeClassNames: string[]): Promise<number> {
+  const allowedSet = new Set(activeClassNames.map((c) => c.trim().toUpperCase().replace(/^LỚP\s+/i, '')));
+  const deletedSet = getDeletedClassIds();
+  const colRef = collection(db, SUBMISSIONS_COLLECTION);
+  let purgedCount = 0;
+  try {
+    const snap = await getDocs(colRef);
+    const deletePromises: Promise<void>[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as StudentSubmission;
+      const sCls = (data.studentClass || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      const rawCls = (data.studentClass || '').trim();
+      // Nếu lớp nằm trong danh sách đã xóa hoặc không còn nằm trong activeClassNames (khi có activeClassNames)
+      if (
+        deletedSet.has(sCls) ||
+        deletedSet.has(rawCls) ||
+        deletedSet.has(rawCls.toUpperCase()) ||
+        (activeClassNames.length > 0 && !allowedSet.has(sCls)) ||
+        (activeClassNames.length === 0 && (deletedSet.has(sCls) || deletedSet.size > 0))
+      ) {
+        deletePromises.push(deleteDoc(d.ref));
+        purgedCount++;
+      }
+    });
+    await Promise.allSettled(deletePromises);
+  } catch (err) {
+    console.error('Error purging orphan submissions:', err);
+  }
+  return purgedCount;
 }
 
 const TEACHERS_COLLECTION = 'teachers';
