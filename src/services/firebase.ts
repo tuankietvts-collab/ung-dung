@@ -674,13 +674,22 @@ export function getStoredClasses(teacherId?: string): ClassGroup[] {
     if (raw) {
       classes = JSON.parse(raw);
     }
-    return classes.filter(
-      (c) =>
-        !deleted.has(c.id) &&
-        !deleted.has(c.name) &&
-        !deleted.has(c.name?.toUpperCase()) &&
-        !deleted.has(c.id?.toUpperCase())
-    );
+    const seenNames = new Set<string>();
+    return classes.filter((c) => {
+      const normName = (c.name || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      if (!normName || seenNames.has(normName)) return false;
+      if (
+        deleted.has(c.id) ||
+        deleted.has(c.name) ||
+        deleted.has(c.name?.toUpperCase()) ||
+        deleted.has(c.id?.toUpperCase()) ||
+        deleted.has(normName)
+      ) {
+        return false;
+      }
+      seenNames.add(normName);
+      return true;
+    });
   } catch {
     return [];
   }
@@ -689,7 +698,14 @@ export function getStoredClasses(teacherId?: string): ClassGroup[] {
 export function saveClassesLocally(classes: ClassGroup[], teacherId?: string): void {
   try {
     const storageKey = teacherId ? `${CLASSES_STORAGE_KEY}_${teacherId}` : CLASSES_STORAGE_KEY;
-    localStorage.setItem(storageKey, JSON.stringify(classes));
+    const seenNames = new Set<string>();
+    const deduplicated = classes.filter((c) => {
+      const normName = (c.name || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      if (!normName || seenNames.has(normName)) return false;
+      seenNames.add(normName);
+      return true;
+    });
+    localStorage.setItem(storageKey, JSON.stringify(deduplicated));
   } catch (e) {
     console.error('Error saving classes locally:', e);
   }
@@ -736,16 +752,25 @@ export async function saveClassGroupToFirestore(cls: ClassGroup, teacherId?: str
       localStorage.setItem(DELETED_CLASSES_STORAGE_KEY, JSON.stringify(Array.from(deleted)));
     }
     const local = getStoredClasses(effectiveTeacherId);
-    const updated = [classData, ...local.filter((c) => c.id !== classData.id && c.name !== classData.name && c.name?.toUpperCase() !== cleanName)];
+    const updated = [classData, ...local.filter((c) => c.id !== classData.id && c.name?.toUpperCase() !== cleanName)];
     saveClassesLocally(updated, effectiveTeacherId);
   } catch (e) {
     console.error('Local class save note:', e);
   }
 
+  // Lưu document mới với Doc ID đã mã hóa chuẩn (VTS_TO_26_11A1)
   const path = `${CLASSES_COLLECTION}/${safeId}`;
   try {
     const docRef = doc(db, CLASSES_COLLECTION, safeId);
     await setDoc(docRef, { ...classData, updatedAt: new Date().toISOString() }, { merge: true });
+
+    // Xóa ngay document cũ không mã hóa (ví dụ Doc ID '11A1') nếu có để tránh hiển thị 2 lớp giống nhau
+    if (cleanName !== safeId) {
+      const oldDocRef = doc(db, CLASSES_COLLECTION, cleanName);
+      deleteDoc(oldDocRef).catch(() => {});
+      const lowerDocRef = doc(db, CLASSES_COLLECTION, cleanName.toLowerCase());
+      deleteDoc(lowerDocRef).catch(() => {});
+    }
   } catch (error) {
     console.warn('Firestore class save note (saved locally):', error);
   }
@@ -762,18 +787,31 @@ export function subscribeClassGroupsFromFirestore(
     colRef,
     (snapshot) => {
       const list: ClassGroup[] = [];
+      const seenNames = new Set<string>();
+      const seenIds = new Set<string>();
       const deleted = getDeletedClassIds();
+
       snapshot.forEach((docSnap) => {
         const item = docSnap.data() as ClassGroup;
+        const normName = (item.name || docSnap.id || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+        const normId = (item.id || docSnap.id || '').trim().toUpperCase();
+
         if (
           !deleted.has(item.id) &&
           !deleted.has(item.name) &&
           !deleted.has(item.name?.toUpperCase()) &&
-          !deleted.has(item.id?.toUpperCase())
+          !deleted.has(item.id?.toUpperCase()) &&
+          !deleted.has(normName) &&
+          !deleted.has(normId)
         ) {
           // If teacher is specified and not admin, only show classes for this teacher
           if (isAdmin || !teacherId || item.teacherId === teacherId || (!item.teacherId && teacherId === 'admin_kiet')) {
-            list.push(item);
+            // Deduplicate: Mỗi tên lớp và mỗi ID chỉ lấy 1 document duy nhất
+            if (!seenNames.has(normName) && !seenIds.has(normId)) {
+              seenNames.add(normName);
+              seenIds.add(normId);
+              list.push({ ...item, id: item.id || docSnap.id, name: normName });
+            }
           }
         }
       });
@@ -871,6 +909,92 @@ export async function purgeOrphanSubmissionsFromFirestore(activeClassNames: stri
     await Promise.allSettled(deletePromises);
   } catch (err) {
     console.error('Error purging orphan submissions:', err);
+  }
+  return purgedCount;
+}
+
+/**
+ * Dọn dẹp sạch toàn bộ các học sinh mồ côi (thuộc lớp đã bị xóa hoặc không thuộc lớp đang quản lý) khỏi Cloud Firestore
+ */
+export async function purgeOrphanStudentsFromFirestore(activeClassNames: string[]): Promise<number> {
+  const allowedSet = new Set(activeClassNames.map((c) => c.trim().toUpperCase().replace(/^LỚP\s+/i, '')));
+  const deletedSet = getDeletedClassIds();
+  const colRef = collection(db, STUDENTS_COLLECTION);
+  let purgedCount = 0;
+  try {
+    const snap = await getDocs(colRef);
+    const deletePromises: Promise<void>[] = [];
+    snap.forEach((d) => {
+      const data = d.data() as StudentRosterItem;
+      const sCls = (data.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      const rawCls = (data.className || '').trim();
+      if (
+        deletedSet.has(sCls) ||
+        deletedSet.has(rawCls) ||
+        deletedSet.has(rawCls.toUpperCase()) ||
+        (activeClassNames.length > 0 && !allowedSet.has(sCls)) ||
+        (activeClassNames.length === 0 && (deletedSet.has(sCls) || deletedSet.size > 0))
+      ) {
+        deletePromises.push(deleteDoc(d.ref));
+        purgedCount++;
+      }
+    });
+    await Promise.allSettled(deletePromises);
+  } catch (err) {
+    console.error('Error purging orphan students:', err);
+  }
+  return purgedCount;
+}
+
+/**
+ * Dọn dẹp sạch các document lớp học trùng lặp (ví dụ doc cũ ID '11A1' khi đã có 'VTS_TO_26_11A1') hoặc lớp đã xóa khỏi Firestore
+ */
+export async function purgeDuplicateAndDeletedClassesFromFirestore(): Promise<number> {
+  const deletedSet = getDeletedClassIds();
+  const colRef = collection(db, CLASSES_COLLECTION);
+  let purgedCount = 0;
+  try {
+    const snap = await getDocs(colRef);
+    const seenByNormName = new Map<string, { id: string; ref: any; hasEncodedId: boolean }>();
+    const deletePromises: Promise<void>[] = [];
+
+    snap.forEach((d) => {
+      const data = d.data() as ClassGroup;
+      const docId = d.id;
+      const normName = (data.name || docId).trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      const hasEncodedId = docId.includes('_') && docId.split('_').length >= 4;
+
+      // Nếu nằm trong danh sách đã xóa
+      if (
+        deletedSet.has(docId) ||
+        deletedSet.has(normName) ||
+        deletedSet.has((data.id || '').toUpperCase())
+      ) {
+        deletePromises.push(deleteDoc(d.ref));
+        purgedCount++;
+        return;
+      }
+
+      // Xử lý trùng lặp tên lớp
+      if (seenByNormName.has(normName)) {
+        const existing = seenByNormName.get(normName)!;
+        // Ưu tiên giữ document có encoded ID (chuẩn)
+        if (hasEncodedId && !existing.hasEncodedId) {
+          deletePromises.push(deleteDoc(existing.ref));
+          seenByNormName.set(normName, { id: docId, ref: d.ref, hasEncodedId });
+          purgedCount++;
+        } else {
+          deletePromises.push(deleteDoc(d.ref));
+          purgedCount++;
+        }
+      } else {
+        seenByNormName.set(normName, { id: docId, ref: d.ref, hasEncodedId });
+      }
+    });
+
+    await Promise.allSettled(deletePromises);
+  } catch (err) {
+    console.error('Error purging duplicate classes:', err);
   }
   return purgedCount;
 }

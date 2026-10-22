@@ -88,9 +88,20 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
   const [newSchoolYear, setNewSchoolYear] = useState<string>('2026-2027');
   const [isSubmittingClass, setIsSubmittingClass] = useState<boolean>(false);
 
+  // Deduplicate classes strictly by normalized name and ID
+  const uniqueClasses = React.useMemo(() => {
+    const seen = new Set<string>();
+    return classes.filter((c) => {
+      const norm = (c.name || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      if (!norm || seen.has(norm)) return false;
+      seen.add(norm);
+      return true;
+    });
+  }, [classes]);
+
   // Selected class for student management
   const [selectedClassId, setSelectedClassId] = useState<string>(
-    initialClassId || (classes.length > 0 ? classes[0].name : '12A8')
+    initialClassId || (uniqueClasses.length > 0 ? uniqueClasses[0].name : '12A8')
   );
 
   useEffect(() => {
@@ -169,7 +180,11 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
     // Formula: [MÃ_TRƯỜNG]_[MÃ_MÔN]_[NĂM_2_SỐ]_[TÊN_LỚP] (Ví dụ: "VTS_TO_26_12A8")
     const classId = generateClassId(schoolFullName, subjectFullName, schoolYear, cleanName);
 
-    if (classes.some((c) => c.id === classId || (c.name.toUpperCase() === cleanName && c.schoolYear === schoolYear))) {
+    const isExisted = uniqueClasses.some((c) => {
+      const cNorm = (c.name || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      return c.id === classId || cNorm === cleanName;
+    });
+    if (isExisted) {
       if (showToast) showToast(`Lớp ${cleanName} (${classId}) đã tồn tại trong danh sách!`, 'info');
       setSelectedClassId(cleanName);
       setNewClassName('');
@@ -612,7 +627,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
                   Phân Hệ Quản Lý Giáo Viên
                 </span>
                 <span className="text-xs text-indigo-300 font-mono font-bold">
-                  {classes.length} Lớp • {roster.filter((s) => !isInvalidStudentName(s.fullName)).length} Học sinh
+                  {uniqueClasses.length} Lớp • {roster.filter((s) => !isInvalidStudentName(s.fullName)).length} Học sinh
                 </span>
               </div>
               <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-0.5">
@@ -641,7 +656,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
             }`}
           >
             <Building className="w-4 h-4" />
-            <span>1. Danh Sách Lớp ({classes.length})</span>
+            <span>1. Danh Sách Lớp ({uniqueClasses.length})</span>
           </button>
 
           <button
@@ -822,7 +837,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                    <Building className="w-4 h-4 text-indigo-600" /> Các Lớp Đang Quản Lý ({classes.length})
+                    <Building className="w-4 h-4 text-indigo-600" /> Các Lớp Đang Quản Lý ({uniqueClasses.length})
                   </h3>
                   <span className="text-xs text-slate-500">
                     Bấm "Gửi Link Đề" để sao chép link thi tự động gắn với lớp đó
@@ -830,7 +845,7 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                  {classes.map((cls) => {
+                  {uniqueClasses.map((cls) => {
                     const count = roster.filter(
                       (r) => r.className?.toUpperCase() === cls.name.toUpperCase()
                     ).length;

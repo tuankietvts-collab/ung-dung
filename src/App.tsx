@@ -65,6 +65,8 @@ import {
   deleteSubmissionFromFirestore,
   purgeSubmissionsForClassFromFirestore,
   purgeOrphanSubmissionsFromFirestore,
+  purgeOrphanStudentsFromFirestore,
+  purgeDuplicateAndDeletedClassesFromFirestore,
   subscribeSubmissionsFromFirestore,
   subscribeStudentRosterFromFirestore,
   saveStudentRosterToFirestore,
@@ -152,18 +154,18 @@ export default function App() {
   const [classes, setClasses] = useState<ClassGroup[]>(() => getStoredClasses());
   const [confirmDeleteClassObj, setConfirmDeleteClassObj] = useState<ClassGroup | null>(null);
 
-  // Danh sách lớp hiển thị: Giáo viên tạo lớp nào thì hiển thị lớp đó (Không ép hiển thị lớp mẫu)
+  // Danh sách lớp hiển thị: Giáo viên tạo lớp nào thì hiển thị lớp đó (Không ép hiển thị lớp mẫu, triệt tiêu mọi trùng lặp)
   const displayedClasses = useMemo(() => {
+    let rawList: ClassGroup[] = [];
     if (!currentUser || currentUser.role === 'admin') {
-      return classes;
-    }
-    if (currentUser.role === 'teacher') {
+      rawList = classes;
+    } else if (currentUser.role === 'teacher') {
       const myId = (currentUser.uid || '').toLowerCase().trim();
       const myUser = (currentUser.username || '').toLowerCase().trim();
       const myClean = myUser.replace(/[\s_]/g, '');
       const myName = (currentUser.fullName || '').toLowerCase().trim();
 
-      return classes.filter((c) => {
+      rawList = classes.filter((c) => {
         const tId = (c.teacherId || '').toLowerCase().trim();
         if (!tId) return false; // Không hiển thị lớp mẫu / lớp không thuộc giáo viên
         return (
@@ -175,8 +177,21 @@ export default function App() {
           (myName && tId.includes(myName))
         );
       });
+    } else {
+      rawList = classes;
     }
-    return classes;
+
+    // STRICT DEDUPLICATION: Mỗi tên lớp chỉ xuất hiện đúng 1 lần duy nhất trên toàn hệ thống
+    const seen = new Set<string>();
+    const deduplicated: ClassGroup[] = [];
+    for (const c of rawList) {
+      const norm = (c.name || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      if (norm && !seen.has(norm)) {
+        seen.add(norm);
+        deduplicated.push(c);
+      }
+    }
+    return deduplicated;
   }, [classes, currentUser]);
 
   // Danh sách bài nộp hiển thị: chỉ hiển thị bài nộp của các lớp thuộc giáo viên đang quản lý
@@ -193,13 +208,31 @@ export default function App() {
     });
   }, [submissions, displayedClasses, currentUser]);
 
-  // Tự động dọn dẹp các bài nộp mồ côi (thuộc các lớp đã xóa trước đây) khỏi Firestore
-  useEffect(() => {
-    if (currentUser?.role === 'teacher' && submissions.length > 0) {
-      const activeNames = displayedClasses.map((c) => c.name);
-      purgeOrphanSubmissionsFromFirestore(activeNames).catch(() => {});
+  // Danh sách học sinh hiển thị: chỉ hiển thị học sinh thuộc các lớp đang tồn tại của giáo viên (không hiển thị học sinh của lớp đã xóa)
+  const displayedRoster = useMemo(() => {
+    if (!currentUser || currentUser.role === 'admin') {
+      return studentRoster;
     }
-  }, [currentUser?.role, displayedClasses, submissions.length]);
+    const currentClassSet = new Set(
+      displayedClasses.map((c) => c.name.trim().toUpperCase().replace(/^LỚP\s+/i, ''))
+    );
+    return studentRoster.filter((s) => {
+      const sCls = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      return currentClassSet.has(sCls);
+    });
+  }, [studentRoster, displayedClasses, currentUser]);
+
+  // Tự động dọn dẹp các lớp trùng lặp, bài nộp mồ côi & học sinh mồ côi (thuộc các lớp đã xóa trước đây) khỏi Firestore
+  useEffect(() => {
+    if (currentUser?.role === 'teacher') {
+      const activeNames = displayedClasses.map((c) => c.name);
+      purgeDuplicateAndDeletedClassesFromFirestore().catch(() => {});
+      if (activeNames.length > 0) {
+        purgeOrphanSubmissionsFromFirestore(activeNames).catch(() => {});
+        purgeOrphanStudentsFromFirestore(activeNames).catch(() => {});
+      }
+    }
+  }, [currentUser?.role, displayedClasses]);
 
   // Modals
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
@@ -458,11 +491,13 @@ export default function App() {
       teacherId: cl.teacherId || teacherIdentifier,
     };
     await saveClassGroupToFirestore(classToSave, teacherIdentifier);
+    const normClean = classToSave.name.trim().toUpperCase().replace(/^LỚP\s+/i, '');
     setClasses((prev) => {
-      const exists = prev.some((c) => c.id === classToSave.id || c.name.toUpperCase() === classToSave.name.toUpperCase());
-      return exists
-        ? prev.map((c) => (c.id === classToSave.id || c.name.toUpperCase() === classToSave.name.toUpperCase() ? classToSave : c))
-        : [classToSave, ...prev];
+      const remaining = prev.filter((c) => {
+        const cNorm = (c.name || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+        return c.id !== classToSave.id && cNorm !== normClean;
+      });
+      return [classToSave, ...remaining];
     });
     showToast(`Đã lưu thông tin lớp [${cl.name}] thành công!`);
   };
@@ -1033,9 +1068,9 @@ export default function App() {
             <OverviewDashboard
               currentExam={currentExam}
               savedExams={savedExams}
-              submissions={submissions}
-              roster={studentRoster}
-              classes={classes}
+              submissions={displayedSubmissions}
+              roster={displayedRoster}
+              classes={displayedClasses}
               currentUser={currentUser}
               onNavigate={handleLegacyNavigate}
               onSelectExam={(exam) => setCurrentExam(exam)}
@@ -1854,7 +1889,7 @@ export default function App() {
                         submissions={displayedSubmissions}
                         className={selectedClassForGrading}
                         classes={displayedClasses}
-                        roster={studentRoster}
+                        roster={displayedRoster}
                         initialClassFilter={selectedClassForGrading}
                         initialExamFilter={selectedSessionForGrading?.id || selectedExamForGrading?.id || selectedExamForGrading?.examCode}
                         onBackToExams={() => {
@@ -2227,7 +2262,7 @@ export default function App() {
         isOpen={isClassModalOpen}
         onClose={() => setIsClassModalOpen(false)}
         classes={displayedClasses}
-        roster={studentRoster}
+        roster={displayedRoster}
         currentExam={currentExam}
         savedExams={savedExams}
         initialClassId={classModalSelectedClass}
