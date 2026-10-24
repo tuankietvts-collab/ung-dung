@@ -90,8 +90,10 @@ export interface Exam {
   // Independent 4-part structure support
   part1?: MultipleChoiceQuestion[];
   part2?: TrueFalseQuestion[];
-  part3?: EssayQuestion[]; // Short Answer questions
-  part4?: EssayQuestion[]; // Essay questions
+  part3?: EssayQuestion[]; // Trả lời ngắn
+  part4?: EssayQuestion[]; // Tự luận
+  partsCount?: number; // 1, 2, 3, hoặc 4 phần
+  partsStructure?: '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto'; // Cấu trúc đề thi
   createdAt: string;
   className?: string;
   assignedClassNames?: string[];
@@ -287,9 +289,12 @@ export interface ExamMatrixData {
   textbook?: string;
   durationMinutes?: number;
   totalPoints?: number;
-  part1: MatrixSectionCount; // Trắc nghiệm nhiều lựa chọn
-  part2: MatrixSectionCount; // Trắc nghiệm Đúng / Sai
-  part3: MatrixSectionCount; // Tự luận
+  part1?: MatrixSectionCount; // Trắc nghiệm nhiều lựa chọn
+  part2?: MatrixSectionCount; // Trắc nghiệm Đúng / Sai
+  part3?: MatrixSectionCount; // Trả lời ngắn / Tự luận
+  part4?: MatrixSectionCount; // Tự luận (nếu đề có 4 phần)
   part3Type?: 'short_answer' | 'essay'; // 'short_answer' (Trả lời ngắn) | 'essay' (Tự luận giải chi tiết)
+  partsCount?: number; // 1, 2, 3, hoặc 4 phần
+  partsStructure?: '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto';
   rawSummary?: string;
 }

@@ -702,9 +702,9 @@ export default function App() {
   const sidebarItems = isStudent ? [
     {
       id: 'student_room' as MainNavSection,
-      label: 'Phòng thi trực tuyến',
+      label: 'Trang cá nhân học sinh',
       icon: GraduationCap,
-      description: 'Làm bài thi trực tiếp với MathLive'
+      description: 'Danh sách bài kiểm tra & Làm bài'
     },
     {
       id: 'classes_grading' as MainNavSection,
@@ -760,6 +760,7 @@ export default function App() {
         if (subExamTab === 'variants') return 'Quản lý Đề thi / Trộn mã đề thi chống gian lận';
         return 'Quản lý Đề thi';
       case 'student_room':
+        if (isStudent) return 'Trang cá nhân học sinh / Danh sách bài kiểm tra';
         return 'Phòng thi trực tuyến / Làm bài thi chuẩn SGK';
       case 'classes_grading':
         if (subGradingTab === 'gradebook') return 'Lớp học & Chấm điểm / Bảng điểm & Thống kê';

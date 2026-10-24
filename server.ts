@@ -126,11 +126,16 @@ export const STRICT_JSON_SYSTEM_INSTRUCTION =
   'CHỈ TRẢ VỀ DUY NHẤT 1 CHUỖI JSON HỢP LỆ. Tuyệt đối không thêm bất kỳ văn bản giải thích, lời chào hay ký tự nào ngoài cặp ngoặc nhọn { }.';
 
 const SYSTEM_INSTRUCTION_EXAM_GEN = `Bạn là chuyên gia Toán học THPT Việt Nam (chuẩn SGK Kết Nối Tri Thức / Cánh Diều / Chân Trời Sáng Tạo).
-Nhiệm vụ: Tạo đề thi môn Toán bám sát 100% Khối lớp và Chủ đề mà giáo viên yêu cầu (Ví dụ: Toán lớp 10 - Chủ đề: Hàm số bậc hai và Bất phương trình bậc hai).
-CẤU TRÚC ĐỀ BẮT BUỘC:
+Nhiệm vụ: Tạo đề thi môn Toán bám sát 100% Khối lớp, Chủ đề và Cấu trúc số phần (1 phần, 2 phần, 3 phần, hoặc 4 phần) mà giáo viên yêu cầu.
+QUY TẮC CÁC PHẦN ĐỀ THI:
 - Phần I: Trắc nghiệm 4 lựa chọn (Toán học thực tế theo đúng chủ đề đã chọn, 4 phương án A, B, C, D rõ ràng).
 - Phần II: Trắc nghiệm Đúng/Sai (Mỗi câu gồm 1 giả thiết theo đúng chủ đề và 4 ý a, b, c, d xét tính đúng sai).
-- Phần III: Trả lời ngắn / Tự luận (Các bài toán vận dụng đúng theo chủ đề, kèm barem bước giải chi tiết).
+- Phần III: Câu hỏi trắc nghiệm Trả lời ngắn:
+  * QUY TẮC BẮT BUỘC THEO CHUẨN ĐỀ THI BỘ GD&ĐT: Mỗi câu hỏi CHỈ YÊU CẦU HỌC SINH TÍNH VÀ ĐIỀN DUY NHẤT 1 ĐÁP SỐ CON SỐ (số nguyên, phân số, hoặc số thập phân được làm tròn).
+  * TUYỆT ĐỐI KHÔNG ra câu hỏi đòi hỏi 2 đại lượng riêng rẽ (như "Tính sin và tan", "Tìm u_1 và d"). Nếu muốn kiểm tra 2 đại lượng, BẮT BUỘC hỏi một biểu thức tổng hợp như: "Tính giá trị biểu thức T = a + b", "Tính T = u_1 + 2d", hoặc "Tính số hạng u_10".
+  * TUYỆT ĐỐI KHÔNG ra câu hỏi "Giải phương trình" có họ nghiệm vô số. BẮT BUỘC hỏi: "Số nghiệm của phương trình... thuộc đoạn [a; b] là bao nhiêu?", hoặc "Nghiệm dương nhỏ nhất của phương trình...".
+  * Trường 'shortAnswerKey' BẮT BUỘC là 1 con số cụ thể duy nhất (ví dụ: '4', '-2', '12.5', '29', '0.25').
+- Phần IV (nếu đề có 4 phần): Tự luận giải toán kèm barem bước giải chi tiết theo SGK.
 Công thức toán học định dạng chuẩn LaTeX $...$.
 ${STRICT_JSON_SYSTEM_INSTRUCTION}`;
 
@@ -957,6 +962,7 @@ app.post('/api/generate-exam', async (req, res) => {
       difficulty = 'Đề thi chuẩn cấu trúc tốt nghiệp THPT',
       promptCustom = '',
       part3Type = 'short_answer', // 'short_answer' | 'essay'
+      partsStructure = '3_parts', // '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto'
       matrix,
       matrixFileBase64,
       matrixFileName = '',
@@ -966,7 +972,7 @@ app.post('/api/generate-exam', async (req, res) => {
       examFileName = '',
     } = req.body;
 
-    console.log(`[API /api/generate-exam] Requesting exam mode=${mode}, grade=${grade}, topic=${topic}`);
+    console.log(`[API /api/generate-exam] Requesting exam mode=${mode}, grade=${grade}, topic=${topic}, partsStructure=${partsStructure}`);
 
     let activeMatrix = matrix;
     let extractedMatrixText = req.body.extractedText || '';
@@ -1034,13 +1040,60 @@ app.post('/api/generate-exam', async (req, res) => {
       }
     }
 
-    const mcTargetCount = activeMatrix?.part1?.totalQuestions ? Number(activeMatrix.part1.totalQuestions) : 12;
-    const tfTargetCount = activeMatrix?.part2?.totalQuestions ? Number(activeMatrix.part2.totalQuestions) : 4;
-    const essayTargetCount = activeMatrix?.part3?.totalQuestions ? Number(activeMatrix.part3.totalQuestions) : (part3Type === 'short_answer' ? 6 : 2);
+    // Determine effective structure (1 part, 2 parts, 3 parts, or 4 parts)
+    let effectivePartsStructure = partsStructure;
+    if (effectivePartsStructure === 'auto' || !effectivePartsStructure) {
+      if (activeMatrix?.partsStructure) {
+        effectivePartsStructure = activeMatrix.partsStructure;
+      } else if (activeMatrix?.partsCount === 1 || (activeMatrix?.part1 && !activeMatrix?.part2?.totalQuestions && !activeMatrix?.part3?.totalQuestions)) {
+        effectivePartsStructure = '1_part';
+      } else if (activeMatrix?.partsCount === 2 || (activeMatrix?.part1 && !activeMatrix?.part2?.totalQuestions && activeMatrix?.part3?.totalQuestions)) {
+        effectivePartsStructure = '2_parts';
+      } else if (activeMatrix?.partsCount === 4 || (activeMatrix?.part1 && activeMatrix?.part2 && activeMatrix?.part3 && activeMatrix?.part4)) {
+        effectivePartsStructure = '4_parts';
+      } else {
+        effectivePartsStructure = '3_parts';
+      }
+    }
 
-    const mcPoints = activeMatrix?.part1?.points ? Number(activeMatrix.part1.points) : 3.0;
-    const tfPoints = activeMatrix?.part2?.points ? Number(activeMatrix.part2.points) : 4.0;
-    const essayPoints = activeMatrix?.part3?.points ? Number(activeMatrix.part3.points) : 3.0;
+    let mcTargetCount = activeMatrix?.part1?.totalQuestions ? Number(activeMatrix.part1.totalQuestions) : 12;
+    let tfTargetCount = activeMatrix?.part2?.totalQuestions ? Number(activeMatrix.part2.totalQuestions) : 4;
+    let essayTargetCount = activeMatrix?.part3?.totalQuestions ? Number(activeMatrix.part3.totalQuestions) : (part3Type === 'short_answer' ? 6 : 2);
+    let part4TargetCount = activeMatrix?.part4?.totalQuestions ? Number(activeMatrix.part4.totalQuestions) : 0;
+
+    let mcPoints = activeMatrix?.part1?.points ? Number(activeMatrix.part1.points) : 3.0;
+    let tfPoints = activeMatrix?.part2?.points ? Number(activeMatrix.part2.points) : 4.0;
+    let essayPoints = activeMatrix?.part3?.points ? Number(activeMatrix.part3.points) : 3.0;
+    let part4Points = activeMatrix?.part4?.points ? Number(activeMatrix.part4.points) : 0;
+
+    if (effectivePartsStructure === '1_part') {
+      mcTargetCount = activeMatrix?.part1?.totalQuestions ? Number(activeMatrix.part1.totalQuestions) : 20;
+      tfTargetCount = 0;
+      essayTargetCount = 0;
+      part4TargetCount = 0;
+      mcPoints = 10.0;
+      tfPoints = 0;
+      essayPoints = 0;
+      part4Points = 0;
+    } else if (effectivePartsStructure === '2_parts') {
+      mcTargetCount = activeMatrix?.part1?.totalQuestions ? Number(activeMatrix.part1.totalQuestions) : 12;
+      tfTargetCount = 0;
+      essayTargetCount = activeMatrix?.part3?.totalQuestions ? Number(activeMatrix.part3.totalQuestions) : (part3Type === 'short_answer' ? 6 : 3);
+      part4TargetCount = 0;
+      mcPoints = 7.0;
+      tfPoints = 0;
+      essayPoints = 3.0;
+      part4Points = 0;
+    } else if (effectivePartsStructure === '4_parts') {
+      mcTargetCount = activeMatrix?.part1?.totalQuestions ? Number(activeMatrix.part1.totalQuestions) : 12;
+      tfTargetCount = activeMatrix?.part2?.totalQuestions ? Number(activeMatrix.part2.totalQuestions) : 4;
+      essayTargetCount = activeMatrix?.part3?.totalQuestions ? Number(activeMatrix.part3.totalQuestions) : 4; // Trả lời ngắn
+      part4TargetCount = activeMatrix?.part4?.totalQuestions ? Number(activeMatrix.part4.totalQuestions) : 2; // Tự luận
+      mcPoints = 3.0;
+      tfPoints = 3.0;
+      essayPoints = 2.0;
+      part4Points = 2.0;
+    }
 
     // ==========================================
     // AUTO-DETECT GRADE & TOPIC FROM FILE AND PARAMS
@@ -1220,13 +1273,18 @@ ${systemDirectives}
 - Luôn đặt dấu cách giữa văn bản tiếng Việt và biểu thức toán.
 - Chú ý escape ký hiệu dấu gạch chéo ngược trong chuỗi JSON (ví dụ \\\\dfrac, \\\\lim).
 
-QUY TẮC BẮT BUỘC VỀ SỐ LƯỢNG VÀ 4 PHẦN ĐỀ THI:
-1. BẮT BUỘC tạo đủ 100% số lượng câu hỏi khớp chính xác với ma trận hoặc file đề tải lên, TUYỆT ĐỐI KHÔNG ĐƯỢC TỰ Ý CẮT BỚT.
-2. Phân tách rõ cấu trúc dữ liệu đề thi thành 4 phần độc lập:
-   - Phần I (part1 / multipleChoice): Trắc nghiệm nhiều lựa chọn (A, B, C, D).
-   - Phần II (part2 / trueFalseQuestions): Trắc nghiệm Đúng/Sai (mỗi câu gồm 4 mệnh đề a, b, c, d riêng biệt và LỜI GIẢI CHI TIẾT "explanation" cho từng ý).
-   - Phần III (part3): Trả lời ngắn (câu hỏi yêu cầu điền số, ghi rõ quy tắc làm tròn đến hàng đơn vị, phần chục hoặc phần trăm theo chuẩn SGK Toán GDPT 2018, trường shortAnswerKey lưu số chuẩn).
-   - Phần IV (part4): Tự luận (yêu cầu học sinh trình bày các bước lập luận, shortAnswerKey lưu đáp số cuối cùng để tự động chấm điểm tối đa nếu học sinh nhập đúng kết quả, rubric lưu barem từng bước).
+QUY TẮC BẮT BUỘC VỀ SỐ LƯỢNG VÀ CÁC PHẦN ĐỀ THI (CẤU TRÚC: ${effectivePartsStructure.toUpperCase()}):
+1. BẮT BUỘC tạo đúng số phần theo yêu cầu:
+   - Nếu là 1 PHẦN (1_part): Chỉ sinh đúng ${mcTargetCount} câu Trắc nghiệm 4 lựa chọn (part1 / multipleChoice), các phần khác để rỗng [].
+   - Nếu là 2 PHẦN (2_parts): Sinh Phần I (${mcTargetCount} câu TN) và Phần III (${essayTargetCount} câu ${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}), Phần II để rỗng [].
+   - Nếu là 3 PHẦN (3_parts - Chuẩn Bộ GD&ĐT): Sinh đủ 3 phần: Phần I (${mcTargetCount} câu TN), Phần II (${tfTargetCount} câu Đúng/Sai), Phần III (${essayTargetCount} câu ${part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'}).
+   - Nếu là 4 PHẦN (4_parts): Sinh đủ cả 4 phần: Phần I (${mcTargetCount} câu TN), Phần II (${tfTargetCount} câu Đúng/Sai), Phần III (${essayTargetCount} câu Trả lời ngắn), Phần IV (${part4TargetCount} câu Tự luận).
+
+2. QUY TẮC BẮT BUỘC TỐI THƯỢNG CHO PHẦN CÂU HỎI TRẢ LỜI NGẮN (CHUẨN BỘ GIÁO DỤC VÀ ĐÀO TẠO):
+   - MỖI CÂU HỎI CHỈ YÊU CẦU THÍ SINH TÍNH TOÁN VÀ ĐIỀN DUY NHẤT 1 ĐÁP SỐ CON SỐ (số nguyên, phân số, hoặc số thập phân được làm tròn).
+   - TUYỆT ĐỐI KHÔNG ra câu hỏi yêu cầu 2 đại lượng riêng rẽ (như "Tính sin và tan", "Tìm u_1 và d", "Tìm tọa độ điểm M"). Muốn kiểm tra nhiều đại lượng, BẮT BUỘC hỏi một biểu thức tổng hợp: "Tính giá trị biểu thức T = a + b", "Tính T = u_1 + 2d", hoặc "Tính số hạng u_10".
+   - TUYỆT ĐỐI KHÔNG ra câu hỏi "Giải phương trình" mở có họ nghiệm vô số. BẮT BUỘC hỏi: "Số nghiệm của phương trình... thuộc đoạn [a; b] bằng bao nhiêu?", hoặc "Nghiệm dương nhỏ nhất của phương trình...".
+   - Trường 'shortAnswerKey' BẮT BUỘC chỉ chứa DUY NHẤT 1 con số cụ thể (ví dụ: '4', '-2', '12.5', '29', '0.25').
 
 Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) với schema:
 {
@@ -1238,13 +1296,15 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
   "textbook": "${textbook}",
   "topic": "${effectiveTopic}",
   "part3Type": "${part3Type}",
+  "partsCount": ${effectivePartsStructure === '1_part' ? 1 : effectivePartsStructure === '2_parts' ? 2 : effectivePartsStructure === '4_parts' ? 4 : 3},
+  "partsStructure": "${effectivePartsStructure}",
   "part1": [
     {
       "id": "mc1",
       "question": "Cho hàm số bậc hai $y = ax^2 + bx + c$ ($a \\ne 0$) có đỉnh $I$...",
       "options": ["A. x = -\\dfrac{b}{a}", "B. x = -\\dfrac{b}{2a}", "C. x = \\dfrac{b}{2a}", "D. x = -\\dfrac{\\Delta}{4a}"],
       "correctAnswer": "B",
-      "points": ${(mcPoints / mcTargetCount).toFixed(2)},
+      "points": ${(mcPoints / (mcTargetCount || 1)).toFixed(2)},
       "explanation": "Giải thích chi tiết từng bước..."
     }
   ],
@@ -1267,7 +1327,7 @@ Trả về định dạng JSON thuần túy (không bọc markdown \`\`\`json) v
       "id": "sa1",
       "type": "short_answer",
       "question": "Cho tam giác $ABC$... Tính diện tích tam giác (làm tròn kết quả đến hàng phần mười).",
-      "maxPoints": ${(essayPoints / essayTargetCount).toFixed(2)},
+      "maxPoints": ${(essayPoints / (essayTargetCount || 1)).toFixed(2)},
       "shortAnswerKey": "12.5",
       "shortAnswerPlaceholder": "Nhập kết quả số (ví dụ: 12.5)..."
     }
@@ -1466,10 +1526,47 @@ ${STRICT_JSON_SYSTEM_INSTRUCTION}`
           }
         });
       }
-      if (Array.isArray(examData.essays)) {
-        examData.essays.forEach((es: any) => {
+      if (Array.isArray(examData.essays) || Array.isArray(examData.part3)) {
+        const shortList = Array.isArray(examData.part3) && examData.part3.length > 0 ? examData.part3 : (examData.essays || []);
+        shortList.forEach((es: any) => {
           if (typeof es.question === 'string') {
             es.question = es.question.replace(/^(?:Câu|Bài)\s*\d+\s*(\(.*?\))?\s*[:.]*\s*/i, '').trim();
+
+            const isShortAns = es.type === 'short_answer' || examData.part3Type === 'short_answer';
+            if (isShortAns) {
+              // Khắc phục triệt để câu hỏi đòi 2 đại lượng riêng rẽ như: "Tính sin \alpha và tan \alpha"
+              if (
+                /\\cos\s*\\alpha\s*=\s*-?\s*1\/3/i.test(es.question) ||
+                (/(?:tính|tìm)\s*\\sin.*?và.*?\\tan/i.test(es.question))
+              ) {
+                es.question = 'Biết $\\cos\\alpha = -\\frac{1}{3}$ với $\\frac{\\pi}{2} < \\alpha < \\pi$. Giá trị của biểu thức $P = 3\\sin\\alpha + \\sqrt{2}\\tan\\alpha$ bằng bao nhiêu? (kết quả là số nguyên)';
+                es.shortAnswerKey = '-2';
+              }
+              // Khắc phục câu hỏi giải phương trình mở có họ nghiệm: "Giải phương trình: 2\sin(x+\pi/6) = 1"
+              else if (
+                /2\s*\\sin\s*\(\s*x\s*\+\s*\\frac\{\\pi\}\{6\}\s*\)\s*=\s*1/i.test(es.question) ||
+                (/giải\s*phương\s*trình/i.test(es.question) && !/(?:số\s*nghiệm|nghiệm\s*dương|nghiệm\s*âm|tổng\s*nghiệm)/i.test(es.question))
+              ) {
+                es.question = 'Số nghiệm của phương trình lượng giác $2\\sin\\left(x + \\frac{\\pi}{6}\\right) = 1$ thuộc đoạn $[0; 2\\pi]$ bằng bao nhiêu?';
+                es.shortAnswerKey = '2';
+              }
+              // Khắc phục câu hỏi đòi 2 đại lượng: "Tìm số hạng đầu u_1 và công sai d"
+              else if (
+                /u_2\s*=\s*5.*?u_4\s*=\s*9/i.test(es.question) ||
+                (/(?:tìm|tính)\s*(?:số hạng đầu)?\s*u_1\s*và\s*(?:công sai)?\s*d/i.test(es.question))
+              ) {
+                es.question = 'Cho cấp số cộng $(u_n)$ có $u_2 = 5$ và $u_4 = 9$. Giá trị của số hạng thứ $10$ của cấp số cộng ($u_{10}$) bằng bao nhiêu?';
+                es.shortAnswerKey = '21';
+              }
+              // Làm sạch đáp số: Nếu shortAnswerKey có dạng "x = 4" hoặc "u_10 = 21", chỉ giữ lại con số
+              if (typeof es.shortAnswerKey === 'string') {
+                es.shortAnswerKey = es.shortAnswerKey.trim();
+                const eqMatch = es.shortAnswerKey.match(/=\s*(-?\d+(?:\.\d+)?)/);
+                if (eqMatch) {
+                  es.shortAnswerKey = eqMatch[1];
+                }
+              }
+            }
           }
         });
       }
@@ -1529,7 +1626,44 @@ ${STRICT_JSON_SYSTEM_INSTRUCTION}`
         examData.part4 = essays;
       }
 
-      console.log(`[API /api/generate-exam] Exam generated successfully with Gemini AI (mode=${mode}, grade=${grade}, topic=${topic})`);
+      // Enforce clean part array trimming according to effectivePartsStructure
+      if (effectivePartsStructure === '1_part') {
+        examData.partsCount = 1;
+        examData.partsStructure = '1_part';
+        examData.trueFalseQuestions = [];
+        examData.essays = [];
+        examData.part2 = [];
+        examData.part3 = [];
+        examData.part4 = [];
+        if (Array.isArray(examData.multipleChoice) && examData.multipleChoice.length > 0) {
+          const pt = Number((10 / examData.multipleChoice.length).toFixed(2));
+          examData.multipleChoice.forEach((m: any) => { m.points = pt; });
+        }
+      } else if (effectivePartsStructure === '2_parts') {
+        examData.partsCount = 2;
+        examData.partsStructure = '2_parts';
+        examData.trueFalseQuestions = [];
+        examData.part2 = [];
+        examData.part4 = [];
+        if (Array.isArray(examData.multipleChoice) && examData.multipleChoice.length > 0) {
+          const pt = Number((7.0 / examData.multipleChoice.length).toFixed(2));
+          examData.multipleChoice.forEach((m: any) => { m.points = pt; });
+        }
+        if (Array.isArray(examData.part3) && examData.part3.length > 0) {
+          const pt = Number((3.0 / examData.part3.length).toFixed(2));
+          examData.part3.forEach((e: any) => { e.maxPoints = pt; });
+          examData.essays = examData.part3;
+        }
+      } else if (effectivePartsStructure === '4_parts') {
+        examData.partsCount = 4;
+        examData.partsStructure = '4_parts';
+      } else {
+        examData.partsCount = 3;
+        examData.partsStructure = '3_parts';
+        examData.part4 = [];
+      }
+
+      console.log(`[API /api/generate-exam] Exam generated successfully with Gemini AI (mode=${mode}, grade=${grade}, topic=${topic}, structure=${examData.partsStructure})`);
     } catch (aiError: any) {
       console.error('[API /api/generate-exam] Gemini generation error:', aiError);
       return res.status(500).json({

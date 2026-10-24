@@ -22,6 +22,8 @@ import {
   HelpCircle,
   Camera,
   ArrowRight,
+  ArrowLeft,
+  Award,
   FileText,
   FileCheck,
   Search,
@@ -146,6 +148,9 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
   const [studentClass, setStudentClass] = useState<string>(initialClass);
   const [studentId, setStudentId] = useState<string>(initialSbd);
 
+  const isTeacherTesting = currentUser?.role === 'teacher' || currentUser?.role === 'admin';
+  const isStudent = currentUser?.role === 'student';
+
   // Sync if currentUser changes
   useEffect(() => {
     if (currentUser && currentUser.role === 'student') {
@@ -153,11 +158,31 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
       if (currentUser.className) setStudentClass(currentUser.className);
       if (currentUser.sbd || currentUser.username) setStudentId(currentUser.sbd || currentUser.username);
     }
+    if (currentUser && (currentUser.role === 'teacher' || currentUser.role === 'admin')) {
+      setIsExamStarted(true);
+      setStudentPortalTab('exam');
+    }
   }, [currentUser]);
 
-  // Tab mode for Student Portal: 'exam' (doing exam) or 'dashboard' (viewing assigned exams list)
-  const [studentPortalTab, setStudentPortalTab] = useState<'exam' | 'assigned_list'>('exam');
-  const [isExamStarted, setIsExamStarted] = useState<boolean>(false);
+  // Tab mode for Student Portal: 'exam' (doing exam) or 'assigned_list' (Trang cá nhân học sinh)
+  const [studentPortalTab, setStudentPortalTab] = useState<'exam' | 'assigned_list'>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get('exam') || p.get('examId') || p.get('code')) return 'exam';
+    }
+    // Học sinh khi đăng nhập sẽ vào trang cá nhân học sinh trước để chọn đề
+    if (currentUser?.role === 'student') return 'assigned_list';
+    // Giáo viên làm thử hoặc link trực tiếp thì vào phòng thi ngay
+    return 'exam';
+  });
+
+  const [isExamStarted, setIsExamStarted] = useState<boolean>(() => {
+    // Giáo viên làm thử -> vào làm luôn, không popup
+    if (currentUser?.role === 'teacher' || currentUser?.role === 'admin') return true;
+    // Học sinh đã đăng nhập -> khi mở đề là vào làm luôn, không popup
+    if (currentUser?.role === 'student') return true;
+    return false;
+  });
   const [entryError, setEntryError] = useState<string | null>(null);
   const [isEditInfoOpen, setIsEditInfoOpen] = useState<boolean>(false);
   const [isNameInputFocused, setIsNameInputFocused] = useState<boolean>(false);
@@ -176,12 +201,40 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
   const [tfAnswers, setTfAnswers] = useState<Record<string, Record<string, boolean | null>>>({});
   const [shortAnswers, setShortAnswers] = useState<Record<string, string>>({});
 
+  // Detect whether exam has 4 parts (Part 1 MC, Part 2 TF, Part 3 Short Answer, Part 4 Essay)
+  const is4Parts =
+    exam?.partsStructure === '4_parts' ||
+    (exam?.part4 && exam.part4.length > 0) ||
+    (exam?.essays &&
+      exam.essays.some((e) => e.type === 'short_answer' || (!e.type && e.shortAnswerKey)) &&
+      exam.essays.some((e) => e.type === 'essay' || (!e.shortAnswerKey && !e.type)));
+
+  const part3Questions = React.useMemo(() => {
+    if (!exam) return [];
+    if (exam.part3 && exam.part3.length > 0) return exam.part3;
+    if (is4Parts && exam.essays) {
+      return exam.essays.filter((e) => e.type === 'short_answer' || (!e.type && e.shortAnswerKey));
+    }
+    return exam.essays || [];
+  }, [exam, is4Parts]);
+
+  const part4Questions = React.useMemo(() => {
+    if (!exam) return [];
+    if (exam.part4 && exam.part4.length > 0) return exam.part4;
+    if (is4Parts && exam.essays) {
+      return exam.essays.filter((e) => e.type === 'essay' || (!e.shortAnswerKey && !e.type));
+    }
+    return [];
+  }, [exam, is4Parts]);
+
   // Detect whether Part 3 is short answer or essay from exam structure
   const initialPart3Type =
-    exam?.part3Type ||
-    (exam?.essays?.length && exam.essays.every((e) => e.type === 'short_answer')
+    is4Parts
       ? 'short_answer'
-      : 'essay');
+      : (exam?.part3Type ||
+        (exam?.essays?.length && exam.essays.every((e) => e.type === 'short_answer')
+          ? 'short_answer'
+          : 'essay'));
 
   const [part3Mode, setPart3Mode] = useState<'short_answer' | 'essay'>(initialPart3Type);
   const [essayGradingData, setEssayGradingData] = useState<
@@ -215,6 +268,8 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     mc: number;
     tf: number;
     essay: number;
+    p3?: number;
+    p4?: number;
     total: number;
   } | null>(null);
 
@@ -312,8 +367,15 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
           ? 'short_answer'
           : 'essay');
       setPart3Mode(p3);
+      setAssignedExamCode(exam.examCode);
+      if (isTeacherTesting || isStudent) {
+        setIsExamStarted(true);
+        if (isTeacherTesting) {
+          setStudentPortalTab('exam');
+        }
+      }
     }
-  }, [exam?.id]);
+  }, [exam?.id, isTeacherTesting, isStudent]);
 
   const isExamLocked = isSubmitted || isTimeUp;
 
@@ -498,42 +560,66 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     });
     tfScore = Math.round((Number(tfScore) || 0) * 100) / 100;
 
-    // 3. Essay / Short Answer Score
-    let essayScore = 0;
-    if (part3Mode === 'short_answer') {
-      exam.essays.forEach((essay) => {
+    // 3. Essay / Short Answer Score (Supports 1, 2, 3, or 4 parts)
+    let p3Score = 0;
+    let p4Score = 0;
+
+    if (part4Questions.length > 0) {
+      // 4-part exam: Part 3 is strictly short answers, Part 4 is essays
+      part3Questions.forEach((essay) => {
         const studentAns = (shortAnswers[essay.id] || '').trim();
-        if (studentAns) {
-          if (essay.shortAnswerKey) {
-            const isCorrect = isMathShortAnswerCorrect(studentAns, essay.shortAnswerKey);
-            if (isCorrect) {
-              essayScore = (Number(essayScore) || 0) + (Number(essay.maxPoints) || 0.5);
-            }
-          } else {
-            essayScore = (Number(essayScore) || 0) + (Number(essay.maxPoints) || 0.5);
+        if (studentAns && essay.shortAnswerKey) {
+          if (isMathShortAnswerCorrect(studentAns, essay.shortAnswerKey)) {
+            p3Score += Number(essay.maxPoints) || 0.5;
           }
         }
       });
-    } else {
-      exam.essays.forEach((essay) => {
+
+      part4Questions.forEach((essay) => {
         const studentUpload = essayGradingData[essay.id];
         const graded = studentUpload?.grading;
         const typedAns = (studentUpload?.typedSolution || shortAnswers[essay.id] || '').trim();
-        // Cho phép học sinh tải ảnh HOẶC nhập đáp án cuối cùng vào ô text; nếu đáp án cuối cùng khớp thì tự động chấm điểm tối đa
-        let autoFullPoints = false;
-        if (essay.shortAnswerKey && typedAns) {
-          if (isMathShortAnswerCorrect(typedAns, essay.shortAnswerKey)) {
-            autoFullPoints = true;
-          }
-        }
-        if (autoFullPoints) {
-          essayScore = (Number(essayScore) || 0) + (Number(essay.maxPoints) || 1.0);
+        if (essay.shortAnswerKey && typedAns && isMathShortAnswerCorrect(typedAns, essay.shortAnswerKey)) {
+          p4Score += Number(essay.maxPoints) || 1.0;
         } else if (graded && typeof graded.totalScore === 'number') {
-          essayScore = (Number(essayScore) || 0) + (Number(graded.totalScore) || 0);
+          p4Score += Number(graded.totalScore) || 0;
         }
       });
+    } else {
+      if (part3Mode === 'short_answer') {
+        part3Questions.forEach((essay) => {
+          const studentAns = (shortAnswers[essay.id] || '').trim();
+          if (studentAns) {
+            if (essay.shortAnswerKey) {
+              const isCorrect = isMathShortAnswerCorrect(studentAns, essay.shortAnswerKey);
+              if (isCorrect) {
+                p3Score += Number(essay.maxPoints) || 0.5;
+              }
+            } else {
+              p3Score += Number(essay.maxPoints) || 0.5;
+            }
+          }
+        });
+      } else {
+        part3Questions.forEach((essay) => {
+          const studentUpload = essayGradingData[essay.id];
+          const graded = studentUpload?.grading;
+          const typedAns = (studentUpload?.typedSolution || shortAnswers[essay.id] || '').trim();
+          let autoFullPoints = false;
+          if (essay.shortAnswerKey && typedAns) {
+            if (isMathShortAnswerCorrect(typedAns, essay.shortAnswerKey)) {
+              autoFullPoints = true;
+            }
+          }
+          if (autoFullPoints) {
+            p3Score += Number(essay.maxPoints) || 1.0;
+          } else if (graded && typeof graded.totalScore === 'number') {
+            p3Score += Number(graded.totalScore) || 0;
+          }
+        });
+      }
     }
-    essayScore = Math.round((Number(essayScore) || 0) * 100) / 100;
+    const essayScore = Math.round((Number(p3Score + p4Score) || 0) * 100) / 100;
 
     const totalRaw = (Number(mcScore) || 0) + (Number(tfScore) || 0) + (Number(essayScore) || 0);
     const finalTotal = Math.min(10, Math.round((Number(totalRaw) || 0) * 100) / 100);
@@ -542,6 +628,8 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
       mc: Number(mcScore) || 0,
       tf: Number(tfScore) || 0,
       essay: Number(essayScore) || 0,
+      p3: Math.round(Number(p3Score) * 100) / 100,
+      p4: Math.round(Number(p4Score) * 100) / 100,
       total: Number(finalTotal) || 0,
     });
     setIsSubmitted(true);
@@ -626,6 +714,283 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     }
   };
 
+  // =========================================================================
+  // VIEW: TRANG CÁ NHÂN HỌC SINH (Student Portal & Chọn bài kiểm tra để làm)
+  // =========================================================================
+  if (studentPortalTab === 'assigned_list' || (!exam && isStudent)) {
+    const mySubmissions = submissions.filter((s) => {
+      const sName = (s.studentName || '').trim().toLowerCase();
+      const sId = (s.studentId || '').trim().toLowerCase();
+      const myName = (studentName || currentUser?.fullName || '').trim().toLowerCase();
+      const myId = (studentId || currentUser?.sbd || currentUser?.username || '').trim().toLowerCase();
+      return (myName && sName === myName) || (myId && sId === myId);
+    });
+
+    const completedExamCount = mySubmissions.length;
+    const scores = mySubmissions
+      .map((s) => Number(s.totalScore))
+      .filter((n) => typeof n === 'number' && !isNaN(n) && isFinite(n));
+    const bestScore = scores.length > 0 ? Math.max(...scores).toFixed(2) : null;
+
+    // Lọc các bài thi: đề được giao cho lớp của học sinh hoặc đề công khai
+    const myClassNorm = (studentClass || currentUser?.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+    const relevantExams = savedExams.filter((ex) => {
+      if (!myClassNorm) return true;
+      if (ex.assignedClassNames && ex.assignedClassNames.length > 0) {
+        return ex.assignedClassNames.some(
+          (c) => c.trim().toUpperCase().replace(/^LỚP\s+/i, '') === myClassNorm
+        );
+      }
+      if (ex.className) {
+        return ex.className.trim().toUpperCase().replace(/^LỚP\s+/i, '') === myClassNorm;
+      }
+      return true;
+    });
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-300">
+        {/* Profile Card */}
+        <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 to-sky-400 text-white flex items-center justify-center font-black text-2xl shadow-lg shadow-indigo-500/30 shrink-0">
+                {(currentUser?.fullName || studentName || 'H').substring(0, 1).toUpperCase()}
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 px-2.5 py-0.5 rounded-full">
+                    Trang Cá Nhân Học Sinh
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Đã Đăng Nhập
+                  </span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                  {currentUser?.fullName || studentName || 'Học sinh'}
+                </h1>
+                <div className="text-xs text-indigo-200/90 font-medium flex items-center gap-3 flex-wrap">
+                  <span>Lớp: <b className="text-white font-bold">{studentClass || currentUser?.className || '12'}</b></span>
+                  <span>•</span>
+                  <span>SBD: <b className="text-amber-300 font-mono font-bold">{studentId || currentUser?.sbd || currentUser?.username || 'Chưa cấp'}</b></span>
+                  <span>•</span>
+                  <span>Trường: <b className="text-white font-bold">{currentUser?.school || 'THPT Võ Thị Sáu'}</b></span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {onViewGradebook && (
+                <button
+                  type="button"
+                  onClick={onViewGradebook}
+                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/20 transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+                >
+                  <Trophy className="w-4 h-4 text-amber-300" />
+                  <span>Xem Bảng Điểm & Lời Giải</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Thống kê 3 thẻ */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">Bài kiểm tra được giao</span>
+            <div className="text-2xl font-black text-slate-900 mt-1 flex items-center gap-2">
+              <BookOpen className="w-6 h-6 text-indigo-600" />
+              <span>{relevantExams.length} <span className="text-xs font-normal text-slate-500">đề thi</span></span>
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">Bài thi đã nộp</span>
+            <div className="text-2xl font-black text-emerald-700 mt-1 flex items-center gap-2">
+              <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              <span>{completedExamCount} <span className="text-xs font-normal text-slate-500">lần làm</span></span>
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs">
+            <span className="text-xs font-bold text-slate-500">Điểm cao nhất</span>
+            <div className="text-2xl font-black text-amber-600 mt-1 flex items-center gap-2">
+              <Trophy className="w-6 h-6 text-amber-500" />
+              <span>{bestScore ? `${bestScore}đ` : '--'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Danh sách bài kiểm tra do Giáo viên tạo */}
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+          <div>
+            <h2 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-indigo-600" />
+              <span>Bài Kiểm Tra Của Lớp {studentClass || currentUser?.className || ''}</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Chọn bài kiểm tra bên dưới và bấm &quot;Bắt Đầu Làm Bài&quot; để tiến hành làm bài trực tuyến.
+            </p>
+          </div>
+
+          {relevantExams.length === 0 ? (
+            <div className="text-center py-12 space-y-2 border-2 border-dashed border-slate-200 rounded-2xl">
+              <BookOpen className="w-10 h-10 text-slate-300 mx-auto" />
+              <p className="text-sm font-bold text-slate-600">Hiện tại chưa có bài kiểm tra nào được giao cho lớp em</p>
+              <p className="text-xs text-slate-400">Thầy/Cô sẽ kích hoạt hoặc giao bài kiểm tra khi đến giờ làm bài.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {relevantExams.map((ex) => {
+                const mySubs = submissions.filter(
+                  (s) =>
+                    (s.examId === ex.id || s.examCode === ex.examCode) &&
+                    ((studentName && s.studentName.trim().toLowerCase() === studentName.trim().toLowerCase()) ||
+                      (studentId && s.studentId.trim().toLowerCase() === studentId.trim().toLowerCase()))
+                );
+                const isDone = mySubs.length > 0;
+                const draftKey = `edumath_progress_${ex.id || ex.examCode}_${studentId || studentName || 'guest'}`;
+                const hasDraft = typeof window !== 'undefined' && !!localStorage.getItem(draftKey);
+                const maxAtt = ex.maxAttempts !== undefined ? ex.maxAttempts : 1;
+                const isOver = maxAtt > 0 && mySubs.length >= maxAtt;
+                const highestSc = isDone ? Math.max(...mySubs.map((s) => s.totalScore)).toFixed(2) : null;
+
+                return (
+                  <div
+                    key={ex.id}
+                    className="p-5 rounded-2xl border-2 border-slate-200 bg-white hover:border-indigo-400 hover:shadow-md transition-all flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-mono text-xs px-2.5 py-1 bg-slate-900 text-white rounded-lg font-black">
+                          {ex.examCode}
+                        </span>
+                        <span
+                          className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full ${
+                            isDone
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : hasDraft
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          }`}
+                        >
+                          {isDone ? `Đã nộp (${mySubs.length} lần)` : hasDraft ? 'Đang làm dở' : 'Chưa làm'}
+                        </span>
+                      </div>
+
+                      <h3 className="font-black text-slate-900 text-base line-clamp-2">
+                        {ex.title}
+                      </h3>
+
+                      <div className="text-xs text-slate-500 space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Thời gian: <b className="text-emerald-700 font-bold">{ex.durationMinutes || 45} phút</b></span>
+                        </div>
+                        <div>
+                          Cấu trúc: <b className="text-slate-700 font-semibold">{ex.multipleChoice.length} câu TN • {ex.trueFalseQuestions.length} câu Đ/S • {ex.essays.length} câu TL</b>
+                        </div>
+                        {isDone && (
+                          <div className="text-xs text-emerald-700 font-black pt-1 flex items-center gap-1">
+                            <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                            <span>Điểm cao nhất: {highestSc} / 10 điểm</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onSelectExam) onSelectExam(ex);
+                          setStudentPortalTab('exam');
+                          setIsExamStarted(true);
+                          setIsSubmitted(false);
+                        }}
+                        className={`w-full py-3 px-4 rounded-xl font-black text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          isOver
+                            ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
+                            : hasDraft
+                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20 active:scale-98'
+                        }`}
+                      >
+                        {isOver ? (
+                          <>
+                            <Eye className="w-4 h-4" />
+                            <span>Xem Lại Đề & Kết Quả</span>
+                          </>
+                        ) : hasDraft ? (
+                          <>
+                            <RotateCcw className="w-4 h-4" />
+                            <span>Tiếp Tục Làm Bài Dở ➔</span>
+                          </>
+                        ) : (
+                          <>
+                            <GraduationCap className="w-4 h-4" />
+                            <span>Bắt Đầu Làm Bài ➔</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Lịch sử làm bài thi */}
+        {mySubmissions.length > 0 && (
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+            <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+              <History className="w-5 h-5 text-indigo-600" />
+              <span>Lịch Sử Các Bài Thi Đã Nộp Của Em</span>
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="p-3">Mã Đề</th>
+                    <th className="p-3">Thời Gian Nộp</th>
+                    <th className="p-3 text-center">Điểm TN</th>
+                    <th className="p-3 text-center">Điểm TL</th>
+                    <th className="p-3 text-center">Tổng Điểm</th>
+                    <th className="p-3 text-center">Xếp Loại</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {mySubmissions.map((sub) => {
+                    const sc = Number(sub.totalScore) || 0;
+                    return (
+                      <tr key={sub.id} className="hover:bg-slate-50">
+                        <td className="p-3 font-mono font-bold text-slate-900">{sub.examCode}</td>
+                        <td className="p-3 text-slate-500">{sub.submittedAt}</td>
+                        <td className="p-3 text-center font-bold text-slate-700">{(sub.mcScore || 0).toFixed(2)}</td>
+                        <td className="p-3 text-center font-bold text-slate-700">{(sub.essayScore || 0).toFixed(2)}</td>
+                        <td className="p-3 text-center">
+                          <span className={`px-2 py-0.5 rounded-md font-black text-xs ${
+                            sc >= 8 ? 'bg-emerald-100 text-emerald-800' : sc >= 5 ? 'bg-blue-100 text-blue-800' : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {sc.toFixed(2)} / 10
+                          </span>
+                        </td>
+                        <td className="p-3 text-center font-bold">
+                          {sc >= 8 ? 'Giỏi' : sc >= 6.5 ? 'Khá' : sc >= 5 ? 'Trung Bình' : 'Yếu'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // If no exam exists yet, show empty state
   if (!exam) {
     return (
@@ -639,7 +1004,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
           </span>
           <h3 className="text-xl font-black text-slate-900 mt-2">Chưa Có Đề Thi Nào Được Kích Hoạt</h3>
           <p className="text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
-            Hệ thống hiện chưa có đề thi nào được lưu trên cơ sở dữ liệu Cloud Firebase. Giáo viên vui lòng chuyển sang tab <strong className="text-slate-800">Giáo Viên Tạo Đề</strong> để tạo đề thi mới hoặc chia sẻ link đề cho học sinh!
+            Hệ thống hiện chưa có đề thi nào được kích hoạt. Thầy/Cô vui lòng chuyển sang tab <strong className="text-slate-800">Quản Lý Đề Thi</strong> để tạo hoặc chọn đề thi làm thử!
           </p>
         </div>
         {onGoToTeacher && (
@@ -650,7 +1015,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
               className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md transition-all inline-flex items-center gap-2 cursor-pointer"
             >
               <Sparkles className="w-4 h-4" />
-              Chuyển sang Giáo Viên Tạo Đề
+              Chuyển sang Quản Lý Đề Thi
             </button>
           </div>
         )}
@@ -658,8 +1023,12 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     );
   }
 
-  // Answer stats & calculation for Navigation Grid
-  const totalQuestions = exam.multipleChoice.length + exam.trueFalseQuestions.length + exam.essays.length;
+  // Answer stats & calculation for Navigation Grid (Supports 1, 2, 3, or 4 parts)
+  const totalQuestions =
+    (exam.multipleChoice?.length || 0) +
+    (exam.trueFalseQuestions?.length || 0) +
+    part3Questions.length +
+    part4Questions.length;
 
   const isMcAnswered = (id: string) => !!mcAnswers[id];
   const isTfAnswered = (id: string) => {
@@ -667,17 +1036,16 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
     return subs ? Object.keys(subs).length > 0 : false;
   };
   const isEssayAnswered = (id: string) => {
-    if (part3Mode === 'short_answer') {
-      return !!shortAnswers[id]?.trim();
-    }
+    if (shortAnswers[id]?.trim()) return true;
     const ans = essayGradingData[id];
     return !!(ans?.imageUrl || (ans?.imageUrls && ans.imageUrls.length > 0) || ans?.typedSolution?.trim());
   };
 
-  const answeredMcCount = exam.multipleChoice.filter((q) => isMcAnswered(q.id)).length;
-  const answeredTfCount = exam.trueFalseQuestions.filter((q) => isTfAnswered(q.id)).length;
-  const answeredEssayCount = exam.essays.filter((q) => isEssayAnswered(q.id)).length;
-  const totalAnsweredCount = answeredMcCount + answeredTfCount + answeredEssayCount;
+  const answeredMcCount = (exam.multipleChoice || []).filter((q) => isMcAnswered(q.id)).length;
+  const answeredTfCount = (exam.trueFalseQuestions || []).filter((q) => isTfAnswered(q.id)).length;
+  const answeredPart3Count = part3Questions.filter((q) => isEssayAnswered(q.id)).length;
+  const answeredPart4Count = part4Questions.filter((q) => isEssayAnswered(q.id)).length;
+  const totalAnsweredCount = answeredMcCount + answeredTfCount + answeredPart3Count + answeredPart4Count;
   const completionPercentage = Math.round((totalAnsweredCount / Math.max(1, totalQuestions)) * 100);
 
   // Filtered roster suggestions (Strictly valid students only)
@@ -723,7 +1091,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
       {/* 1. MANDATORY ENTRY MODAL: ĐIỂM DANH NHANH 2 Ô TRƯỚC KHI BẮT ĐẦU           */}
       {/* Bắt đầu bấm giờ làm bài ngay khi học sinh nhấn "Bắt đầu làm bài"           */}
       {/* ========================================================================= */}
-      {!isExamStarted && !isSubmitted && (
+      {!isExamStarted && !isSubmitted && !isTeacherTesting && !isStudent && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95 duration-200 text-slate-900 relative">
             {/* Nút thoát / Về trang Giáo viên */}
@@ -1008,148 +1376,74 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
         </div>
       )}
 
-      {/* Top Navigation Bar: Chọn giữa Làm bài thi trực tiếp & Danh sách bài thi đã được giao */}
-      <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setStudentPortalTab('exam')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
-              studentPortalTab === 'exam'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-            }`}
-          >
-            <GraduationCap className="w-4 h-4" />
-            <span>Phòng Làm Bài Thi</span>
-          </button>
+      {/* Top Header: Chế độ làm thử của Giáo viên HOẶC Thông tin Học sinh đang làm bài */}
+      {isTeacherTesting ? (
+        <div className="bg-gradient-to-r from-amber-600 via-indigo-700 to-indigo-900 text-white p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center font-bold shrink-0">
+              <Sparkles className="w-5 h-5 text-amber-200" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-black/30 px-2.5 py-0.5 rounded-md">
+                  Chế độ làm thử của Giáo viên
+                </span>
+                <span className="text-xs font-bold text-amber-100">
+                  Thầy/Cô: {currentUser?.fullName || 'Trịnh Tuấn Kiệt'}
+                </span>
+              </div>
+              <p className="text-xs text-amber-100/90 mt-0.5 font-medium">
+                Thầy/Cô đang trực tiếp làm thử đề thi trên giao diện của học sinh để kiểm tra câu hỏi và đáp án.
+              </p>
+            </div>
+          </div>
+          {onGoToTeacher && (
+            <button
+              type="button"
+              onClick={onGoToTeacher}
+              className="px-4 py-2 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-black transition-all shadow-sm flex items-center gap-1.5 cursor-pointer shrink-0 self-start sm:self-auto"
+            >
+              <ArrowLeft className="w-4 h-4 text-indigo-600" />
+              <span>Về Trang Quản Lý Đề Thi</span>
+            </button>
+          )}
+        </div>
+      ) : isStudent ? (
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 font-bold shrink-0">
+              <GraduationCap className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                Phòng Thi Trực Tuyến GDPT 2018
+              </span>
+              <div className="text-sm font-black text-slate-900 flex items-center gap-2 flex-wrap">
+                <span>{studentName}</span>
+                {studentClass && (
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-xs text-indigo-700 font-bold">
+                    Lớp {studentClass}
+                  </span>
+                )}
+                {studentId && (
+                  <span className="text-xs text-slate-500 font-mono font-semibold">
+                    SBD: {studentId}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
 
           <button
             type="button"
             onClick={() => setStudentPortalTab('assigned_list')}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-2 ${
-              studentPortalTab === 'assigned_list'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-            }`}
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
           >
-            <FolderKanban className="w-4 h-4 text-emerald-600" />
-            <span>Đề Thi Được Giao ({savedExams.length})</span>
+            <ArrowLeft className="w-4 h-4 text-slate-600" />
+            <span>Về Trang Cá Nhân Học Sinh</span>
           </button>
         </div>
-
-        {/* Student personal info pill */}
-        <div className="text-xs text-slate-600 flex items-center gap-2">
-          <span className="font-bold">Học sinh:</span>
-          <span className="font-extrabold text-indigo-700">{studentName || 'Chưa đăng nhập'}</span>
-          {studentClass && (
-            <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-[11px] font-bold text-indigo-800">
-              Lớp {studentClass}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* VIEW DANH SÁCH BÀI KIỂM TRA GIÁO VIÊN ĐÃ GIAO (CÁCH 2) */}
-      {studentPortalTab === 'assigned_list' && (
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-base sm:text-lg font-black text-slate-900">
-                Danh Sách Bài Thi Giáo Viên Đã Giao Cho Em
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Bấm vào bài thi để bắt đầu làm bài. Tiến trình làm bài và số lần nộp bài được ghi nhận tự động.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {savedExams.map((ex) => {
-              const mySubs = submissions.filter(
-                (s) =>
-                  (s.examId === ex.id || s.examCode === ex.examCode) &&
-                  ((studentName && s.studentName.trim().toLowerCase() === studentName.trim().toLowerCase()) ||
-                    (studentId && s.studentId.trim().toLowerCase() === studentId.trim().toLowerCase()))
-              );
-              const isDone = mySubs.length > 0;
-              const hasDraft =
-                typeof window !== 'undefined' &&
-                !!localStorage.getItem(`edumath_progress_${ex.id || ex.examCode}_${studentId || studentName || 'guest'}`);
-              const maxAtt = ex.maxAttempts !== undefined ? ex.maxAttempts : 1;
-              const isOver = maxAtt > 0 && mySubs.length >= maxAtt;
-
-              return (
-                <div
-                  key={ex.id}
-                  className="p-5 rounded-2xl border border-slate-200 bg-white hover:border-indigo-400 hover:shadow-md transition-all flex flex-col justify-between space-y-4"
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs px-2 py-0.5 bg-slate-100 text-slate-800 rounded font-bold">
-                        {ex.examCode}
-                      </span>
-                      <span
-                        className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
-                          isDone
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : hasDraft
-                            ? 'bg-amber-100 text-amber-900'
-                            : 'bg-indigo-50 text-indigo-700'
-                        }`}
-                      >
-                        {isDone
-                          ? `Đã nộp (${mySubs.length} lần)`
-                          : hasDraft
-                          ? 'Đang làm dở'
-                          : 'Chưa làm'}
-                      </span>
-                    </div>
-
-                    <h4 className="font-black text-slate-900 text-sm line-clamp-2">{ex.title}</h4>
-
-                    <div className="text-xs text-slate-500 space-y-0.5">
-                      <div>Khối lớp: <b className="text-slate-700">Lớp {ex.grade}</b></div>
-                      <div>Thời gian: <b className="text-emerald-700">{ex.durationMinutes || 45} phút</b></div>
-                      <div>
-                        Quy định: <b className="text-slate-700">{maxAtt === 0 ? 'Không giới hạn lần thi' : `Tối đa ${maxAtt} lần làm`}</b>
-                      </div>
-                      {isDone && (
-                        <div className="text-amber-800 font-bold pt-1">
-                          Điểm cao nhất: {Math.max(...mySubs.map((s) => s.totalScore)).toFixed(2)}đ
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (onSelectExam) onSelectExam(ex);
-                        setStudentPortalTab('exam');
-                        setIsExamStarted(false);
-                        setIsSubmitted(false);
-                      }}
-                      className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                        isOver
-                          ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          : hasDraft
-                          ? 'bg-amber-500 hover:bg-amber-600 text-white'
-                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                      }`}
-                    >
-                      <span>
-                        {isOver ? 'Xem Điểm & Đề Bài' : hasDraft ? 'Tiếp Tục Làm Bài Dở ➔' : 'Vào Làm Bài Này ➔'}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      ) : null}
 
       {/* Top Header Card: Exam Metadata & Student Info */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
@@ -1200,42 +1494,52 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
         </div>
 
         {/* Official Student Identification Display */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3.5 border-t border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 shrink-0 shadow-2xs">
-              <User className="w-5 h-5" />
+        {!isTeacherTesting && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3.5 border-t border-slate-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 shrink-0 shadow-2xs">
+                <User className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                  Thí Sinh Dự Thi
+                </span>
+                <h3 className="text-sm sm:text-base font-black text-slate-900">
+                  {studentName || 'Học sinh'}
+                  {studentClass && (
+                    <>
+                      <span className="text-slate-300 font-normal mx-2">•</span>
+                      Lớp: <span className="text-indigo-700 font-extrabold">{studentClass}</span>
+                    </>
+                  )}
+                  {studentId && (
+                    <>
+                      <span className="text-slate-300 font-normal mx-2">•</span>
+                      SBD: <span className="text-emerald-700 font-mono font-bold">{studentId}</span>
+                    </>
+                  )}
+                </h3>
+              </div>
             </div>
-            <div>
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                Thí Sinh Dự Thi
-              </span>
-              <h3 className="text-sm sm:text-base font-black text-slate-900">
-                {studentName || 'Chưa nhập họ tên'}
-                <span className="text-slate-300 font-normal mx-2">•</span>
-                Lớp: <span className="text-indigo-700 font-extrabold">{studentClass || '12'}</span>
-                <span className="text-slate-300 font-normal mx-2">•</span>
-                SBD: <span className="text-emerald-700 font-mono font-bold">{studentId || 'Chưa có'}</span>
-              </h3>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+              <div className="flex items-center gap-1.5 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-200 text-xs font-mono font-bold text-indigo-900">
+                <span>MÃ ĐỀ:</span>
+                <span className="text-indigo-700">{exam.examCode}</span>
+              </div>
+
+              {!isExamLocked && !currentUser && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditInfoOpen(true)}
+                  className="px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer border border-slate-200"
+                >
+                  Sửa thông tin
+                </button>
+              )}
             </div>
           </div>
-
-          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-            <div className="flex items-center gap-1.5 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-200 text-xs font-mono font-bold text-indigo-900">
-              <span>MÃ ĐỀ:</span>
-              <span className="text-indigo-700">{exam.examCode}</span>
-            </div>
-
-            {!isExamLocked && (
-              <button
-                type="button"
-                onClick={() => setIsEditInfoOpen(true)}
-                className="px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer border border-slate-200"
-              >
-                Sửa thông tin
-              </button>
-            )}
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Submission Success Banner */}
@@ -1276,22 +1580,35 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
             </div>
 
             <div className="flex items-center gap-3 flex-wrap">
-              <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/20">
-                <span className="text-[10px] text-emerald-100 block">Phần I (TN)</span>
-                <span className="text-base font-bold">{calculatedScore.mc.toFixed(2)}đ</span>
-              </div>
+              {exam.multipleChoice.length > 0 && (
+                <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/20">
+                  <span className="text-[10px] text-emerald-100 block">Phần I (TN)</span>
+                  <span className="text-base font-bold">{calculatedScore.mc.toFixed(2)}đ</span>
+                </div>
+              )}
 
-              <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/20">
-                <span className="text-[10px] text-emerald-100 block">Phần II (Đ/S)</span>
-                <span className="text-base font-bold">{calculatedScore.tf.toFixed(2)}đ</span>
-              </div>
+              {exam.trueFalseQuestions.length > 0 && (
+                <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/20">
+                  <span className="text-[10px] text-emerald-100 block">Phần II (Đ/S)</span>
+                  <span className="text-base font-bold">{calculatedScore.tf.toFixed(2)}đ</span>
+                </div>
+              )}
 
-              <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/20">
-                <span className="text-[10px] text-emerald-100 block">
-                  Phần III ({part3Mode === 'short_answer' ? 'TL Ngắn' : 'Tự Luận'})
-                </span>
-                <span className="text-base font-bold">{calculatedScore.essay.toFixed(2)}đ</span>
-              </div>
+              {part3Questions.length > 0 && (
+                <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/20">
+                  <span className="text-[10px] text-emerald-100 block">
+                    Phần III ({part4Questions.length > 0 ? 'TL Ngắn' : (part3Mode === 'short_answer' ? 'TL Ngắn' : 'Tự Luận')})
+                  </span>
+                  <span className="text-base font-bold">{(calculatedScore.p3 ?? calculatedScore.essay).toFixed(2)}đ</span>
+                </div>
+              )}
+
+              {part4Questions.length > 0 && (
+                <div className="bg-white/10 px-3.5 py-2 rounded-xl text-center border border-white/20">
+                  <span className="text-[10px] text-emerald-100 block">Phần IV (Tự Luận)</span>
+                  <span className="text-base font-bold">{(calculatedScore.p4 ?? 0).toFixed(2)}đ</span>
+                </div>
+              )}
 
               <div className="bg-yellow-400 text-slate-900 px-5 py-2 rounded-xl text-center shadow-md">
                 <span className="text-[10px] font-bold block uppercase tracking-wide">Tổng Điểm</span>
@@ -1382,29 +1699,40 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
         <div className="lg:col-span-8 xl:col-span-9 space-y-6 pb-28 lg:pb-8">
           {/* Quick Section Anchors */}
           <div className="flex items-center gap-2 p-1.5 bg-white rounded-2xl border border-slate-200 overflow-x-auto text-xs">
-            <button
-              type="button"
-              onClick={() => scrollToQuestion('section-part1')}
-              className="px-3.5 py-1.5 rounded-xl font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors shrink-0"
-            >
-              Phần I: TN 4 Lựa chọn ({exam.multipleChoice.length} câu)
-            </button>
+            {exam.multipleChoice.length > 0 && (
+              <button
+                type="button"
+                onClick={() => scrollToQuestion('section-part1')}
+                className="px-3.5 py-1.5 rounded-xl font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors shrink-0 cursor-pointer"
+              >
+                Phần I: TN 4 Lựa chọn ({exam.multipleChoice.length} câu)
+              </button>
+            )}
             {exam.trueFalseQuestions.length > 0 && (
               <button
                 type="button"
                 onClick={() => scrollToQuestion('section-part2')}
-                className="px-3.5 py-1.5 rounded-xl font-bold bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors shrink-0"
+                className="px-3.5 py-1.5 rounded-xl font-bold bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors shrink-0 cursor-pointer"
               >
                 Phần II: Đúng / Sai ({exam.trueFalseQuestions.length} câu)
               </button>
             )}
-            {exam.essays.length > 0 && (
+            {part3Questions.length > 0 && (
               <button
                 type="button"
                 onClick={() => scrollToQuestion('section-part3')}
-                className="px-3.5 py-1.5 rounded-xl font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors shrink-0"
+                className="px-3.5 py-1.5 rounded-xl font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors shrink-0 cursor-pointer"
               >
-                Phần III: {part3Mode === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'} ({exam.essays.length} câu)
+                Phần III: {part4Questions.length > 0 ? 'Trả lời ngắn' : (part3Mode === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận')} ({part3Questions.length} câu)
+              </button>
+            )}
+            {part4Questions.length > 0 && (
+              <button
+                type="button"
+                onClick={() => scrollToQuestion('section-part4')}
+                className="px-3.5 py-1.5 rounded-xl font-bold bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors shrink-0 cursor-pointer"
+              >
+                Phần IV: Tự luận ({part4Questions.length} câu)
               </button>
             )}
           </div>
@@ -1737,7 +2065,10 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
           {/*   - Cho phép học sinh tải lên NHIỀU ẢNH (Trang 1, Trang 2...) từ thư viện  */}
           {/*     hoặc camera điện thoại, có thumbnail xem trước & nút xóa nếu chụp mờ. */}
           {/* ========================================================================= */}
-          {exam.essays?.length > 0 && (
+          {/* ========================================================================= */}
+          {/* PHẦN III: TRẢ LỜI NGẮN HOẶC TỰ LUẬN (THEO CẤU TRÚC ĐỀ)                     */}
+          {/* ========================================================================= */}
+          {part3Questions.length > 0 && (
             <div id="section-part3" className="space-y-4">
               <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 pb-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1746,56 +2077,56 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                       PHẦN III
                     </span>
                     <h3 className="text-base sm:text-lg font-black text-slate-900 mt-1">
-                      {part3Mode === 'short_answer'
+                      {part4Questions.length > 0 || part3Mode === 'short_answer'
                         ? 'CÂU HỎI TRẮC NGHIỆM TRẢ LỜI NGẮN'
                         : 'TỰ LUẬN GIẢI CHI TIẾT (CHẤM ĐIỂM BẰNG AI GEMINI VISION)'}
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      {part3Mode === 'short_answer'
+                      {part4Questions.length > 0 || part3Mode === 'short_answer'
                         ? 'Thí sinh tính toán và nhập đáp số chính xác vào ô trống.'
                         : 'Thí sinh làm bài ra giấy thi, chụp ảnh bài làm và gửi bài để AI chấm theo barem điểm từng bước.'}
                     </p>
                   </div>
 
-                  {/* Mode Selector */}
-                  <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 self-start sm:self-center shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setPart3Mode('short_answer')}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                        part3Mode === 'short_answer'
-                          ? 'bg-white text-indigo-700 shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      📝 Trả lời ngắn
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPart3Mode('essay')}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                        part3Mode === 'essay'
-                          ? 'bg-white text-emerald-700 shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      ✍️ Tự luận viết tay
-                    </button>
-                  </div>
+                  {/* Mode Selector (Chỉ hiển thị khi đề không có phần 4 tự luận riêng) */}
+                  {part4Questions.length === 0 && (
+                    <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 self-start sm:self-center shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setPart3Mode('short_answer')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          part3Mode === 'short_answer'
+                            ? 'bg-white text-indigo-700 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        📝 Trả lời ngắn
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPart3Mode('essay')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                          part3Mode === 'essay'
+                            ? 'bg-white text-emerald-700 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        ✍️ Tự luận viết tay
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {part3Mode === 'short_answer' ? (
+              {part4Questions.length > 0 || part3Mode === 'short_answer' ? (
                 /* ========================================================================= */
                 /* TRƯỜNG HỢP 1: TRẢ LỜI NGẮN                                                */
                 /* CHỈ hiển thị: Nội dung câu hỏi và 1 ô Input duy nhất để học sinh nhập     */
                 /* đáp số (placeholder: "Nhập kết quả...").                                   */
-                /* TUYỆT ĐỐI KHÔNG hiển thị barem chấm điểm, không hiển thị nút tải ảnh     */
-                /* hay camera, không có khung chấm AI.                                       */
                 /* ========================================================================= */
                 <div className="space-y-6">
-                  {exam.essays.map((essay, eIdx) => {
-                    const qNum = exam.multipleChoice.length + exam.trueFalseQuestions.length + eIdx + 1;
+                  {part3Questions.map((essay, eIdx) => {
+                    const qNum = (exam.multipleChoice?.length || 0) + (exam.trueFalseQuestions?.length || 0) + eIdx + 1;
                     const questionElementId = `question-${qNum}`;
                     const isDone = !!shortAnswers[essay.id]?.trim();
 
@@ -1857,7 +2188,7 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                             placeholder="Chạm vào đây để nhập đáp số toán học..."
                           />
 
-                          {/* Lời giải chi tiết sau khi kết thúc làm bài (Chỉ khi đã nộp bài và bật xem giải) */}
+                          {/* Lời giải chi tiết sau khi kết thúc làm bài */}
                           {isSubmitted && showDetailedSolutions && essay.shortAnswerKey && (() => {
                             const isCorrectAns = isMathShortAnswerCorrect(shortAnswers[essay.id] || '', essay.shortAnswerKey);
                             const displayKey = essay.shortAnswerKey.trim().startsWith('$') ? essay.shortAnswerKey : `$${essay.shortAnswerKey}$`;
@@ -1925,15 +2256,11 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                 </div>
               ) : (
                 /* ========================================================================= */
-                /* TRƯỜNG HỢP 2: TỰ LUẬN                                                     */
-                /* Hiển thị nội dung câu hỏi và thang điểm.                                  */
-                /* Khu vực nộp bài: Cho phép học sinh lựa chọn 2 phương thức song song:      */
-                /* Cách 1: Gõ bài giải trực tiếp bằng công cụ MathType (chuẩn SGK)          */
-                /* Cách 2: Viết ra giấy thi và chụp ảnh tải lên (nhiều trang)               */
+                /* TRƯỜNG HỢP 2: TỰ LUẬN (CHO ĐỀ 3 PHẦN KHI CHỌN MODE TỰ LUẬN)             */
                 /* ========================================================================= */
                 <div className="space-y-6">
-                  {exam.essays.map((essay, eIdx) => {
-                    const qNum = exam.multipleChoice.length + exam.trueFalseQuestions.length + eIdx + 1;
+                  {part3Questions.map((essay, eIdx) => {
+                    const qNum = (exam.multipleChoice?.length || 0) + (exam.trueFalseQuestions?.length || 0) + eIdx + 1;
                     return (
                       <div key={essay.id} id={`question-${qNum}`}>
                         <StudentEssayUpload
@@ -1959,6 +2286,53 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* PHẦN IV: CÂU HỎI TỰ LUẬN GIẢI CHI TIẾT (KHI ĐỀ CÓ 4 PHẦN)                */}
+          {/* ========================================================================= */}
+          {part4Questions.length > 0 && (
+            <div id="section-part4" className="space-y-4">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 pb-4">
+                <span className="text-[11px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 px-2.5 py-1 rounded-md border border-purple-100">
+                  PHẦN IV
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 mt-1">
+                  CÂU HỎI TỰ LUẬN GIẢI CHI TIẾT & BAREM ĐIỂM
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Thí sinh làm bài ra giấy thi, chụp ảnh bài làm và gửi bài để chấm theo barem điểm từng bước hoặc gõ lời giải trực tiếp.
+                </p>
+              </div>
+
+              <div className="space-y-6">
+                {part4Questions.map((essay, eIdx) => {
+                  const qNum = (exam.multipleChoice?.length || 0) + (exam.trueFalseQuestions?.length || 0) + part3Questions.length + eIdx + 1;
+                  return (
+                    <div key={essay.id} id={`question-${qNum}`}>
+                      <StudentEssayUpload
+                        essay={essay}
+                        studentName={studentName}
+                        studentClass={studentClass}
+                        backendUrl={backendUrl}
+                        disabled={isExamLocked}
+                        isStudentExamView={true}
+                        existingImageUrl={essayGradingData[essay.id]?.imageUrl}
+                        existingImageUrls={essayGradingData[essay.id]?.imageUrls}
+                        existingTypedSolution={essayGradingData[essay.id]?.typedSolution}
+                        existingResult={essayGradingData[essay.id]?.grading}
+                        onSolutionChange={(typedSolution, imageUrls) =>
+                          handleEssayGraded(essay.id, null, imageUrls?.[0] || '', imageUrls, typedSolution)
+                        }
+                        onGraded={(result, imageUrl, imageUrls, typedSolution) =>
+                          handleEssayGraded(essay.id, result, imageUrl, imageUrls, typedSolution)
+                        }
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -2121,15 +2495,15 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
               </div>
             )}
 
-            {/* Section 3: Essay numbers */}
-            {exam.essays.length > 0 && (
+            {/* Section 3: Part III Short Answer / Essay numbers */}
+            {part3Questions.length > 0 && (
               <div className="space-y-1.5 pt-2 border-t border-slate-100">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Phần III: {part3Mode === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'} ({exam.essays.length} câu)
+                  Phần III: {part4Questions.length > 0 ? 'Trả lời ngắn' : (part3Mode === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận')} ({part3Questions.length} câu)
                 </div>
                 <div className="grid grid-cols-3 gap-2">
-                  {exam.essays.map((essay, idx) => {
-                    const qNum = exam.multipleChoice.length + exam.trueFalseQuestions.length + idx + 1;
+                  {part3Questions.map((essay, idx) => {
+                    const qNum = (exam.multipleChoice?.length || 0) + (exam.trueFalseQuestions?.length || 0) + idx + 1;
                     const questionId = `question-${qNum}`;
                     const isDone = isEssayAnswered(essay.id);
 
@@ -2142,6 +2516,38 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
                           isDone
                             ? 'bg-emerald-600 text-white shadow-xs hover:bg-emerald-700'
                             : 'bg-white text-slate-800 border-2 border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/20'
+                        }`}
+                        title={`Câu ${qNum}: ${isDone ? 'Đã làm' : 'Chưa làm'}`}
+                      >
+                        {qNum}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Section 4: Part IV Essay numbers */}
+            {part4Questions.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  Phần IV: Tự luận ({part4Questions.length} câu)
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {part4Questions.map((essay, idx) => {
+                    const qNum = (exam.multipleChoice?.length || 0) + (exam.trueFalseQuestions?.length || 0) + part3Questions.length + idx + 1;
+                    const questionId = `question-${qNum}`;
+                    const isDone = isEssayAnswered(essay.id);
+
+                    return (
+                      <button
+                        type="button"
+                        key={essay.id}
+                        onClick={() => scrollToQuestion(questionId)}
+                        className={`h-9 rounded-xl text-xs font-black transition-all flex items-center justify-center cursor-pointer ${
+                          isDone
+                            ? 'bg-emerald-600 text-white shadow-xs hover:bg-emerald-700'
+                            : 'bg-white text-slate-800 border-2 border-slate-300 hover:border-purple-500 hover:bg-purple-50/20'
                         }`}
                         title={`Câu ${qNum}: ${isDone ? 'Đã làm' : 'Chưa làm'}`}
                       >
@@ -2328,14 +2734,46 @@ export const StudentExamRoom: React.FC<StudentExamRoomProps> = ({
               )}
 
               {/* Part 3 */}
-              {exam.essays.length > 0 && (
+              {part3Questions.length > 0 && (
                 <div className="space-y-1.5 pt-2 border-t border-slate-100">
                   <div className="text-[11px] font-bold text-slate-500 uppercase">
-                    Phần III: {part3Mode === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'} ({exam.essays.length} câu)
+                    Phần III: {part4Questions.length > 0 ? 'Trả lời ngắn' : (part3Mode === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận')} ({part3Questions.length} câu)
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {exam.essays.map((essay, idx) => {
-                      const qNum = exam.multipleChoice.length + exam.trueFalseQuestions.length + idx + 1;
+                    {part3Questions.map((essay, idx) => {
+                      const qNum = (exam.multipleChoice?.length || 0) + (exam.trueFalseQuestions?.length || 0) + idx + 1;
+                      const isDone = isEssayAnswered(essay.id);
+                      return (
+                        <button
+                          key={essay.id}
+                          type="button"
+                          onClick={() => {
+                            scrollToQuestion(`question-${qNum}`);
+                            setIsMobileQuestionGridOpen(false);
+                          }}
+                          className={`h-11 rounded-xl text-xs font-black transition-all flex items-center justify-center cursor-pointer active:scale-95 ${
+                            isDone
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'bg-white text-slate-800 border-2 border-slate-300'
+                          }`}
+                        >
+                          {qNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Part 4 */}
+              {part4Questions.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase">
+                    Phần IV: Tự luận ({part4Questions.length} câu)
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {part4Questions.map((essay, idx) => {
+                      const qNum = (exam.multipleChoice?.length || 0) + (exam.trueFalseQuestions?.length || 0) + part3Questions.length + idx + 1;
                       const isDone = isEssayAnswered(essay.id);
                       return (
                         <button

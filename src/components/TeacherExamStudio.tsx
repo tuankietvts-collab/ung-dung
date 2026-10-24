@@ -113,6 +113,26 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
   const [difficulty, setDifficulty] = useState<string>('Đề thi chuẩn cấu trúc tốt nghiệp THPT 2025');
   const [promptCustom, setPromptCustom] = useState<string>('');
   const [part3Choice, setPart3Choice] = useState<'short_answer' | 'essay'>('short_answer');
+  const [partsStructureChoice, setPartsStructureChoice] = useState<'1_part' | '2_parts' | '3_parts' | '4_parts'>('3_parts');
+
+  // Dynamic memoized parts for 1, 2, 3, or 4 parts preview
+  const teacherPart3 = React.useMemo(() => {
+    if (!currentExam) return [];
+    if (currentExam.part3 && currentExam.part3.length > 0) return currentExam.part3;
+    if (currentExam.partsStructure === '4_parts' && currentExam.essays) {
+      return currentExam.essays.filter((e) => e.type === 'short_answer' || (!e.type && e.shortAnswerKey));
+    }
+    return currentExam.essays || [];
+  }, [currentExam]);
+
+  const teacherPart4 = React.useMemo(() => {
+    if (!currentExam) return [];
+    if (currentExam.part4 && currentExam.part4.length > 0) return currentExam.part4;
+    if (currentExam.partsStructure === '4_parts' && currentExam.essays) {
+      return currentExam.essays.filter((e) => e.type === 'essay' || (!e.shortAnswerKey && !e.type));
+    }
+    return [];
+  }, [currentExam]);
 
   // State for Mode 2 (Matrix File / Matrix Table)
   const [matrixFile, setMatrixFile] = useState<File | null>(null);
@@ -300,6 +320,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
         difficulty,
         promptCustom,
         part3Type: part3Choice,
+        partsStructure: partsStructureChoice,
       });
 
       onExamCreated(generated);
@@ -339,6 +360,7 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
           topic: effectiveTopic,
         },
         part3Type: part3Choice,
+        partsStructure: partsStructureChoice,
       });
 
       onExamCreated(generated);
@@ -755,61 +777,131 @@ export const TeacherExamStudio: React.FC<TeacherExamStudioProps> = ({
                 />
               </div>
 
-              {/* Lựa chọn định dạng Phần III: Trả lời ngắn HOẶC Tự luận */}
-              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-2.5">
+              {/* Lựa chọn Cấu trúc đề thi (1 phần, 2 phần, 3 phần, 4 phần) */}
+              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-black uppercase tracking-wider text-indigo-950">
-                    Cấu trúc câu hỏi Phần III của đề thi:
+                    Cấu trúc đề thi (1, 2, 3 hoặc 4 phần theo yêu cầu / ma trận):
                   </label>
                   <span className="text-[10px] font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
-                    GDPT 2018
+                    Linh hoạt
                   </span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <button
                     type="button"
-                    onClick={() => setPart3Choice('short_answer')}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
-                      part3Choice === 'short_answer'
-                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs'
-                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                    onClick={() => setPartsStructureChoice('1_part')}
+                    className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                      partsStructureChoice === '1_part'
+                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs text-indigo-900 font-black'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700 font-semibold'
                     }`}
                   >
-                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
-                      part3Choice === 'short_answer' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-400'
-                    }`}>
-                      {part3Choice === 'short_answer' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                    </div>
-                    <div>
-                      <div className="text-xs font-black text-slate-900">Trả lời ngắn (Điền đáp số)</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                        Phần III hiển thị các ô để học sinh nhập đáp số.
-                      </div>
-                    </div>
+                    <div className="text-xs">1 Phần</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">100% Trắc nghiệm</div>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setPart3Choice('essay')}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
-                      part3Choice === 'essay'
-                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs'
-                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                    onClick={() => setPartsStructureChoice('2_parts')}
+                    className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                      partsStructureChoice === '2_parts'
+                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs text-indigo-900 font-black'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700 font-semibold'
                     }`}
                   >
-                    <div className={`w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
-                      part3Choice === 'essay' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-400'
-                    }`}>
-                      {part3Choice === 'essay' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                    </div>
-                    <div>
-                      <div className="text-xs font-black text-slate-900">Tự luận (Chụp ảnh / Tải file bài làm)</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">
-                        Học sinh giải ra giấy và tải ảnh bài làm lên; Thầy/cô & AI chấm đối chiếu barem.
-                      </div>
-                    </div>
+                    <div className="text-xs">2 Phần</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">TN + Tự luận/TLN</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPartsStructureChoice('3_parts')}
+                    className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                      partsStructureChoice === '3_parts'
+                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs text-indigo-900 font-black'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700 font-semibold'
+                    }`}
+                  >
+                    <div className="text-xs">3 Phần</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">Chuẩn Bộ GD&ĐT</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPartsStructureChoice('4_parts')}
+                    className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                      partsStructureChoice === '4_parts'
+                        ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs text-indigo-900 font-black'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700 font-semibold'
+                    }`}
+                  >
+                    <div className="text-xs">4 Phần</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">Đầy đủ 4 phần</div>
                   </button>
                 </div>
+
+                {/* Nếu chọn cấu trúc 2, 3 phần: Cho phép chọn định dạng Trả lời ngắn hay Tự luận */}
+                {(partsStructureChoice === '2_parts' || partsStructureChoice === '3_parts') && (
+                  <div className="pt-2 border-t border-indigo-100">
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-2">
+                      Định dạng phần vận dụng (Phần {partsStructureChoice === '2_parts' ? 'II' : 'III'}):
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setPart3Choice('short_answer')}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2 ${
+                          part3Choice === 'short_answer'
+                            ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs'
+                            : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                        }`}
+                      >
+                        <div className={`w-3.5 h-3.5 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
+                          part3Choice === 'short_answer' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-400'
+                        }`}>
+                          {part3Choice === 'short_answer' && <div className="w-1 h-1 rounded-full bg-white" />}
+                        </div>
+                        <div>
+                          <div className="text-xs font-black text-slate-900">Trả lời ngắn (Chỉ điền đáp số con số)</div>
+                          <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                            Chuẩn Bộ GD&ĐT: Chỉ điền duy nhất 1 số (số nguyên/thập phân/phân số).
+                          </div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPart3Choice('essay')}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2 ${
+                          part3Choice === 'essay'
+                            ? 'bg-white border-indigo-600 ring-2 ring-indigo-200 shadow-xs'
+                            : 'bg-white/80 border-slate-200 hover:border-slate-300 text-slate-700'
+                        }`}
+                      >
+                        <div className={`w-3.5 h-3.5 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center ${
+                          part3Choice === 'essay' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-400'
+                        }`}>
+                          {part3Choice === 'essay' && <div className="w-1 h-1 rounded-full bg-white" />}
+                        </div>
+                        <div>
+                          <div className="text-xs font-black text-slate-900">Tự luận (Chụp ảnh bài làm / Barem)</div>
+                          <div className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                            Học sinh làm ra giấy chụp ảnh; Thầy/cô và AI chấm đối chiếu barem.
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Nếu chọn cấu trúc 4 phần: Ghi chú rõ ràng */}
+                {partsStructureChoice === '4_parts' && (
+                  <div className="p-2.5 bg-white rounded-xl border border-indigo-200 text-xs text-indigo-900 font-medium leading-relaxed">
+                    🌟 <b>Đề thi 4 phần gồm:</b> Phần I (TN 4 lựa chọn) + Phần II (TN Đúng/Sai) + Phần III (Trả lời ngắn - chỉ điền đáp số con số) + Phần IV (Tự luận giải toán kèm barem chi tiết).
+                  </div>
+                )}
               </div>
 
               <button
@@ -1870,14 +1962,15 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
                 )}
 
                 {/* ============================================================== */}
-                {/* PHẦN III: TỰ LUẬN HOẶC TRẢ LỜI NGẮN (THẺ TÍM / XANH NGỌC NHẠT) */}
                 {/* ============================================================== */}
-                {currentExam.essays && currentExam.essays.length > 0 && (
+                {/* PHẦN III: TỰ LUẬN HOẶC TRẢ LỜI NGẮN                            */}
+                {/* ============================================================== */}
+                {teacherPart3 && teacherPart3.length > 0 && (
                   <div className="space-y-4 pt-2">
                     <div className="p-3.5 bg-emerald-50/80 rounded-2xl border border-emerald-200 flex items-center justify-between">
                       <span className="text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-2">
                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
-                        Phần III: {currentExam.part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận giải toán & Barem'} ({currentExam.essays.length} câu)
+                        Phần III: {teacherPart4.length > 0 ? 'Câu hỏi trắc nghiệm trả lời ngắn' : (currentExam.part3Type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận giải toán & Barem')} ({teacherPart3.length} câu)
                       </span>
                       <span className="text-xs font-bold text-emerald-900 bg-emerald-100 px-2.5 py-0.5 rounded-lg border border-emerald-200">
                         Chấm điểm chuẩn SGK GDPT 2018
@@ -1885,7 +1978,7 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
                     </div>
 
                     <div className="space-y-4">
-                      {currentExam.essays.map((essay, idx) => (
+                      {teacherPart3.map((essay, idx) => (
                         <div
                           key={essay.id || idx}
                           className="p-5 bg-slate-50/70 hover:bg-slate-50 rounded-2xl border border-slate-200 text-slate-900 space-y-3.5 shadow-2xs transition-all"
@@ -1893,7 +1986,7 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
                           <div className="flex items-start justify-between gap-3">
                             <div className="text-lg font-bold text-slate-900 leading-relaxed flex-1">
                               <span className="text-emerald-700 font-extrabold mr-2">
-                                Bài {(currentExam.multipleChoice?.length || 0) + (currentExam.trueFalseQuestions?.length || 0) + idx + 1}:
+                                Câu {(currentExam.multipleChoice?.length || 0) + (currentExam.trueFalseQuestions?.length || 0) + idx + 1}:
                               </span>
                               <MathRenderer content={essay.question.replace(/^(?:Câu|Bài)\s*\d+\s*[:.]*\s*/i, '')} />
                             </div>
@@ -1940,6 +2033,143 @@ Câu 1. Cho hình chóp tứ giác đều $S.ABCD$ có cạnh đáy bằng $4$, 
                                       <span><MathRenderer content={r.description} /></span>
                                     </div>
                                     <span className="font-bold text-emerald-700 shrink-0">
+                                      +{r.points}đ
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Question Action Toolbar for Cutting / Pasting Image */}
+                          {isSnippingModeEnabled && (
+                            <div className="pt-2 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2 bg-amber-50/50 p-2.5 rounded-xl border border-amber-200/60">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSnipperInitialTarget({ type: 'essay', id: essay.id });
+                                    setIsSnipperOpen(true);
+                                  }}
+                                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
+                                >
+                                  <Scissors className="w-3.5 h-3.5" />
+                                  {essay.customImageUrl ? '✂️ Cắt lại ảnh từ đề gốc' : '✂️ Cắt ảnh từ đề gốc'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handlePasteImageToQuestion('essay', essay.id)}
+                                  className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
+                                >
+                                  <Clipboard className="w-3.5 h-3.5 text-blue-600" />
+                                  Dán từ Clipboard
+                                </button>
+
+                                <label className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors">
+                                  <Upload className="w-3.5 h-3.5 text-slate-600" />
+                                  Tải ảnh
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const f = e.target.files?.[0];
+                                      if (f) handleDirectImageUploadToQuestion('essay', essay.id, f);
+                                    }}
+                                  />
+                                </label>
+                              </div>
+
+                              {essay.customImageUrl && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveImageFromQuestion('essay', essay.id)}
+                                  className="px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 rounded-lg border border-rose-200 flex items-center gap-1 cursor-pointer transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Gỡ ảnh
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ============================================================== */}
+                {/* PHẦN IV: TỰ LUẬN GIẢI TOÁN & BAREM ĐIỂM (KHI ĐỀ CÓ 4 PHẦN)     */}
+                {/* ============================================================== */}
+                {teacherPart4 && teacherPart4.length > 0 && (
+                  <div className="space-y-4 pt-2">
+                    <div className="p-3.5 bg-purple-50/80 rounded-2xl border border-purple-200 flex items-center justify-between">
+                      <span className="text-xs font-black text-purple-950 uppercase tracking-wider flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-purple-600" />
+                        Phần IV: Câu hỏi tự luận giải toán & Barem điểm ({teacherPart4.length} câu)
+                      </span>
+                      <span className="text-xs font-bold text-purple-900 bg-purple-100 px-2.5 py-0.5 rounded-lg border border-purple-200">
+                        Chấm điểm chuẩn SGK GDPT 2018
+                      </span>
+                    </div>
+
+                    <div className="space-y-4">
+                      {teacherPart4.map((essay, idx) => (
+                        <div
+                          key={essay.id || idx}
+                          className="p-5 bg-slate-50/70 hover:bg-slate-50 rounded-2xl border border-slate-200 text-slate-900 space-y-3.5 shadow-2xs transition-all"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="text-lg font-bold text-slate-900 leading-relaxed flex-1">
+                              <span className="text-purple-700 font-extrabold mr-2">
+                                Bài {(currentExam.multipleChoice?.length || 0) + (currentExam.trueFalseQuestions?.length || 0) + teacherPart3.length + idx + 1}:
+                              </span>
+                              <MathRenderer content={essay.question.replace(/^(?:Câu|Bài)\s*\d+\s*[:.]*\s*/i, '')} />
+                            </div>
+                            <span className="text-xs font-black text-purple-700 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 shrink-0">
+                              {essay.maxPoints}đ
+                            </span>
+                          </div>
+
+                          <QuestionVisual
+                            visualType={essay.visualType}
+                            caption={essay.visualCaption}
+                            questionText={essay.question}
+                          />
+
+                          {essay.customImageUrl && (
+                            <div className="p-2.5 bg-white rounded-xl border border-slate-200 text-center">
+                              <span className="text-xs text-amber-700 font-bold block mb-1">
+                                📷 Hình ảnh đính kèm từ đề gốc:
+                              </span>
+                              <img src={essay.customImageUrl} alt="Hình ảnh câu hỏi" className="max-h-56 object-contain mx-auto rounded-lg" />
+                            </div>
+                          )}
+
+                          {essay.shortAnswerKey && (
+                            <div className="p-3 bg-white rounded-xl border border-purple-200 text-sm font-semibold flex items-center gap-2">
+                              <span className="text-purple-800 font-bold">Đáp số chính xác:</span>
+                              <span className="font-mono text-purple-700 font-black text-base px-2 py-0.5 bg-purple-50 rounded border border-purple-200">
+                                <MathRenderer content={essay.shortAnswerKey.trim().startsWith('$') ? essay.shortAnswerKey : `$${essay.shortAnswerKey}$`} />
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Rubric Breakdown */}
+                          {essay.rubric && essay.rubric.length > 0 && (
+                            <div className="p-3.5 bg-white rounded-xl border border-slate-200 space-y-2 text-xs">
+                              <span className="font-bold text-slate-900 uppercase tracking-wider block text-[11px]">
+                                Barem điểm chi tiết theo SGK GDPT 2018:
+                              </span>
+                              <div className="space-y-1.5">
+                                {essay.rubric.map((r, rIdx) => (
+                                  <div key={rIdx} className="flex items-center justify-between gap-3 text-slate-700 pb-1 border-b border-slate-100 last:border-none">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-bold text-slate-900">• {r.step}:</span>
+                                      <span><MathRenderer content={r.description} /></span>
+                                    </div>
+                                    <span className="font-bold text-purple-700 shrink-0">
                                       +{r.points}đ
                                     </span>
                                   </div>

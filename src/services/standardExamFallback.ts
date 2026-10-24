@@ -5,6 +5,7 @@ export interface StandardExamBuildOptions {
   topic?: string;
   textbook?: string;
   part3Type?: 'short_answer' | 'essay';
+  partsStructure?: '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto';
   matrix?: ExamMatrixData;
   matrixFileName?: string;
   promptCustom?: string;
@@ -12,15 +13,18 @@ export interface StandardExamBuildOptions {
 
 /**
  * Builds a 100% compliant GDPT 2018 Vietnamese High School Math Exam (Toán 10, 11, 12).
- * Formatted strictly according to the Ministry of Education & Training specifications:
- * - Phần I: 12 câu trắc nghiệm nhiều lựa chọn (3.0 điểm)
- * - Phần II: 4 câu đúng / sai, mỗi câu gồm 4 ý a, b, c, d (4.0 điểm)
- * - Phần III: 6 câu trả lời ngắn hoặc 2-3 câu tự luận kèm barem chi tiết (3.0 điểm)
+ * Formatted flexibly according to 1, 2, 3, or 4 parts as requested by teacher or matrix:
+ * - 1 phần: Trắc nghiệm 4 lựa chọn (100% trắc nghiệm)
+ * - 2 phần: Trắc nghiệm + Tự luận/Trả lời ngắn
+ * - 3 phần: Chuẩn Bộ GD&ĐT (TN 4 lựa chọn + TN Đúng/Sai + Trả lời ngắn / Tự luận)
+ * - 4 phần: Đầy đủ (TN 4 lựa chọn + TN Đúng/Sai + Trả lời ngắn + Tự luận)
+ * Toàn bộ câu hỏi Trả lời ngắn chỉ yêu cầu điền duy nhất 1 đáp số con số theo chuẩn khảo thí.
  */
 export function buildStandardGdptExam(options: StandardExamBuildOptions): Exam {
   const gradeStr = String(options.grade || '11').trim();
   const effectiveGrade: '10' | '11' | '12' = gradeStr === '10' ? '10' : gradeStr === '12' ? '12' : '11';
   const part3Type = options.part3Type || 'short_answer';
+  const partsStructure = options.partsStructure || (options.matrix?.partsStructure as any) || '3_parts';
   const textbook = options.textbook || 'Kết Nối Tri Thức Với Cuộc Sống';
   const fileName = options.matrixFileName || '';
   const isMidterm1 = /gk1|giua\s*ky\s*1|ktkg1/i.test(fileName) || /giữa\s*kỳ\s*1/i.test(options.topic || '');
@@ -30,13 +34,16 @@ export function buildStandardGdptExam(options: StandardExamBuildOptions): Exam {
   const randomSuffix = Math.floor(100 + Math.random() * 900);
   const userTopic = options.topic || '';
 
+  let baseExam: Exam;
   if (effectiveGrade === '11') {
-    return buildGrade11Exam(isMidterm1, isFinal1, isMidterm2, part3Type, textbook, randomSuffix, fileName, userTopic);
+    baseExam = buildGrade11Exam(isMidterm1, isFinal1, isMidterm2, part3Type, textbook, randomSuffix, fileName, userTopic);
   } else if (effectiveGrade === '10') {
-    return buildGrade10Exam(part3Type, textbook, randomSuffix, fileName, userTopic);
+    baseExam = buildGrade10Exam(part3Type, textbook, randomSuffix, fileName, userTopic);
   } else {
-    return buildGrade12Exam(part3Type, textbook, randomSuffix, fileName, userTopic);
+    baseExam = buildGrade12Exam(part3Type, textbook, randomSuffix, fileName, userTopic);
   }
+
+  return applyPartsStructure(baseExam, partsStructure, options.matrix, part3Type);
 }
 
 function buildGrade11Exam(
@@ -922,5 +929,158 @@ function buildGrade12Exam(
     multipleChoice,
     trueFalseQuestions,
     essays,
+  };
+}
+
+/**
+ * Transforms an exam into a 1-part, 2-part, 3-part, or 4-part structure
+ * adhering to teacher selections or the extracted matrix specification.
+ */
+export function applyPartsStructure(
+  exam: Exam,
+  structure: '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto' = '3_parts',
+  matrix?: ExamMatrixData,
+  _part3Type: 'short_answer' | 'essay' = 'short_answer'
+): Exam {
+  let effectiveStructure = structure;
+  if (effectiveStructure === 'auto' || !effectiveStructure) {
+    if (matrix?.partsStructure) {
+      effectiveStructure = matrix.partsStructure;
+    } else if (matrix?.partsCount === 1 || (matrix?.part1 && !matrix?.part2?.totalQuestions && !matrix?.part3?.totalQuestions)) {
+      effectiveStructure = '1_part';
+    } else if (matrix?.partsCount === 2 || (matrix?.part1 && !matrix?.part2?.totalQuestions && matrix?.part3?.totalQuestions)) {
+      effectiveStructure = '2_parts';
+    } else if (matrix?.partsCount === 4 || (matrix?.part1 && matrix?.part2 && matrix?.part3 && matrix?.part4)) {
+      effectiveStructure = '4_parts';
+    } else {
+      effectiveStructure = '3_parts';
+    }
+  }
+
+  // 1 PHẦN: Trắc nghiệm 4 lựa chọn 100%
+  if (effectiveStructure === '1_part') {
+    const mcCount = exam.multipleChoice?.length || 12;
+    const pointsPerQ = Number((10.0 / (mcCount || 1)).toFixed(2));
+    const mc = (exam.multipleChoice || []).map((q) => ({ ...q, points: pointsPerQ }));
+    return {
+      ...exam,
+      partsCount: 1,
+      partsStructure: '1_part',
+      totalPoints: 10,
+      multipleChoice: mc,
+      trueFalseQuestions: [],
+      essays: [],
+      part1: mc,
+      part2: [],
+      part3: [],
+      part4: [],
+    };
+  }
+
+  // 2 PHẦN: Trắc nghiệm (7đ) + Tự luận / Trả lời ngắn (3đ)
+  if (effectiveStructure === '2_parts') {
+    const mcCount = exam.multipleChoice?.length || 12;
+    const pointsPerMc = Number((7.0 / (mcCount || 1)).toFixed(2));
+    const mc = (exam.multipleChoice || []).map((q) => ({ ...q, points: pointsPerMc }));
+    const essayCount = exam.essays?.length || 3;
+    const pointsPerEssay = Number((3.0 / (essayCount || 1)).toFixed(2));
+    const essays = (exam.essays || []).map((q) => ({ ...q, maxPoints: pointsPerEssay }));
+    return {
+      ...exam,
+      partsCount: 2,
+      partsStructure: '2_parts',
+      totalPoints: 10,
+      multipleChoice: mc,
+      trueFalseQuestions: [],
+      essays,
+      part1: mc,
+      part2: [],
+      part3: essays,
+      part4: [],
+    };
+  }
+
+  // 4 PHẦN: TN nhiều lựa chọn (3đ) + Đúng/Sai (3đ) + Trả lời ngắn (2đ) + Tự luận (2đ)
+  if (effectiveStructure === '4_parts') {
+    const mc = (exam.multipleChoice || []).map((q) => ({
+      ...q,
+      points: Number((3.0 / ((exam.multipleChoice || []).length || 1)).toFixed(2)),
+    }));
+    const tf = (exam.trueFalseQuestions || []).map((q) => ({
+      ...q,
+      pointsPerSub: 0.1875,
+    }));
+
+    const shortAnswers: EssayQuestion[] = (
+      exam.essays.filter((e) => e.type === 'short_answer' || (!e.type && e.shortAnswerKey)).length > 0
+        ? exam.essays.filter((e) => e.type === 'short_answer' || (!e.type && e.shortAnswerKey))
+        : exam.essays.slice(0, 4)
+    ).map((q, idx) => ({
+      ...q,
+      id: `sa_${idx + 1}`,
+      type: 'short_answer' as const,
+      maxPoints: 0.5,
+    }));
+
+    const essayQuestions: EssayQuestion[] = [
+      {
+        id: 'essay_p4_1',
+        type: 'essay' as const,
+        question:
+          exam.grade === '11'
+            ? 'Giải bài toán thực tế: Một người gửi tiết kiệm ngân hàng số tiền 100 triệu đồng với lãi suất kép 6.5%/năm. Hỏi sau ít nhất bao nhiêu năm người đó nhận được số tiền cả gốc lẫn lãi vượt quá 200 triệu đồng?'
+            : exam.grade === '10'
+            ? 'Một cổng chào hình parabol có chiều cao 8 mét và khoảng cách giữa hai chân cổng là 12 mét. Người ta muốn thiết kế một khung pano hình chữ nhật đặt phía trong cổng. Tìm diện tích lớn nhất của khung chữ nhật đó.'
+            : 'Một hồ bơi hình chữ nhật có chu vi 120 mét. Tìm kích thước của hồ bơi để diện tích mặt nước là lớn nhất.',
+        maxPoints: 1.0,
+        shortAnswerKey: exam.grade === '11' ? '12' : exam.grade === '10' ? '48' : '900',
+        rubric: [
+          { step: 'Bước 1', description: 'Thiết lập mô hình hàm số hoặc phương trình tương ứng.', points: 0.5 },
+          { step: 'Bước 2', description: 'Giải và tìm giá trị tối ưu, kết luận đáp số.', points: 0.5 },
+        ],
+      },
+      {
+        id: 'essay_p4_2',
+        type: 'essay' as const,
+        question:
+          exam.grade === '11'
+            ? 'Cho hình chóp $S.ABCD$ có đáy $ABCD$ là hình vuông cạnh $a$, tam giác $SAB$ đều và nằm trong mặt phẳng vuông góc với đáy. Gọi $H$ là trung điểm của $AB$. Chứng minh $SH \\perp (ABCD)$ và tính khoảng cách từ $H$ đến mặt phẳng $(SCD)$.'
+            : exam.grade === '10'
+            ? 'Trong mặt phẳng tọa độ $Oxy$, cho tam giác $ABC$ có $A(1; 3), B(-2; 1), C(4; -1)$. Tìm tọa độ trực tâm $H$ của tam giác $ABC$ và tính diện tích tam giác $ABC$.'
+            : 'Cho hình lăng trụ tam giác đều $ABC.A\'B\'C\'$ có cạnh đáy bằng $a$, khoảng cách từ $A$ đến mặt phẳng $(A\'BC)$ bằng $\\frac{a\\sqrt{3}}{4}$. Tính thể tích khối lăng trụ đã cho.',
+        maxPoints: 1.0,
+        shortAnswerKey: 'a*sqrt(3)/4',
+        rubric: [
+          { step: 'Bước 1', description: 'Dựng hình, xác định đường cao và khoảng cách.', points: 0.5 },
+          { step: 'Bước 2', description: 'Tính toán ra kết quả chính xác theo công thức.', points: 0.5 },
+        ],
+      },
+    ];
+
+    return {
+      ...exam,
+      partsCount: 4,
+      partsStructure: '4_parts',
+      totalPoints: 10,
+      multipleChoice: mc,
+      trueFalseQuestions: tf,
+      essays: [...shortAnswers, ...essayQuestions],
+      part1: mc,
+      part2: tf,
+      part3: shortAnswers,
+      part4: essayQuestions,
+    };
+  }
+
+  // 3 PHẦN: Chuẩn Bộ GD&ĐT (Phần I + Phần II + Phần III)
+  return {
+    ...exam,
+    partsCount: 3,
+    partsStructure: '3_parts',
+    totalPoints: 10,
+    part1: exam.multipleChoice,
+    part2: exam.trueFalseQuestions,
+    part3: exam.essays,
+    part4: [],
   };
 }

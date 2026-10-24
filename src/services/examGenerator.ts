@@ -10,6 +10,7 @@ export interface PromptExamRequest {
   difficulty?: string;
   promptCustom?: string;
   part3Type?: 'short_answer' | 'essay';
+  partsStructure?: '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto';
 }
 
 export interface MatrixExamRequest {
@@ -18,6 +19,7 @@ export interface MatrixExamRequest {
   textbook?: string;
   matrix?: ExamMatrixData;
   part3Type?: 'short_answer' | 'essay';
+  partsStructure?: '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto';
   matrixFileBase64?: string;
   matrixFileName?: string;
   matrixMimeType?: string;
@@ -32,6 +34,7 @@ export interface RecreateExamRequest {
   topic?: string;
   textbook?: string;
   part3Type?: 'short_answer' | 'essay';
+  partsStructure?: '1_part' | '2_parts' | '3_parts' | '4_parts' | 'auto';
   extractedText?: string;
 }
 
@@ -67,6 +70,7 @@ export async function generateExamByPrompt(params: PromptExamRequest): Promise<E
         difficulty: params.difficulty || `Đề thi chuẩn cấu trúc tốt nghiệp THPT Lớp ${effectiveGrade}`,
         promptCustom: params.promptCustom || '',
         part3Type: params.part3Type || 'short_answer',
+        partsStructure: params.partsStructure || '3_parts',
       }),
     });
 
@@ -113,6 +117,7 @@ export async function generateExamByPrompt(params: PromptExamRequest): Promise<E
     topic: effectiveTopic,
     textbook: params.textbook,
     part3Type: params.part3Type,
+    partsStructure: params.partsStructure,
     promptCustom: params.promptCustom,
   });
 }
@@ -173,6 +178,7 @@ export async function generateExamByMatrix(params: MatrixExamRequest): Promise<E
         textbook: params.textbook || params.matrix?.textbook || 'Kết Nối Tri Thức Với Cuộc Sống',
         matrix: params.matrix,
         part3Type: params.part3Type || (params.matrix?.part3 as any)?.type || 'short_answer',
+        partsStructure: params.partsStructure || (params.matrix?.partsStructure as any) || 'auto',
         matrixFileBase64: params.matrixFileBase64,
         matrixFileName: params.matrixFileName,
         matrixMimeType: params.matrixMimeType || 'application/pdf',
@@ -244,6 +250,7 @@ export async function generateExamByMatrix(params: MatrixExamRequest): Promise<E
     topic: effectiveTopic,
     textbook: params.textbook || params.matrix?.textbook,
     part3Type: params.part3Type || (params.matrix?.part3 as any)?.type || 'short_answer',
+    partsStructure: params.partsStructure || (params.matrix?.partsStructure as any) || 'auto',
     matrix: params.matrix,
     matrixFileName: params.matrixFileName,
   });
