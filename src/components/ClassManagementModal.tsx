@@ -160,7 +160,32 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  if (!isOpen) return null;
+  // Get students of the selected class (Strictly filters out summary / footer rows and deduplicates)
+  const normalizeCls = (c?: string) => (c || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+  const currentClassStudents = React.useMemo(() => {
+    const raw = roster
+      .filter((s) => !isInvalidStudentName(s.fullName))
+      .filter((s) => normalizeCls(s.className) === normalizeCls(selectedClassId));
+
+    const seen = new Set<string>();
+    const list: StudentRosterItem[] = [];
+    for (const s of raw) {
+      const sbd = (s.sbd || '').trim().toUpperCase();
+      const name = (s.fullName || '').trim().toUpperCase();
+      const key = sbd ? sbd : `${s.stt}_${name}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push(s);
+      }
+    }
+    return list.sort((a, b) => (a.stt || 0) - (b.stt || 0));
+  }, [roster, selectedClassId]);
+
+  const filteredStudents = currentClassStudents.filter(
+    (s) =>
+      s.fullName.toLowerCase().includes(searchStudent.toLowerCase()) ||
+      s.sbd.toLowerCase().includes(searchStudent.toLowerCase())
+  );
 
   // Handle creating a new class with automatic encoding formula
   const handleCreateClass = async (e: React.FormEvent) => {
@@ -217,18 +242,6 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
     }
   };
 
-  // Get students of the selected class (Strictly filters out summary / footer rows like Khối 11, Thống kê)
-  const normalizeCls = (c?: string) => (c || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
-  const currentClassStudents = roster
-    .filter((s) => !isInvalidStudentName(s.fullName))
-    .filter((s) => normalizeCls(s.className) === normalizeCls(selectedClassId));
-
-  const filteredStudents = currentClassStudents.filter(
-    (s) =>
-      s.fullName.toLowerCase().includes(searchStudent.toLowerCase()) ||
-      s.sbd.toLowerCase().includes(searchStudent.toLowerCase())
-  );
-
   // Download Sample Excel Template (Supports both vnEdu 2-column format & 1-column standard format)
   const handleDownloadSampleExcel = () => {
     // Sheet 1: vnEdu 2-column format (Họ và chữ lót + Tên riêng biệt chuẩn vnEdu)
@@ -284,10 +297,23 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
       const schoolYear = selectedClassObj?.schoolYear || '2026-2027';
       const classId = selectedClassObj?.id || generateClassId(schoolName, subjectName, schoolYear, selectedClassId);
 
-      const enrichedStudents: StudentRosterItem[] = validStudents.map((st, idx) => {
+      const seenRaw = new Set<string>();
+      const uniqueValid = validStudents.filter((st, idx) => {
+        const sbd = (st.sbd || '').trim().toUpperCase();
+        const name = (st.fullName || '').trim().toUpperCase();
+        const key = sbd ? sbd : `${st.stt || idx + 1}_${name}`;
+        if (seenRaw.has(key)) return false;
+        seenRaw.add(key);
+        return true;
+      });
+
+      const enrichedStudents: StudentRosterItem[] = uniqueValid.map((st, idx) => {
         const stt = st.stt || idx + 1;
         const username = generateStudentUsername(selectedClassId, stt);
-        const docId = generateStudentDocId(classId, stt);
+        const cleanSbd = (st.sbd || '').trim();
+        const docId = cleanSbd
+          ? `${selectedClassId}_${cleanSbd}`.replace(/[\/\s#?]/g, '_')
+          : generateStudentDocId(classId, stt);
         return {
           ...st,
           stt,
@@ -344,10 +370,23 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
       const schoolYear = selectedClassObj?.schoolYear || '2026-2027';
       const classId = selectedClassObj?.id || generateClassId(schoolName, subjectName, schoolYear, selectedClassId);
 
-      const enrichedStudents: StudentRosterItem[] = validStudents.map((st, idx) => {
+      const seenRaw = new Set<string>();
+      const uniqueValid = validStudents.filter((st, idx) => {
+        const sbd = (st.sbd || '').trim().toUpperCase();
+        const name = (st.fullName || '').trim().toUpperCase();
+        const key = sbd ? sbd : `${st.stt || idx + 1}_${name}`;
+        if (seenRaw.has(key)) return false;
+        seenRaw.add(key);
+        return true;
+      });
+
+      const enrichedStudents: StudentRosterItem[] = uniqueValid.map((st, idx) => {
         const stt = st.stt || idx + 1;
         const username = generateStudentUsername(selectedClassId, stt);
-        const docId = generateStudentDocId(classId, stt);
+        const cleanSbd = (st.sbd || '').trim();
+        const docId = cleanSbd
+          ? `${selectedClassId}_${cleanSbd}`.replace(/[\/\s#?]/g, '_')
+          : generateStudentDocId(classId, stt);
         return {
           ...st,
           stt,
@@ -432,7 +471,9 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
     const schoolYear = selectedClassObj?.schoolYear || '2026-2027';
     const classId = selectedClassObj?.id || generateClassId(schoolName, subjectName, schoolYear, selectedClassId);
 
-    const docId = generateStudentDocId(classId, nextStt);
+    const docId = cleanSbd
+      ? `${selectedClassId}_${cleanSbd}`.replace(/[\/\s#?]/g, '_')
+      : generateStudentDocId(classId, nextStt);
     const username = generateStudentUsername(selectedClassId, nextStt);
 
     setIsAddingSingleStudent(true);
@@ -610,6 +651,8 @@ export const ClassManagementModal: React.FC<ClassManagementModalProps> = ({
     } catch {}
     if (showToast) showToast(`Đã giao đề thi [${examCode}] cho lớp ${selectedClassId}! Học sinh của lớp khi vào phòng thi sẽ tự động nhận đề này.`);
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200">

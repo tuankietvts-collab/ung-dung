@@ -208,18 +208,32 @@ export default function App() {
     });
   }, [submissions, displayedClasses, currentUser]);
 
-  // Danh sách học sinh hiển thị: chỉ hiển thị học sinh thuộc các lớp đang tồn tại của giáo viên (không hiển thị học sinh của lớp đã xóa)
+  // Danh sách học sinh hiển thị: chỉ hiển thị học sinh thuộc các lớp đang tồn tại của giáo viên (triệt tiêu mọi trùng lặp)
   const displayedRoster = useMemo(() => {
-    if (!currentUser || currentUser.role === 'admin') {
-      return studentRoster;
-    }
     const currentClassSet = new Set(
       displayedClasses.map((c) => c.name.trim().toUpperCase().replace(/^LỚP\s+/i, ''))
     );
-    return studentRoster.filter((s) => {
-      const sCls = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
-      return currentClassSet.has(sCls);
-    });
+    const filtered = (!currentUser || currentUser.role === 'admin')
+      ? studentRoster
+      : studentRoster.filter((s) => {
+          const sCls = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+          return currentClassSet.has(sCls);
+        });
+
+    const seen = new Set<string>();
+    const deduplicated: StudentRosterItem[] = [];
+    for (const s of filtered) {
+      const cNorm = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      const sbdNorm = (s.sbd || '').trim().toUpperCase();
+      const nameNorm = (s.fullName || '').trim().toUpperCase();
+      const key = sbdNorm ? `${cNorm}_${sbdNorm}` : `${cNorm}_${s.stt}_${nameNorm}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduplicated.push(s);
+      }
+    }
+    deduplicated.sort((a, b) => (a.stt || 0) - (b.stt || 0));
+    return deduplicated;
   }, [studentRoster, displayedClasses, currentUser]);
 
   // Tự động dọn dẹp các lớp trùng lặp, bài nộp mồ côi & học sinh mồ côi (thuộc các lớp đã xóa trước đây) khỏi Firestore
@@ -556,10 +570,36 @@ export default function App() {
   const handleSaveRoster = async (incomingStudents: StudentRosterItem[]) => {
     await saveStudentRosterToFirestore(incomingStudents);
     setStudentRoster((prev) => {
-      const map = new Map<string, StudentRosterItem>();
-      prev.forEach((s) => map.set(s.id, s));
-      incomingStudents.forEach((s) => map.set(s.id, s));
-      return Array.from(map.values());
+      const isBatchUpload = incomingStudents.length > 1;
+      let baseList = prev;
+
+      if (isBatchUpload) {
+        // When batch uploading (Excel or Paste), replace all previous students of the incoming classes
+        const incomingClasses = new Set(
+          incomingStudents.map((s) => (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, ''))
+        );
+        baseList = prev.filter(
+          (s) => !incomingClasses.has((s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, ''))
+        );
+      }
+
+      // Upsert into key-based map to guarantee zero duplicates
+      const keyMap = new Map<string, StudentRosterItem>();
+      for (const s of baseList) {
+        const cNorm = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+        const sbdNorm = (s.sbd || '').trim().toUpperCase();
+        const nameNorm = (s.fullName || '').trim().toUpperCase();
+        const key = sbdNorm ? `${cNorm}_${sbdNorm}` : `${cNorm}_${s.stt}_${nameNorm}`;
+        keyMap.set(key, s);
+      }
+      for (const s of incomingStudents) {
+        const cNorm = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+        const sbdNorm = (s.sbd || '').trim().toUpperCase();
+        const nameNorm = (s.fullName || '').trim().toUpperCase();
+        const key = sbdNorm ? `${cNorm}_${sbdNorm}` : `${cNorm}_${s.stt}_${nameNorm}`;
+        keyMap.set(key, s);
+      }
+      return Array.from(keyMap.values());
     });
     showToast(`Đã cập nhật danh sách ${incomingStudents.length} học sinh thành công!`);
   };

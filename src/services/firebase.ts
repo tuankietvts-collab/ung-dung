@@ -472,7 +472,20 @@ export function getStoredStudentRoster(): StudentRosterItem[] {
   try {
     const raw = localStorage.getItem(STUDENTS_STORAGE_KEY);
     const list: StudentRosterItem[] = raw ? JSON.parse(raw) : [];
-    return list.filter((s) => !isInvalidStudentName(s.fullName));
+    const valid = list.filter((s) => !isInvalidStudentName(s.fullName));
+    const seen = new Set<string>();
+    const deduplicated: StudentRosterItem[] = [];
+    for (const s of valid) {
+      const cNorm = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+      const sbdNorm = (s.sbd || '').trim().toUpperCase();
+      const nameNorm = (s.fullName || '').trim().toUpperCase();
+      const key = sbdNorm ? `${cNorm}_${sbdNorm}` : `${cNorm}_${s.stt}_${nameNorm}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduplicated.push(s);
+      }
+    }
+    return deduplicated;
   } catch {
     return [];
   }
@@ -483,12 +496,27 @@ export function getStoredStudentRoster(): StudentRosterItem[] {
  */
 export async function saveStudentRosterToFirestore(students: StudentRosterItem[]): Promise<void> {
   const validStudents = students.filter((s) => !isInvalidStudentName(s.fullName));
+  
+  // Deduplicate strictly by SBD or STT + FullName before saving
+  const seen = new Set<string>();
+  const deduplicated: StudentRosterItem[] = [];
+  for (const s of validStudents) {
+    const cNorm = (s.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+    const sbdNorm = (s.sbd || '').trim().toUpperCase();
+    const nameNorm = (s.fullName || '').trim().toUpperCase();
+    const key = sbdNorm ? `${cNorm}_${sbdNorm}` : `${cNorm}_${s.stt}_${nameNorm}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduplicated.push(s);
+    }
+  }
+
   try {
-    localStorage.setItem(STUDENTS_STORAGE_KEY, JSON.stringify(validStudents));
+    localStorage.setItem(STUDENTS_STORAGE_KEY, JSON.stringify(deduplicated));
   } catch {}
 
-  for (const st of validStudents) {
-    const safeDocId = `${st.className || 'lop'}_${st.sbd || st.id || st.stt}`.replace(/[\/\s#?]/g, '_');
+  for (const st of deduplicated) {
+    const safeDocId = st.id || `${st.className || 'lop'}_${st.sbd || st.stt}`.replace(/[\/\s#?]/g, '_');
     const docRef = doc(db, STUDENTS_COLLECTION, safeDocId);
     await setDoc(docRef, { ...st, id: safeDocId, updatedAt: new Date().toISOString() }, { merge: true });
   }
@@ -590,12 +618,20 @@ export function subscribeStudentRosterFromFirestore(
     colRef,
     (snapshot) => {
       const list: StudentRosterItem[] = [];
+      const seen = new Set<string>();
       snapshot.forEach((docSnap) => {
         const item = docSnap.data() as StudentRosterItem;
         if (isInvalidStudentName(item.fullName)) {
           return;
         }
-        list.push(item);
+        const cNorm = (item.className || '').trim().toUpperCase().replace(/^LỚP\s+/i, '');
+        const sbdNorm = (item.sbd || '').trim().toUpperCase();
+        const nameNorm = (item.fullName || '').trim().toUpperCase();
+        const key = sbdNorm ? `${cNorm}_${sbdNorm}` : `${cNorm}_${item.stt}_${nameNorm}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          list.push({ ...item, id: item.id || docSnap.id });
+        }
       });
       list.sort((a, b) => (a.stt || 0) - (b.stt || 0));
       onStudents(list);
