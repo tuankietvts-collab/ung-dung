@@ -21,6 +21,24 @@ function preprocessText(raw: string): string {
 
   let text = String(raw);
 
+  // 0. Bỏ triệt để bảng biến thiên và bảng xét dấu dạng array thô trong câu hỏi
+  // vì đã có component QuestionVisual (VariationTable) chuyên trách hiển thị ở phía dưới.
+  text = text.replace(
+    /(?:\$\$|\\\[|\$)?\s*\\*begin\{(?:array|matrix|tabular)\}[\s\S]*?\\*end\{(?:array|matrix|tabular)\}\s*(?:\$\$|\\\]|\$)?/gi,
+    (match) => {
+      if (
+        /searrow|nearrow|downarrow|uparrow/i.test(match) ||
+        (/x/i.test(match) && /[yf]['(]/i.test(match)) ||
+        /f'\s*\(/i.test(match) ||
+        /y'\s*&/i.test(match) ||
+        /\+\s*&\s*0\s*&\s*-\s*&/i.test(match)
+      ) {
+        return '';
+      }
+      return match;
+    }
+  );
+
   // 1. Fix broken `(a e 0)` or `a e 0` -> `$(a \ne 0)$`
   text = text.replace(/\(\s*a\s+[e\u2208\u2260\\]+\s*0\s*\)/gi, () => '$(a \\ne 0)$');
   text = text.replace(/\(\s*a\s*e\s*0\s*\)/gi, () => '$(a \\ne 0)$');

@@ -149,6 +149,7 @@ function parseVariationTableFromQuestion(text?: string): ParsedVariationData | n
     if (!match) return null;
 
     let content = match[1];
+    content = content.replace(/^\s*\{[^}]*\}\s*/, '');
     content = content
       .replace(/\\cr\b/gi, '\\\\')
       .replace(/\\newline\b/gi, '\\\\')
@@ -171,7 +172,7 @@ function parseVariationTableFromQuestion(text?: string): ParsedVariationData | n
 
     // 1. Dòng x
     const xRow = rows[0];
-    const xLabel = xRow[0] || 'x';
+    const xLabel = (xRow[0] || 'x').replace(/^\{[^}]*\}\s*/, '') || 'x';
     const xValues: string[] = [];
     for (let i = 1; i < xRow.length; i++) {
       const val = xRow[i].trim();
@@ -191,55 +192,56 @@ function parseVariationTableFromQuestion(text?: string): ParsedVariationData | n
     // 3. Dòng y hoặc f(x)
     const yLabel = rows[2] ? rows[2][0] || 'f(x)' : 'y';
 
-    // Gom toàn bộ ô từ row 2 trở đi để phân tích giá trị y và hướng mũi tên
-    const yCells: string[] = [];
-    for (let r = 2; r < rows.length; r++) {
-      const cells = rows[r];
-      const startIdx = r === 2 ? 1 : 0;
-      for (let c = startIdx; c < cells.length; c++) {
-        const val = cells[c].trim();
-        if (val) yCells.push(val);
+    const topRow = rows[2] || [];
+    const botRow = rows[3] || [];
+
+    const topTokens: Array<{ val: string; col: number; level: 'top' | 'bottom' | 'mid' }> = [];
+    topRow.slice(1).forEach((val, idx) => {
+      const v = val.trim();
+      if (v && !/nearrow|searrow|downarrow|uparrow/i.test(v)) {
+        topTokens.push({ val: v, col: idx + 1, level: 'top' });
+      }
+    });
+
+    const botTokens: Array<{ val: string; col: number; level: 'top' | 'bottom' | 'mid' }> = [];
+    botRow.forEach((val, idx) => {
+      const v = val.trim();
+      if (v && !/nearrow|searrow|downarrow|uparrow/i.test(v)) {
+        botTokens.push({ val: v, col: idx, level: 'bottom' });
+      }
+    });
+
+    let orderedTokens = [...topTokens, ...botTokens].sort((a, b) => a.col - b.col);
+
+    if (orderedTokens.length !== xValues.length) {
+      const allTokens: Array<{ val: string; col: number; level: 'top' | 'bottom' | 'mid' }> = [];
+      for (let r = 2; r < rows.length; r++) {
+        const start = r === 2 ? 1 : 0;
+        for (let c = start; c < rows[r].length; c++) {
+          const v = rows[r][c].trim();
+          if (v && !/nearrow|searrow|downarrow|uparrow/i.test(v) && v !== '+' && v !== '-' && v !== '0' && v !== '||') {
+            allTokens.push({ val: v, col: c, level: r === 2 ? 'top' : 'bottom' });
+          }
+        }
+      }
+      if (allTokens.length === xValues.length) {
+        orderedTokens = allTokens;
       }
     }
 
-    // Lọc các giá trị số và vô cùng
-    const numericTokens: string[] = [];
-    for (const cell of yCells) {
-      if (
-        !/searrow|nearrow|downarrow|uparrow/i.test(cell) &&
-        cell !== '+' &&
-        cell !== '-' &&
-        cell !== '||' &&
-        cell !== '|'
-      ) {
-        numericTokens.push(cell);
-      }
-    }
+    if (orderedTokens.length === xValues.length) {
+      const yPoints: ParsedVariationData['yPoints'] = [];
+      const arrows: ParsedVariationData['arrows'] = [];
 
-    // Nếu tìm thấy đúng số lượng điểm ứng với xValues
-    const yPoints: ParsedVariationData['yPoints'] = [];
-    const arrows: ParsedVariationData['arrows'] = [];
-
-    if (numericTokens.length === xValues.length) {
-      // Phân bổ toạ độ % theo số lượng mốc x
-      for (let i = 0; i < numericTokens.length; i++) {
-        const val = numericTokens[i];
-        const pct = Math.round(((i + 0.5) / numericTokens.length) * 100);
-        // Xác định level (top/bottom/mid)
-        let level: 'top' | 'bottom' | 'mid' = 'mid';
-        const num = parseFloat(val);
+      for (let i = 0; i < orderedTokens.length; i++) {
+        const t = orderedTokens[i];
+        const val = t.val;
+        const pct = Math.round(((i + 0.5) / orderedTokens.length) * 100);
+        let level = t.level;
         if (val.includes('+\\infty') || val.includes('+infty')) {
           level = 'top';
         } else if (val.includes('-\\infty') || val.includes('-infty')) {
           level = 'bottom';
-        } else if (!isNaN(num)) {
-          // So sánh tương đối với các giá trị khác
-          const nums = numericTokens.map(t => parseFloat(t)).filter(n => !isNaN(n));
-          const max = Math.max(...nums);
-          const min = Math.min(...nums);
-          if (num === max && max !== min) level = 'top';
-          else if (num === min && max !== min) level = 'bottom';
-          else level = 'mid';
         }
 
         yPoints.push({
