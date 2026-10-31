@@ -27,7 +27,13 @@ function inferVisualTypeFromText(text?: string): QuestionVisualType | null {
   }
 
   // 2. Nhận diện Bảng biến thiên
-  if (lower.includes('bảng biến thiên') || lower.includes('bbt như sau') || lower.includes('bbt hình bên')) {
+  if (
+    lower.includes('bảng biến thiên') ||
+    lower.includes('bbt như sau') ||
+    lower.includes('bbt hình bên') ||
+    lower.includes('bbt') ||
+    (/begin\{(?:array|matrix)\}/i.test(text) && (/searrow|nearrow/i.test(text) || (/x/i.test(text) && /[yf]['(]/i.test(text))))
+  ) {
     if (lower.includes('phân thức') || /y\s*=\s*\\?(?:d?frac|\/)/i.test(text) || /(tiệm cận|tcd|tcn)/i.test(lower)) {
       return 'variation_table_rational';
     }

@@ -144,6 +144,27 @@ const LatexArrayTable: React.FC<TableProps> = ({ arrayCode }) => {
     const isSignTable = parsedTable.length === 2; // Bảng xét dấu: hàng x và hàng y' / f'(x)
     const isVariationTable = parsedTable.length >= 3; // Bảng biến thiên: x, y', y
 
+    // Check if this is a variation table or sign table:
+    // If so, suppress rendering here because QuestionVisual renders the authoritative
+    // variation table below with directional arrows (per user request: "Bỏ bảng biến thiên ở trên")
+    const firstCell = (parsedTable[0]?.[0] || '').replace(/[\$\\s]/g, '').toLowerCase();
+    const secondCell = (parsedTable[1]?.[0] || '').replace(/[\$\\s]/g, '').toLowerCase();
+    const hasArrows = parsedTable.some(row =>
+      row.some(cell => /searrow|nearrow|downarrow|uparrow/i.test(cell))
+    );
+    const isMathTable =
+      firstCell === 'x' ||
+      firstCell === 't' ||
+      firstCell === 'u' ||
+      secondCell.includes('\'') ||
+      secondCell.includes('f') ||
+      secondCell.includes('y') ||
+      hasArrows;
+
+    if (isMathTable && (isVariationTable || isSignTable)) {
+      return null;
+    }
+
     return (
       <div className="my-3 max-w-2xl mx-auto overflow-x-auto rounded-xl border border-slate-700 bg-white shadow-2xs">
         <table className="w-full text-center border-collapse text-base font-sans select-text">
@@ -234,6 +255,11 @@ const LatexArrayTable: React.FC<TableProps> = ({ arrayCode }) => {
         </table>
       </div>
     );
+  }
+
+  // If it's a variation table that failed full parse, also suppress it so top table isn't shown
+  if (/searrow|nearrow|downarrow|uparrow/i.test(arrayCode) || (/x/i.test(arrayCode) && /[yf]['(]/i.test(arrayCode))) {
+    return null;
   }
 
   // Fallback: render sanitized KaTeX BlockMath

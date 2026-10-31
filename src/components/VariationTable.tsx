@@ -6,7 +6,6 @@ export interface VariationTableProps {
   type?: 'rational' | 'cubic' | 'quartic' | 'quadratic' | 'sign_table' | 'custom';
   questionText?: string;
   options?: string[];
-  // Optional custom data
   customData?: {
     xValues?: string[];
     yPrimeSigns?: string[];
@@ -15,11 +14,79 @@ export interface VariationTableProps {
 }
 
 /**
- * Trích xuất các khoảng nghiệm dạng (a; b) từ văn bản câu hỏi và 4 lựa chọn A, B, C, D
+ * Component vẽ đoạn mũi tên có đầu tam giác đặc (arrowhead) sắc nét theo chuẩn SGK GDPT 2018 (Ảnh 2).
+ * Tự động tính toán toạ độ mũi tên và vẽ trực tiếp bằng SVG polygon để đảm bảo:
+ * - 100% hiển thị rõ ràng, không bị che bởi viền/nền trắng của số
+ * - Không phụ thuộc vào marker ID tránh xung đột DOM
+ */
+interface ArrowSegmentProps {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  strokeWidth?: number;
+  color?: string;
+  headSize?: number;
+}
+
+const ArrowSegment: React.FC<ArrowSegmentProps> = ({
+  x1,
+  y1,
+  x2,
+  y2,
+  strokeWidth = 1.8,
+  color = '#0f172a',
+  headSize = 9,
+}) => {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 6) return null;
+
+  const ux = dx / len;
+  const uy = dy / len;
+  const vx = -uy;
+  const vy = ux;
+
+  const headLen = headSize;
+  const headHalfWidth = headSize * 0.42;
+
+  // Điểm đáy của đầu mũi tên
+  const bx = x2 - headLen * ux;
+  const by = y2 - headLen * uy;
+
+  // Hai cánh của đầu mũi tên
+  const w1x = bx + headHalfWidth * vx;
+  const w1y = by + headHalfWidth * vy;
+  const w2x = bx - headHalfWidth * vx;
+  const w2y = by - headHalfWidth * vy;
+
+  return (
+    <g>
+      {/* Thân mũi tên */}
+      <line
+        x1={x1}
+        y1={y1}
+        x2={bx}
+        y2={by}
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      {/* Đầu mũi tên tam giác đặc sắc nét */}
+      <polygon
+        points={`${x2.toFixed(1)},${y2.toFixed(1)} ${w1x.toFixed(1)},${w1y.toFixed(1)} ${w2x.toFixed(1)},${w2y.toFixed(1)}`}
+        fill={color}
+      />
+    </g>
+  );
+};
+
+/**
+ * Trích xuất các khoảng nghiệm dạng (a; b) từ văn bản
  */
 function extractIntervalsFromText(text: string): Array<{ left: number; right: number }> {
   const intervals: Array<{ left: number; right: number }> = [];
-  // Match patterns like (-1; 2), (0; 3), (-2; 1), (1; 4), (1; +\\infty), (-\infty; 2)
   const regex = /\(\s*(-?\d+(?:\.\d+)?)\s*;\s*(-?\d+(?:\.\d+)?)\s*\)/g;
   let match;
   while ((match = regex.exec(text)) !== null) {
@@ -33,7 +100,7 @@ function extractIntervalsFromText(text: string): Array<{ left: number; right: nu
 }
 
 /**
- * Trích xuất các điểm hoành độ x từ văn bản: x = a, x1 = a, x2 = b, v.v.
+ * Trích xuất các điểm hoành độ x từ văn bản: x = a, v.v.
  */
 function extractXPointsFromText(text: string): number[] {
   const points: number[] = [];
@@ -49,8 +116,166 @@ function extractXPointsFromText(text: string): number[] {
 }
 
 /**
- * Phân tích hàm bậc 3 từ câu hỏi và 4 phương án: y = ax^3 + bx^2 + cx + d
- * Đồng bộ động 100% với số liệu của câu hỏi, tuyệt đối không hardcode (0; 2)
+ * Kiểu dữ liệu bảng biến thiên được trích xuất trực tiếp từ mã nguồn câu hỏi
+ */
+interface ParsedVariationData {
+  xLabel: string;
+  yPrimeLabel: string;
+  yLabel?: string;
+  xValues: string[];
+  yPrimeTokens: string[];
+  yPoints: Array<{
+    value: string;
+    level: 'top' | 'bottom' | 'mid';
+    xPercent: number;
+  }>;
+  arrows: Array<{
+    startIndex: number;
+    endIndex: number;
+  }>;
+  hasDoubleBar?: boolean;
+  doubleBarIndex?: number;
+}
+
+/**
+ * Trích xuất bảng biến thiên từ \begin{array} hoặc bảng markdown trong questionText.
+ * Đảm bảo dữ liệu bảng phía dưới hoàn toàn trùng khớp với đề bài gốc (ví dụ Câu 5: [-2; 3], -1, 5, 2).
+ */
+function parseVariationTableFromQuestion(text?: string): ParsedVariationData | null {
+  if (!text) return null;
+
+  try {
+    const match = text.match(/\\*begin\{(?:array|matrix|tabular)\}([\s\S]*?)\\*end\{(?:array|matrix|tabular)\}/i);
+    if (!match) return null;
+
+    let content = match[1];
+    content = content
+      .replace(/\\cr\b/gi, '\\\\')
+      .replace(/\\newline\b/gi, '\\\\')
+      .replace(/\\hline/gi, '')
+      .replace(/\\cline\{[^}]*\}/gi, '')
+      .replace(/\\\\\[[^\]]*\]/gi, '\\\\');
+
+    const rawRows = content
+      .split(/\\\\/)
+      .map(r => r.trim())
+      .filter(r => r.length > 0);
+
+    if (rawRows.length < 2) return null;
+
+    const rows: string[][] = [];
+    for (const rawRow of rawRows) {
+      const cells = rawRow.split('&').map(c => c.trim().replace(/\$/g, ''));
+      rows.push(cells);
+    }
+
+    // 1. Dòng x
+    const xRow = rows[0];
+    const xLabel = xRow[0] || 'x';
+    const xValues: string[] = [];
+    for (let i = 1; i < xRow.length; i++) {
+      const val = xRow[i].trim();
+      if (val) xValues.push(val);
+    }
+    if (xValues.length < 2) return null;
+
+    // 2. Dòng y' hoặc f'(x)
+    const yPrimeRow = rows[1];
+    const yPrimeLabel = yPrimeRow[0] || "f'(x)";
+    const yPrimeTokens: string[] = [];
+    for (let i = 1; i < yPrimeRow.length; i++) {
+      const val = yPrimeRow[i].trim();
+      if (val) yPrimeTokens.push(val);
+    }
+
+    // 3. Dòng y hoặc f(x)
+    const yLabel = rows[2] ? rows[2][0] || 'f(x)' : 'y';
+
+    // Gom toàn bộ ô từ row 2 trở đi để phân tích giá trị y và hướng mũi tên
+    const yCells: string[] = [];
+    for (let r = 2; r < rows.length; r++) {
+      const cells = rows[r];
+      const startIdx = r === 2 ? 1 : 0;
+      for (let c = startIdx; c < cells.length; c++) {
+        const val = cells[c].trim();
+        if (val) yCells.push(val);
+      }
+    }
+
+    // Lọc các giá trị số và vô cùng
+    const numericTokens: string[] = [];
+    for (const cell of yCells) {
+      if (
+        !/searrow|nearrow|downarrow|uparrow/i.test(cell) &&
+        cell !== '+' &&
+        cell !== '-' &&
+        cell !== '||' &&
+        cell !== '|'
+      ) {
+        numericTokens.push(cell);
+      }
+    }
+
+    // Nếu tìm thấy đúng số lượng điểm ứng với xValues
+    const yPoints: ParsedVariationData['yPoints'] = [];
+    const arrows: ParsedVariationData['arrows'] = [];
+
+    if (numericTokens.length === xValues.length) {
+      // Phân bổ toạ độ % theo số lượng mốc x
+      for (let i = 0; i < numericTokens.length; i++) {
+        const val = numericTokens[i];
+        const pct = Math.round(((i + 0.5) / numericTokens.length) * 100);
+        // Xác định level (top/bottom/mid)
+        let level: 'top' | 'bottom' | 'mid' = 'mid';
+        const num = parseFloat(val);
+        if (val.includes('+\\infty') || val.includes('+infty')) {
+          level = 'top';
+        } else if (val.includes('-\\infty') || val.includes('-infty')) {
+          level = 'bottom';
+        } else if (!isNaN(num)) {
+          // So sánh tương đối với các giá trị khác
+          const nums = numericTokens.map(t => parseFloat(t)).filter(n => !isNaN(n));
+          const max = Math.max(...nums);
+          const min = Math.min(...nums);
+          if (num === max && max !== min) level = 'top';
+          else if (num === min && max !== min) level = 'bottom';
+          else level = 'mid';
+        }
+
+        yPoints.push({
+          value: val,
+          level,
+          xPercent: pct,
+        });
+
+        if (i > 0) {
+          arrows.push({
+            startIndex: i - 1,
+            endIndex: i,
+          });
+        }
+      }
+
+      return {
+        xLabel,
+        yPrimeLabel,
+        yLabel,
+        xValues,
+        yPrimeTokens,
+        yPoints,
+        arrows,
+      };
+    }
+
+    return null;
+  } catch (e) {
+    console.warn('Could not parse variation table from question:', e);
+    return null;
+  }
+}
+
+/**
+ * Phân tích hàm bậc 3 từ câu hỏi và 4 phương án
  */
 function parseCubicFromTextAndOptions(
   questionText?: string,
@@ -65,8 +290,6 @@ function parseCubicFromTextAndOptions(
 } {
   const combined = `${questionText || ''} ${(options || []).join(' ')}`;
 
-  // 1. Thử nhận diện công thức hàm bậc 3 tường minh y = ax^3 + bx^2 + cx + d
-  // Hỗ trợ cả phân số \frac{1}{3}x^3 hoặc -\frac{1}{3}x^3
   const match = combined.match(/y\s*=\s*(?:[+-]?\\(?:d?frac)?\{?([+-]?\d+)\}?\{?(\d+)\}?|([+-]?\d*))x\^3\s*([+-]\s*\d*)x\^2(?:\s*([+-]\s*\d*)x)?(?:\s*([+-]\s*\d+))?/i);
   if (match) {
     let a = 1;
@@ -101,11 +324,9 @@ function parseCubicFromTextAndOptions(
     }
   }
 
-  // 2. Không có công thức tường minh -> Trích xuất động từ các khoảng trong câu hỏi và options
   const intervals = extractIntervalsFromText(combined);
   const xPoints = extractXPointsFromText(combined);
 
-  // Đếm tần suất xuất hiện của các mốc giá trị trong options để tìm đúng 2 điểm cực trị
   const freq: Record<number, number> = {};
   intervals.forEach(inv => {
     freq[inv.left] = (freq[inv.left] || 0) + 1;
@@ -115,7 +336,6 @@ function parseCubicFromTextAndOptions(
     freq[p] = (freq[p] || 0) + 2;
   });
 
-  // Tìm 2 giá trị xuất hiện nhiều nhất
   const sortedPointsByFreq = Object.keys(freq)
     .map(Number)
     .sort((m, n) => freq[n] - freq[m]);
@@ -143,8 +363,6 @@ function parseCubicFromTextAndOptions(
       x2 = 0;
     }
   } else {
-    // Hoàn toàn không tìm thấy mốc số trong văn bản -> Sinh động deterministically từ mã băm câu hỏi
-    // TUYỆT ĐỐI KHÔNG CỐ ĐỊNH (0; 2)
     let hash = 0;
     for (let i = 0; i < combined.length; i++) {
       hash = (hash << 5) - hash + combined.charCodeAt(i);
@@ -164,17 +382,13 @@ function parseCubicFromTextAndOptions(
     x2 = picked[1];
   }
 
-  // Xác định chiều biến thiên dựa trên từ khóa câu hỏi:
   const isAskingIncreasing = /đồng biến|tăng/i.test(questionText || '');
   const isAskingDecreasing = /nghịch biến|giảm/i.test(questionText || '');
 
-  // Mặc định hệ số a > 0 (Cực đại trước, cực tiểu sau: y' mang dấu + - +)
   let aIsPositive = true;
   if (isAskingIncreasing && intervals.some((inv) => inv.left === x1 && inv.right === x2)) {
-    // Nếu khoảng (x1; x2) là khoảng đồng biến được hỏi -> dấu trên (x1; x2) là +, tức a < 0 (- + -)
     aIsPositive = false;
   } else if (isAskingDecreasing && intervals.some((inv) => inv.left === x1 && inv.right === x2)) {
-    // Nếu khoảng (x1; x2) là khoảng nghịch biến được hỏi -> dấu trên (x1; x2) là -, tức a > 0 (+ - +)
     aIsPositive = true;
   }
 
@@ -193,7 +407,6 @@ function parseCubicFromTextAndOptions(
 
 /**
  * Phân tích hàm phân thức bậc nhất / bậc nhất: y = (ax + b) / (cx + d)
- * Đồng bộ động tiệm cận đứng x0 và tiệm cận ngang y0 với câu hỏi và options
  */
 function parseRationalFromTextAndOptions(
   questionText?: string,
@@ -209,7 +422,6 @@ function parseRationalFromTextAndOptions(
 } {
   const combined = `${questionText || ''} ${(options || []).join(' ')}`;
 
-  // 1. Kiểm tra công thức tường minh y = (ax+b)/(cx+d)
   const fracRegex = /y\s*=\s*(?:\\d?frac\s*\{([^}]+)\}\s*\{([^}]+)\}|\(?([^\/\)]+)\)?\s*\/\s*\(?([^\/\)]+)\)?)/i;
   const match = combined.match(fracRegex);
 
@@ -246,8 +458,6 @@ function parseRationalFromTextAndOptions(
     }
   }
 
-  // 2. Trích xuất tiệm cận đứng / điểm gián đoạn từ văn bản câu hỏi hoặc options
-  // Ví dụ: x \ne 1, x = 1, (-\infty; 1) và (1; +\infty), tiệm cận đứng x = 1
   let x0 = 1;
   let y0 = 2;
 
@@ -255,7 +465,6 @@ function parseRationalFromTextAndOptions(
   if (tcdMatch) {
     x0 = parseFloat(tcdMatch[1]) || 1;
   } else {
-    // Trích xuất từ các khoảng vô cùng: (-\infty; x0)
     const infMatch = combined.match(/\(-\\?infty\s*;\s*(-?\d+(?:\.\d+)?)\)/i);
     if (infMatch) {
       x0 = parseFloat(infMatch[1]) || 1;
@@ -278,11 +487,149 @@ export const VariationTable: React.FC<VariationTableProps> = ({
   type = 'cubic',
   questionText,
   options,
-  customData,
 }) => {
+  // 0. Ưu tiên trích xuất chính xác bảng biến thiên từ văn bản câu hỏi nếu có
+  const parsedData = useMemo(() => {
+    return parseVariationTableFromQuestion(questionText);
+  }, [questionText]);
+
   // =========================================================================
-  // 1. BẢNG XÉT DẤU CHUẨN SGK GDPT 2018 (Sign Table)
-  // Chỉ hiển thị duy nhất khung bảng x, f'(x) / f(x). Không có tiêu đề/chú thích lộ giải thích.
+  // TRƯỜNG HỢP 1: BẢNG BIẾN THIÊN TRÍCH XUẤT CHÍNH XÁC TỪ ĐỀ BÀI (VD: CÂU 5)
+  // Hiển thị đầy đủ mốc x ([-2, 1, 3]), dấu y' (+, 0, -) và mũi tên y (-1 -> 5 -> 2)
+  // Có mũi tên tam giác đặc sắc nét chuẩn SGK GDPT 2018 (Ảnh 2)
+  // =========================================================================
+  if (parsedData) {
+    const { xLabel, yPrimeLabel, yLabel, xValues, yPrimeTokens, yPoints, arrows } = parsedData;
+
+    return (
+      <div className="my-3 p-3 sm:p-4 bg-white rounded-xl border border-slate-300 shadow-xs max-w-2xl mx-auto font-sans select-none">
+        <div className="border border-slate-800 rounded bg-white shadow-2xs overflow-hidden">
+          <table className="w-full text-center border-collapse text-sm">
+            <tbody>
+              {/* DÒNG 1: x */}
+              <tr className="border-b border-slate-800">
+                <td className="w-16 sm:w-20 py-2 px-2 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 text-base">
+                  <MathRenderer content={`$${xLabel}$`} />
+                </td>
+                {xValues.map((xv, idx) => (
+                  <td key={idx} className="py-2 text-slate-950 font-bold text-sm sm:text-base">
+                    <MathRenderer content={`$${xv}$`} />
+                  </td>
+                ))}
+              </tr>
+
+              {/* DÒNG 2: y' hoặc f'(x) */}
+              <tr className="border-b border-slate-800 bg-white">
+                <td className="w-16 sm:w-20 py-2 px-2 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 text-base">
+                  <MathRenderer content={`$${yPrimeLabel}$`} />
+                </td>
+                {yPrimeTokens.length > 0 ? (
+                  yPrimeTokens.map((t, idx) => {
+                    const isPlus = t === '+' || t === '$+$';
+                    const isMinus = t === '-' || t === '$-$' || t === '−';
+                    const isZero = t === '0' || t === '$0$';
+                    const isDoubleBar = t === '||' || t === '|';
+
+                    return (
+                      <td
+                        key={idx}
+                        className={`py-2 ${
+                          isDoubleBar
+                            ? 'border-l-2 border-r-2 border-slate-900 bg-slate-100/60 w-8 p-0'
+                            : 'text-slate-900 font-black text-base sm:text-lg'
+                        }`}
+                      >
+                        {isPlus ? '+' : isMinus ? '−' : isZero ? '0' : isDoubleBar ? '' : t}
+                      </td>
+                    );
+                  })
+                ) : (
+                  <td colSpan={xValues.length} className="py-2 text-slate-800 font-medium">
+                    &nbsp;
+                  </td>
+                )}
+              </tr>
+
+              {/* DÒNG 3: y hoặc f(x) với mũi tên chuẩn SGK (Ảnh 2) */}
+              <tr className="bg-white">
+                <td className="w-16 sm:w-20 py-4 px-2 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 align-middle text-base">
+                  <MathRenderer content={`$${yLabel || 'y'}$`} />
+                </td>
+                <td colSpan={Math.max(xValues.length, yPrimeTokens.length, 1)} className="p-0 align-middle">
+                  <div className="relative h-28 sm:h-32 w-full">
+                    <svg
+                      className="absolute inset-0 w-full h-full pointer-events-none"
+                      viewBox="0 0 500 100"
+                      preserveAspectRatio="none"
+                    >
+                      {arrows.map((arr, idx) => {
+                        const start = yPoints[arr.startIndex];
+                        const end = yPoints[arr.endIndex];
+                        if (!start || !end) return null;
+
+                        const x1 = (start.xPercent / 100) * 500;
+                        const x2 = (end.xPercent / 100) * 500;
+                        const y1 = start.level === 'top' ? 24 : start.level === 'bottom' ? 76 : 50;
+                        const y2 = end.level === 'top' ? 24 : end.level === 'bottom' ? 76 : 50;
+
+                        // Chừa khoảng cách nhỏ cho nhãn số để mũi tên không đè chữ
+                        const dx = x2 - x1;
+                        const dy = y2 - y1;
+                        const dist = Math.hypot(dx, dy);
+                        const offsetStart = 20;
+                        const offsetEnd = 20;
+                        const sx = x1 + (dx / dist) * offsetStart;
+                        const sy = y1 + (dy / dist) * offsetStart;
+                        const ex = x2 - (dx / dist) * offsetEnd;
+                        const ey = y2 - (dy / dist) * offsetEnd;
+
+                        return (
+                          <ArrowSegment
+                            key={idx}
+                            x1={sx}
+                            y1={sy}
+                            x2={ex}
+                            y2={ey}
+                            strokeWidth={1.8}
+                            color="#0f172a"
+                            headSize={9}
+                          />
+                        );
+                      })}
+                    </svg>
+
+                    {/* Các nhãn giá trị y tại mốc toạ độ */}
+                    {yPoints.map((pt, idx) => {
+                      const isTop = pt.level === 'top';
+                      const isBottom = pt.level === 'bottom';
+                      return (
+                        <div
+                          key={idx}
+                          className="absolute -translate-x-1/2"
+                          style={{
+                            left: `${pt.xPercent}%`,
+                            top: isTop ? '8px' : !isBottom ? '36px' : undefined,
+                            bottom: isBottom ? '8px' : undefined,
+                          }}
+                        >
+                          <span className="font-bold text-slate-950 text-sm sm:text-base select-text">
+                            <MathRenderer content={`$${pt.value}$`} />
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // TRƯỜNG HỢP 2: BẢNG XÉT DẤU CHUẨN SGK GDPT 2018 (Sign Table)
   // =========================================================================
   if (type === 'sign_table') {
     const combined = `${questionText || ''} ${(options || []).join(' ')}`;
@@ -307,7 +654,7 @@ export const VariationTable: React.FC<VariationTableProps> = ({
             <tbody>
               {/* DÒNG 1: x */}
               <tr className="border-b border-slate-800">
-                <td className="w-20 py-2 px-3 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 text-base">
+                <td className="w-16 sm:w-20 py-2 px-2 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 text-base">
                   <MathRenderer content="$x$" />
                 </td>
                 <td className="w-[18%] py-2 text-slate-800 font-medium">
@@ -325,9 +672,9 @@ export const VariationTable: React.FC<VariationTableProps> = ({
                 </td>
               </tr>
 
-              {/* DÒNG 2: f'(x) / f(x) */}
+              {/* DÒNG 2: f'(x) */}
               <tr className="bg-white">
-                <td className="w-20 py-2 px-3 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 text-base">
+                <td className="w-16 sm:w-20 py-2 px-2 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 text-base">
                   <MathRenderer content="$f'(x)$" />
                 </td>
                 <td className="py-2 text-slate-900 font-black text-lg">
@@ -354,8 +701,8 @@ export const VariationTable: React.FC<VariationTableProps> = ({
   }
 
   // =========================================================================
-  // 2. HÀM PHÂN THỨC BẬC NHẤT / BẬC NHẤT: y = (ax + b) / (cx + d)
-  // Chỉ hiển thị duy nhất khung bảng x, y', y với vạch kép song song ||
+  // TRƯỜNG HỢP 3: HÀM PHÂN THỨC BẬC NHẤT / BẬC NHẤT VỚI TIỆM CẬN ĐỨNG || (Ảnh 2a & 2b)
+  // Có vạch kép song song || và các mũi tên chỉ chiều biến thiên
   // =========================================================================
   if (type === 'rational') {
     const { x0, y0, isIncreasing } = parseRationalFromTextAndOptions(questionText, options);
@@ -373,8 +720,7 @@ export const VariationTable: React.FC<VariationTableProps> = ({
                 <td className="w-[42%] py-2 text-slate-800 font-medium">
                   <MathRenderer content="$-\infty$" />
                 </td>
-                {/* Cột điểm gián đoạn x = x0 */}
-                <td className="w-12 py-2 text-slate-950 font-black text-sm">
+                <td className="w-10 sm:w-12 py-2 text-slate-950 font-black text-base">
                   <MathRenderer content={`$${x0}$`} />
                 </td>
                 <td className="w-[42%] py-2 text-slate-800 font-medium">
@@ -390,94 +736,82 @@ export const VariationTable: React.FC<VariationTableProps> = ({
                 <td className="py-2 text-slate-900 font-black text-lg">
                   <MathRenderer content={isIncreasing ? '$+$' : '$-$'} />
                 </td>
-                {/* Vạch đôi song song || chuẩn SGK Toán GDPT 2018 */}
-                <td className="p-0 border-l-2 border-r-2 border-slate-900 bg-slate-100/60 w-12"></td>
+                {/* Vạch kép song song || xuyên suốt dòng y' */}
+                <td className="p-0 border-l-2 border-r-2 border-slate-900 bg-slate-100/60 w-10 sm:w-12"></td>
                 <td className="py-2 text-slate-900 font-black text-lg">
                   <MathRenderer content={isIncreasing ? '$+$' : '$-$'} />
                 </td>
               </tr>
 
-              {/* DÒNG 3: y (Mũi tên biến thiên hai nhánh) */}
+              {/* DÒNG 3: y (Hai nhánh biến thiên) */}
               <tr className="bg-white">
                 <td className="w-16 sm:w-20 py-4 px-2 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 align-middle text-base">
                   <MathRenderer content="$y$" />
                 </td>
 
-                {/* Nhánh trái (-inf đến x0) */}
+                {/* Nhánh 1 (trái điểm gián đoạn) */}
                 <td className="p-0 align-middle">
-                  <div className="relative h-24 w-full">
+                  <div className="relative h-28 sm:h-32 w-full">
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 200 80" preserveAspectRatio="none">
-                      <defs>
-                        <marker id="arrow-rat-left" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                          <polygon points="0 0, 6 3, 0 6" fill="#0f172a" />
-                        </marker>
-                      </defs>
                       {isIncreasing ? (
-                        <line x1="20" y1="65" x2="185" y2="18" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-rat-left)" />
+                        <ArrowSegment x1={30} y1={65} x2={170} y2={18} strokeWidth={1.8} color="#0f172a" headSize={9} />
                       ) : (
-                        <line x1="20" y1="18" x2="185" y2="65" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-rat-left)" />
+                        <ArrowSegment x1={30} y1={18} x2={170} y2={65} strokeWidth={1.8} color="#0f172a" headSize={9} />
                       )}
                     </svg>
 
-                    {/* Nhãn nhánh trái */}
                     {isIncreasing ? (
                       <>
-                        <div className="absolute left-2.5 bottom-1.5">
-                          <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$-\infty$" /></span>
+                        <div className="absolute left-3 bottom-2">
+                          <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$-\infty$" /></span>
                         </div>
-                        <div className="absolute right-2.5 top-1.5">
-                          <span className="font-black text-slate-950 text-sm bg-white/90 px-1 rounded"><MathRenderer content={`$${y0}$`} /></span>
+                        <div className="absolute right-3 top-2">
+                          <span className="font-bold text-slate-950 text-base"><MathRenderer content={`$${y0}$`} /></span>
                         </div>
                       </>
                     ) : (
                       <>
-                        <div className="absolute left-2.5 top-1.5">
-                          <span className="font-black text-slate-950 text-sm bg-white/90 px-1 rounded"><MathRenderer content={`$${y0}$`} /></span>
+                        <div className="absolute left-3 top-2">
+                          <span className="font-bold text-slate-950 text-base"><MathRenderer content={`$${y0}$`} /></span>
                         </div>
-                        <div className="absolute right-2.5 bottom-1.5">
-                          <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$-\infty$" /></span>
+                        <div className="absolute right-3 bottom-2">
+                          <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$-\infty$" /></span>
                         </div>
                       </>
                     )}
                   </div>
                 </td>
 
-                {/* Vạch đôi xuyên suốt cả dòng y */}
-                <td className="p-0 border-l-2 border-r-2 border-slate-900 bg-slate-100/60 w-12"></td>
+                {/* Vạch kép song song || xuyên suốt dòng y */}
+                <td className="p-0 border-l-2 border-r-2 border-slate-900 bg-slate-100/60 w-10 sm:w-12"></td>
 
-                {/* Nhánh phải (x0 đến +inf) */}
+                {/* Nhánh 2 (phải điểm gián đoạn) */}
                 <td className="p-0 align-middle">
-                  <div className="relative h-24 w-full">
+                  <div className="relative h-28 sm:h-32 w-full">
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 200 80" preserveAspectRatio="none">
-                      <defs>
-                        <marker id="arrow-rat-right" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                          <polygon points="0 0, 6 3, 0 6" fill="#0f172a" />
-                        </marker>
-                      </defs>
                       {isIncreasing ? (
-                        <line x1="15" y1="65" x2="180" y2="18" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-rat-right)" />
+                        <ArrowSegment x1={30} y1={65} x2={170} y2={18} strokeWidth={1.8} color="#0f172a" headSize={9} />
                       ) : (
-                        <line x1="15" y1="18" x2="180" y2="65" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-rat-right)" />
+                        <ArrowSegment x1={30} y1={18} x2={170} y2={65} strokeWidth={1.8} color="#0f172a" headSize={9} />
                       )}
                     </svg>
 
-                    {/* Nhãn nhánh phải */}
                     {isIncreasing ? (
                       <>
-                        <div className="absolute left-2.5 bottom-1.5">
-                          <span className="font-black text-slate-950 text-sm bg-white/90 px-1 rounded"><MathRenderer content={`$${y0}$`} /></span>
+                        <div className="absolute left-3 bottom-2">
+                          <span className="font-bold text-slate-950 text-base"><MathRenderer content={`$${y0}$`} /></span>
                         </div>
-                        <div className="absolute right-2.5 top-1.5">
-                          <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span>
+                        <div className="absolute right-3 top-2">
+                          <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span>
                         </div>
                       </>
                     ) : (
                       <>
-                        <div className="absolute left-2.5 top-1.5">
-                          <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span>
+                        <div className="absolute left-3 top-2">
+                          <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span>
                         </div>
-                        <div className="absolute right-2.5 bottom-1.5">
-                          <span className="font-black text-slate-950 text-sm bg-white/90 px-1 rounded"><MathRenderer content={`$${y0}$`} /></span>
+                        <div className="absolute right-3 bottom-2">
+                          <span className="font-bold text-slate-950 text-base"><MathRenderer content={`$${y0}$`} /></span>
                         </div>
                       </>
                     )}
@@ -492,7 +826,7 @@ export const VariationTable: React.FC<VariationTableProps> = ({
   }
 
   // =========================================================================
-  // 3. HÀM BẬC HAI (PARABOL): y = ax^2 + bx + c
+  // TRƯỜNG HỢP 4: HÀM BẬC HAI (PARABOL): y = ax^2 + bx + c
   // =========================================================================
   if (type === 'quadratic') {
     const combined = `${questionText || ''} ${(options || []).join(' ')}`;
@@ -548,27 +882,22 @@ export const VariationTable: React.FC<VariationTableProps> = ({
                   <MathRenderer content="$y$" />
                 </td>
                 <td colSpan={3} className="p-0 align-middle">
-                  <div className="relative h-24 w-full">
+                  <div className="relative h-28 sm:h-32 w-full">
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 400 90" preserveAspectRatio="none">
-                      <defs>
-                        <marker id="arrow-quad" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                          <polygon points="0 0, 6 3, 0 6" fill="#0f172a" />
-                        </marker>
-                      </defs>
-                      <line x1="30" y1="25" x2="190" y2="75" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-quad)" />
-                      <line x1="210" y1="75" x2="370" y2="25" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-quad)" />
+                      <ArrowSegment x1={40} y1={25} x2={185} y2={74} strokeWidth={1.8} color="#0f172a" headSize={9} />
+                      <ArrowSegment x1={215} y1={74} x2={360} y2={25} strokeWidth={1.8} color="#0f172a" headSize={9} />
                     </svg>
 
-                    <div className="absolute left-[5%] top-2">
-                      <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span>
+                    <div className="absolute left-[6%] top-2">
+                      <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span>
                     </div>
-                    <div className="absolute left-1/2 bottom-1.5 -translate-x-1/2">
-                      <span className="font-black text-slate-950 text-base bg-white px-2 py-0.5 rounded shadow-2xs border border-slate-200">
+                    <div className="absolute left-1/2 bottom-2 -translate-x-1/2">
+                      <span className="font-black text-slate-950 text-base">
                         <MathRenderer content="$-3$" />
                       </span>
                     </div>
-                    <div className="absolute right-[5%] top-2">
-                      <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span>
+                    <div className="absolute right-[6%] top-2">
+                      <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span>
                     </div>
                   </div>
                 </td>
@@ -581,7 +910,7 @@ export const VariationTable: React.FC<VariationTableProps> = ({
   }
 
   // =========================================================================
-  // 4. HÀM BẬC BỐN TRÙNG PHƯƠNG: y = ax^4 + bx^2 + c
+  // TRƯỜNG HỢP 5: HÀM BẬC BỐN TRÙNG PHƯƠNG: y = ax^4 + bx^2 + c
   // =========================================================================
   if (type === 'quartic') {
     const combined = `${questionText || ''} ${(options || []).join(' ')}`;
@@ -630,24 +959,19 @@ export const VariationTable: React.FC<VariationTableProps> = ({
                   <MathRenderer content="$y$" />
                 </td>
                 <td colSpan={7} className="p-0 align-middle">
-                  <div className="relative h-26 w-full">
+                  <div className="relative h-28 sm:h-32 w-full">
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 500 100" preserveAspectRatio="none">
-                      <defs>
-                        <marker id="arrow-quartic" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                          <polygon points="0 0, 6 3, 0 6" fill="#0f172a" />
-                        </marker>
-                      </defs>
-                      <line x1="25" y1="20" x2="115" y2="78" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-quartic)" />
-                      <line x1="125" y1="78" x2="245" y2="35" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-quartic)" />
-                      <line x1="255" y1="35" x2="375" y2="78" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-quartic)" />
-                      <line x1="385" y1="78" x2="475" y2="20" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-quartic)" />
+                      <ArrowSegment x1={30} y1={20} x2={110} y2={76} strokeWidth={1.8} color="#0f172a" headSize={9} />
+                      <ArrowSegment x1={130} y1={76} x2={240} y2={32} strokeWidth={1.8} color="#0f172a" headSize={9} />
+                      <ArrowSegment x1={260} y1={32} x2={370} y2={76} strokeWidth={1.8} color="#0f172a" headSize={9} />
+                      <ArrowSegment x1={390} y1={76} x2={470} y2={20} strokeWidth={1.8} color="#0f172a" headSize={9} />
                     </svg>
 
-                    <div className="absolute left-[3%] top-1.5"><span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span></div>
-                    <div className="absolute left-[24%] bottom-1.5 -translate-x-1/2"><span className="font-black text-slate-950 text-sm bg-white px-1 rounded shadow-2xs"><MathRenderer content="$-2$" /></span></div>
-                    <div className="absolute left-1/2 top-4 -translate-x-1/2"><span className="font-black text-slate-950 text-sm bg-white px-1 rounded shadow-2xs"><MathRenderer content="$-1$" /></span></div>
-                    <div className="absolute left-[76%] bottom-1.5 -translate-x-1/2"><span className="font-black text-slate-950 text-sm bg-white px-1 rounded shadow-2xs"><MathRenderer content="$-2$" /></span></div>
-                    <div className="absolute right-[3%] top-1.5"><span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span></div>
+                    <div className="absolute left-[4%] top-2"><span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span></div>
+                    <div className="absolute left-[24%] bottom-2 -translate-x-1/2"><span className="font-bold text-slate-950 text-base"><MathRenderer content="$-2$" /></span></div>
+                    <div className="absolute left-1/2 top-4 -translate-x-1/2"><span className="font-bold text-slate-950 text-base"><MathRenderer content="$-1$" /></span></div>
+                    <div className="absolute left-[76%] bottom-2 -translate-x-1/2"><span className="font-bold text-slate-950 text-base"><MathRenderer content="$-2$" /></span></div>
+                    <div className="absolute right-[4%] top-2"><span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span></div>
                   </div>
                 </td>
               </tr>
@@ -659,9 +983,9 @@ export const VariationTable: React.FC<VariationTableProps> = ({
   }
 
   // =========================================================================
-  // 5. HÀM BẬC BA CHUẨN: y = ax^3 + bx^2 + cx + d
-  // ĐỒNG BỘ ĐỘNG 100% SỐ LIỆU VỚI CÂU HỎI VÀ PHƯƠNG ÁN (KHÔNG CỐ ĐỊNH x=0, x=2)
-  // XÓA BỎ HOÀN TOÀN TIÊU ĐỀ THỪA VÀ DÒNG CHÚ THÍCH LỘ ĐÁP ÁN Ở ĐÁY BẢNG
+  // TRƯỜNG HỢP 6: HÀM BẬC BA CHUẨN: y = ax^3 + bx^2 + cx + d
+  // ĐỒNG BỘ ĐỘNG SỐ LIỆU VỚI CÂU HỎI VÀ PHƯƠNG ÁN (KHÔNG CỐ ĐỊNH x=0, x=2)
+  // Mũi tên có đầu nhọn tam giác đặc sắc nét theo chuẩn SGK GDPT 2018 (Ảnh 2)
   // =========================================================================
   const cubic = useMemo(() => {
     return parseCubicFromTextAndOptions(questionText, options);
@@ -716,85 +1040,75 @@ export const VariationTable: React.FC<VariationTableProps> = ({
               </td>
             </tr>
 
-            {/* DÒNG 3: y */}
+            {/* DÒNG 3: y (Mũi tên biến thiên chuẩn SGK - Ảnh 2) */}
             <tr className="bg-white">
               <td className="w-16 sm:w-20 py-4 px-2 font-serif italic font-bold border-r border-slate-800 text-slate-950 bg-slate-50 align-middle text-base">
                 <MathRenderer content="$y$" />
               </td>
               <td colSpan={5} className="p-0 align-middle">
-                <div className="relative h-26 w-full">
+                <div className="relative h-28 sm:h-32 w-full">
                   <svg
                     className="absolute inset-0 w-full h-full pointer-events-none"
                     viewBox="0 0 500 100"
                     preserveAspectRatio="none"
                   >
-                    <defs>
-                      <marker id="arrow-cubic-std" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                        <polygon points="0 0, 6 3, 0 6" fill="#0f172a" />
-                      </marker>
-                    </defs>
-
                     {aIsPositive ? (
                       <>
                         {/* Mũi tên 1: -inf lên CĐ */}
-                        <line x1="38" y1="80" x2="145" y2="24" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-cubic-std)" />
+                        <ArrowSegment x1={45} y1={76} x2={140} y2={24} strokeWidth={1.8} color="#0f172a" headSize={9} />
                         {/* Mũi tên 2: CĐ xuống CT */}
-                        <line x1="165" y1="24" x2="335" y2="80" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-cubic-std)" />
+                        <ArrowSegment x1={170} y1={24} x2={330} y2={76} strokeWidth={1.8} color="#0f172a" headSize={9} />
                         {/* Mũi tên 3: CT lên +inf */}
-                        <line x1="355" y1="80" x2="465" y2="24" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-cubic-std)" />
+                        <ArrowSegment x1={360} y1={76} x2={455} y2={24} strokeWidth={1.8} color="#0f172a" headSize={9} />
                       </>
                     ) : (
                       <>
                         {/* Mũi tên 1: +inf xuống CT */}
-                        <line x1="38" y1="24" x2="145" y2="80" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-cubic-std)" />
+                        <ArrowSegment x1={45} y1={24} x2={140} y2={76} strokeWidth={1.8} color="#0f172a" headSize={9} />
                         {/* Mũi tên 2: CT lên CĐ */}
-                        <line x1="165" y1="80" x2="335" y2="24" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-cubic-std)" />
+                        <ArrowSegment x1={170} y1={76} x2={330} y2={24} strokeWidth={1.8} color="#0f172a" headSize={9} />
                         {/* Mũi tên 3: CĐ xuống -inf */}
-                        <line x1="355" y1="24" x2="465" y2="80" stroke="#0f172a" strokeWidth="1.5" markerEnd="url(#arrow-cubic-std)" />
+                        <ArrowSegment x1={360} y1={24} x2={455} y2={76} strokeWidth={1.8} color="#0f172a" headSize={9} />
                       </>
                     )}
                   </svg>
 
                   {aIsPositive ? (
                     <>
-                      {/* 1. Mép dưới -inf */}
-                      <div className="absolute left-[3%] bottom-2">
-                        <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$-\infty$" /></span>
+                      <div className="absolute left-[4%] bottom-2">
+                        <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$-\infty$" /></span>
                       </div>
-                      {/* 2. Cực đại tại x1 */}
-                      <div className="absolute left-[30%] top-2 -translate-x-1/2">
-                        <span className="font-black text-slate-950 text-base bg-white px-2 py-0.5 rounded shadow-2xs border border-slate-200">
+                      <div className="absolute left-[31%] top-2 -translate-x-1/2">
+                        <span className="font-bold text-slate-950 text-base">
                           <MathRenderer content={`$${y1}$`} />
                         </span>
                       </div>
-                      {/* 3. Cực tiểu tại x2 */}
-                      <div className="absolute left-[70%] bottom-2 -translate-x-1/2">
-                        <span className="font-black text-slate-950 text-base bg-white px-2 py-0.5 rounded shadow-2xs border border-slate-200">
+                      <div className="absolute left-[69%] bottom-2 -translate-x-1/2">
+                        <span className="font-bold text-slate-950 text-base">
                           <MathRenderer content={`$${y2}$`} />
                         </span>
                       </div>
-                      {/* 4. Mép trên +inf */}
-                      <div className="absolute right-[3%] top-2">
-                        <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span>
+                      <div className="absolute right-[4%] top-2">
+                        <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span>
                       </div>
                     </>
                   ) : (
                     <>
-                      <div className="absolute left-[3%] top-2">
-                        <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$+\infty$" /></span>
+                      <div className="absolute left-[4%] top-2">
+                        <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$+\infty$" /></span>
                       </div>
-                      <div className="absolute left-[30%] bottom-2 -translate-x-1/2">
-                        <span className="font-black text-slate-950 text-base bg-white px-2 py-0.5 rounded shadow-2xs border border-slate-200">
+                      <div className="absolute left-[31%] bottom-2 -translate-x-1/2">
+                        <span className="font-bold text-slate-950 text-base">
                           <MathRenderer content={`$${y1}$`} />
                         </span>
                       </div>
-                      <div className="absolute left-[70%] top-2 -translate-x-1/2">
-                        <span className="font-black text-slate-950 text-base bg-white px-2 py-0.5 rounded shadow-2xs border border-slate-200">
+                      <div className="absolute left-[69%] top-2 -translate-x-1/2">
+                        <span className="font-bold text-slate-950 text-base">
                           <MathRenderer content={`$${y2}$`} />
                         </span>
                       </div>
-                      <div className="absolute right-[3%] bottom-2">
-                        <span className="font-bold text-slate-800 text-sm bg-white/90 px-1 rounded"><MathRenderer content="$-\infty$" /></span>
+                      <div className="absolute right-[4%] bottom-2">
+                        <span className="font-bold text-slate-900 text-sm"><MathRenderer content="$-\infty$" /></span>
                       </div>
                     </>
                   )}
